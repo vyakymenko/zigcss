@@ -856,6 +856,21 @@ const logical_condition_input =
 const logical_condition_css =
     "body{selected:yes}body{and-branch:safe}body{or-branch:safe}";
 
+const condition_assignment_input =
+    \\flag = false
+    \\fallback = 10px
+    \\body
+    \\  if flag == true
+    \\    width 1px
+    \\  else if flag == false
+    \\    if width = fallback
+    \\      width width
+    \\  unless flag and flag != false
+    \\    height fallback
+;
+
+const condition_assignment_css = "body{width:10px;height:10px}";
+
 const operator_semantics_input =
     \\kind = "color"
     \\text = ''
@@ -3895,6 +3910,63 @@ test "native Stylus evaluates bounded compound conditions with short circuiting"
         .resource_limit,
         "native Stylus expression depth exceeded",
         @intCast(std.mem.indexOf(u8, logical_condition_input, "if n < 50").?),
+    );
+}
+
+test "native Stylus condition assignments own the finite binding contract" {
+    const lower_input =
+        \\body
+        \\  if width = 1px
+        \\    width width
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.environment.max_bindings = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{width:1px}", lower.css());
+
+    const skipped_input =
+        \\always = true
+        \\body
+        \\  if always
+        \\    selected yes
+        \\  else if leaked = 2px
+        \\    selected no
+        \\  unless leaked is defined
+        \\    isolated yes
+    ;
+    var skipped_limits = stylus_evaluator.Limits{};
+    skipped_limits.environment.max_bindings = 3;
+    var skipped = try compile(std.testing.allocator, skipped_input, skipped_limits);
+    defer skipped.deinit();
+    try std.testing.expectEqualStrings(
+        "body{selected:yes;isolated:yes}",
+        skipped.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.environment.max_bindings = 5;
+    var first = try compile(std.testing.allocator, condition_assignment_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, condition_assignment_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(condition_assignment_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.environment.max_bindings = 2;
+    try expectSemanticRejectionWithLimits(
+        condition_assignment_input,
+        over_limit,
+        error.BindingLimitExceeded,
+        .resource_limit,
+        "native Stylus lexical environment limit exceeded",
+        @intCast(std.mem.indexOf(u8, condition_assignment_input, "if width = fallback").?),
     );
 }
 
@@ -7290,6 +7362,14 @@ fn exerciseLogicalConditionAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expectEqualStrings(logical_condition_css, result.css());
 }
 
+fn exerciseConditionAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.environment.max_bindings = 5;
+    var result = try compile(allocator, condition_assignment_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(condition_assignment_css, result.css());
+}
+
 fn exerciseCommentedIfElseAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(allocator, commented_if_else_input, .{});
     defer result.deinit();
@@ -7908,6 +7988,14 @@ test "native Stylus compound conditions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseLogicalConditionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus condition assignments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseConditionAssignmentAllocationFailures,
         .{},
     );
 }

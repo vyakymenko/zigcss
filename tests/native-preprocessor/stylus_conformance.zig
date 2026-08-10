@@ -245,6 +245,7 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     var first_nonconforming_id: ?[]const u8 = null;
     var exact_case_id_hash = std.hash.Wyhash.init(0);
     var prior_exact_case_id_hash = std.hash.Wyhash.init(0);
+    var pre_regression_1182_case_id_hash = std.hash.Wyhash.init(0);
     var pre_property_access_case_id_hash = std.hash.Wyhash.init(0);
     var pre_properties_case_id_hash = std.hash.Wyhash.init(0);
     var pre_parse_case_id_hash = std.hash.Wyhash.init(0);
@@ -315,13 +316,23 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
             include_css_exact_count += @intFromBool(case.providerOptions.includeCss);
             exact_case_id_hash.update(case.id);
             exact_case_id_hash.update("\x00");
+            const became_exact_with_regression_1182 = std.mem.eql(
+                u8,
+                case.id,
+                "stylus-official-regression-1182",
+            );
+            if (!became_exact_with_regression_1182) {
+                prior_exact_case_id_hash.update(case.id);
+                prior_exact_case_id_hash.update("\x00");
+            }
             const became_exact_with_property_access =
                 std.mem.eql(u8, case.id, "stylus-official-property-access") or
                 std.mem.eql(u8, case.id, "stylus-official-property-access-bubble") or
-                std.mem.eql(u8, case.id, "stylus-official-property-access-siblings");
+                std.mem.eql(u8, case.id, "stylus-official-property-access-siblings") or
+                became_exact_with_regression_1182;
             if (!became_exact_with_property_access) {
-                prior_exact_case_id_hash.update(case.id);
-                prior_exact_case_id_hash.update("\x00");
+                pre_regression_1182_case_id_hash.update(case.id);
+                pre_regression_1182_case_id_hash.update("\x00");
             }
             const became_exact_with_properties = std.mem.eql(
                 u8,
@@ -492,8 +503,8 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
 
     const exact_hash = exact_case_id_hash.final();
-    if (exact_success_count != 297 or nonconforming_count != 29 or
-        exact_hash != 0x564cd920659fde5e)
+    if (exact_success_count != 298 or nonconforming_count != 28 or
+        exact_hash != 0xa312a42b47bdc152)
     {
         std.debug.print(
             "\nnative Stylus exact inventory: {d} exact, {d} nonconforming, " ++
@@ -510,12 +521,16 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     try std.testing.expectEqual(@as(usize, 7), include_css_success_count);
     try std.testing.expectEqual(@as(usize, 7), include_css_exact_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 297), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 29), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0x564cd920659fde5e), exact_hash);
+    try std.testing.expectEqual(@as(usize, 298), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 28), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xa312a42b47bdc152), exact_hash);
+    try std.testing.expectEqual(
+        @as(u64, 0x564cd920659fde5e),
+        prior_exact_case_id_hash.final(),
+    );
     try std.testing.expectEqual(
         @as(u64, 0x9a89e6cfeb773571),
-        prior_exact_case_id_hash.final(),
+        pre_regression_1182_case_id_hash.final(),
     );
     try std.testing.expectEqual(
         @as(u64, 0x72cfaf3d6ad66ae8),
@@ -594,7 +609,7 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
         pre_media_bubble_case_id_hash.final(),
     );
     try std.testing.expectEqualStrings(
-        "stylus-official-regression-1182",
+        "stylus-official-regression-1205",
         first_nonconforming_id.?,
     );
 }
@@ -3746,6 +3761,62 @@ test "native Stylus closes the finite property access conformance family" {
     std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
         std.debug.print(
             "\nnative Stylus property access mismatch\nexpected: {s}\nactual:   {s}\n",
+            .{ expected_css.css(), first.css() },
+        );
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), first.edges().len);
+    try expectDependencyDeterminism(&first, &second);
+}
+
+test "native Stylus closes the finite regression 1182 conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(
+        parsed.value.cases,
+        "stylus-official-regression-1182",
+    );
+    try std.testing.expectEqualStrings("regression", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+    try std.testing.expectEqualStrings("expanded", case.style);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var first = try compileNative(allocator, case, input);
+    defer first.deinit();
+    var second = try compileNative(allocator, case, input);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print(
+            "\nnative Stylus regression 1182 mismatch\nexpected: {s}\nactual:   {s}\n",
             .{ expected_css.css(), first.css() },
         );
         return failure;

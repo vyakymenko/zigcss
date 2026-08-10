@@ -5722,12 +5722,15 @@ const Engine = struct {
                                 try self.reportInvalidOperation(text);
                                 return error.InvalidOperation;
                             };
-                            var condition_selected = try self.evaluateCondition(
-                                text,
-                                condition.expression,
-                                scope.*,
-                            );
-                            if (condition.negated) condition_selected = !condition_selected;
+                            var condition_selected = false;
+                            if (!prior_selected) {
+                                condition_selected = try self.evaluateMutableCondition(
+                                    text,
+                                    condition.expression,
+                                    scope,
+                                );
+                                if (condition.negated) condition_selected = !condition_selected;
+                            }
                             selected = !prior_selected and condition_selected;
                             previous_condition = prior_selected or selected;
                         }
@@ -5736,10 +5739,10 @@ const Engine = struct {
                             try self.reportInvalidOperation(text);
                             return error.InvalidOperation;
                         };
-                        selected = try self.evaluateCondition(
+                        selected = try self.evaluateMutableCondition(
                             text,
                             condition.expression,
-                            scope.*,
+                            scope,
                         );
                         if (condition.negated) selected = !selected;
                         previous_condition = selected;
@@ -5786,10 +5789,10 @@ const Engine = struct {
                     if (!startsWordAscii(raw, "return")) return error.InvalidDocument;
                     const postfix = splitPostfixCondition(raw);
                     if (postfix.condition) |condition| {
-                        var selected = try self.evaluateCondition(
+                        var selected = try self.evaluateMutableCondition(
                             text,
                             raw[condition.expression.start..condition.expression.end],
-                            scope.*,
+                            scope,
                         );
                         if (condition.negated) selected = !selected;
                         if (!selected) continue;
@@ -6205,10 +6208,10 @@ const Engine = struct {
         if (self.active_keyframe_header != null) {
             const postfix = splitPostfixCondition(raw);
             if (postfix.condition) |condition| {
-                var selected = try self.evaluateCondition(
+                var selected = try self.evaluateMutableCondition(
                     text,
                     raw[condition.expression.start..condition.expression.end],
-                    scope.*,
+                    scope,
                 );
                 if (condition.negated) selected = !selected;
                 if (!selected) return;
@@ -7181,10 +7184,10 @@ const Engine = struct {
         const raw = try self.sources.slice(text);
         const postfix_split = splitPostfixCondition(raw);
         if (postfix_split.condition) |postfix| {
-            var selected = try self.evaluateCondition(
+            var selected = try self.evaluateMutableCondition(
                 text,
                 raw[postfix.expression.start..postfix.expression.end],
-                scope.*,
+                scope,
             );
             if (postfix.negated) selected = !selected;
             if (!selected) return null;
@@ -11561,6 +11564,16 @@ const Engine = struct {
         raw: []const u8,
         scope: native_environment.ScopeId,
     ) Error!bool {
+        var condition_scope = scope;
+        return self.evaluateConditionDepth(span, raw, &condition_scope, 0);
+    }
+
+    fn evaluateMutableCondition(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: *native_environment.ScopeId,
+    ) Error!bool {
         return self.evaluateConditionDepth(span, raw, scope, 0);
     }
 
@@ -11568,7 +11581,7 @@ const Engine = struct {
         self: *Engine,
         span: native_source.Span,
         raw: []const u8,
-        scope: native_environment.ScopeId,
+        scope: *native_environment.ScopeId,
         depth: u16,
     ) Error!bool {
         if (depth >= self.limits.max_expression_depth) {
@@ -11583,6 +11596,18 @@ const Engine = struct {
                 scope,
                 depth + 1,
             );
+        }
+        if (parseAssignment(source_condition)) |assignment| {
+            if (assignment.value.len == 0) {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            }
+            const value = try self.evaluateDeclarationAssignment(
+                span,
+                assignment,
+                scope,
+            );
+            return isTruthy(value);
         }
         if (findLogicalOperator(source_condition, .or_value)) |logical| {
             if (try self.evaluateConditionDepth(
@@ -11615,11 +11640,11 @@ const Engine = struct {
         if (findTopLevelSequence(source_condition, " is defined")) |marker| {
             if (marker + " is defined".len == source_condition.len) {
                 const name = std.mem.trim(u8, source_condition[0..marker], " \t\r\n\x0c");
-                if (validVariableName(name)) return try self.lookupBinding(scope, name) != null;
+                if (validVariableName(name)) return try self.lookupBinding(scope.*, name) != null;
             }
         }
         if (findTopLevelSequence(source_condition, " is a ")) |marker| {
-            const value = try self.evaluateValue(span, source_condition[0..marker], scope, 0);
+            const value = try self.evaluateValue(span, source_condition[0..marker], scope.*, 0);
             const expected_raw = std.mem.trim(u8, source_condition[marker + " is a ".len ..], " \t\r\n\x0c");
             const expected = if (expected_raw.len >= 2 and
                 ((expected_raw[0] == '\'' and expected_raw[expected_raw.len - 1] == '\'') or
@@ -11634,7 +11659,7 @@ const Engine = struct {
                 span,
                 source_condition,
                 comparison,
-                scope,
+                scope.*,
                 0,
             );
         }
@@ -11643,7 +11668,7 @@ const Engine = struct {
                 span,
                 source_condition,
                 membership,
-                scope,
+                scope.*,
                 0,
             );
             return isTruthy(result);
@@ -11653,7 +11678,7 @@ const Engine = struct {
                 span,
                 source_condition,
                 comparison,
-                scope,
+                scope.*,
                 0,
             );
         }
@@ -11664,30 +11689,30 @@ const Engine = struct {
                     span,
                     source_condition,
                     call,
-                    scope,
+                    scope.*,
                 ));
             }
         }
-        const rendered = try self.renderRawOwned(span, raw, scope, .value, 0);
+        const rendered = try self.renderRawOwned(span, raw, scope.*, .value, 0);
         defer self.allocator.free(rendered);
         const input = std.mem.trim(u8, rendered, " \t\r\n\x0c;");
         if (findEqualityComparison(input)) |comparison| {
-            return self.evaluateComparisonBoolean(span, input, comparison, scope, 0);
+            return self.evaluateComparisonBoolean(span, input, comparison, scope.*, 0);
         }
         if (findMembership(input)) |membership| {
             const result = try self.evaluateMembership(
                 span,
                 input,
                 membership,
-                scope,
+                scope.*,
                 0,
             );
             return isTruthy(result);
         }
         if (findRelationalComparison(input)) |comparison| {
-            return self.evaluateComparisonBoolean(span, input, comparison, scope, 0);
+            return self.evaluateComparisonBoolean(span, input, comparison, scope.*, 0);
         }
-        return isTruthy(try self.evaluateValue(span, input, scope, 0));
+        return isTruthy(try self.evaluateValue(span, input, scope.*, 0));
     }
 
     fn evaluateComparison(
