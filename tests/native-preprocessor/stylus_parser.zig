@@ -229,6 +229,40 @@ test "native Stylus parser owns single-line callable blocks without consuming in
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .declaration));
 }
 
+test "native Stylus parser preserves spaced keyframe name interpolation" {
+    const input =
+        \\@keyframes {'foo' + 1}
+        \\  5%
+        \\    left 5
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("keyframe-name-interpolation.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const at_rule = try document.get(root_children[0]);
+    try std.testing.expectEqual(syntax.Kind.at_rule, at_rule.kind);
+    try std.testing.expectEqualStrings(
+        "@keyframes {'foo' + 1}",
+        try sources.slice(at_rule.text.?),
+    );
+    const at_rule_children = try document.children(root_children[0]);
+    try std.testing.expectEqual(@as(usize, 2), at_rule_children.len);
+    try std.testing.expectEqual(syntax.Kind.block, (try document.get(at_rule_children[1])).kind);
+    try std.testing.expectEqual(@as(usize, 1), countKind(&document, .interpolation));
+}
+
 test "native Stylus parser owns multiline callable signatures at their closing parenthesis" {
     const lower_input =
         \\pad(

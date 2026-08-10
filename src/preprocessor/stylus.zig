@@ -575,7 +575,11 @@ pub const Parser = struct {
                     trailing[0] != ';' and
                     !std.mem.startsWith(u8, trailing, "//") and
                     !std.mem.startsWith(u8, trailing, "/*");
-                if ((interpolation_prefix or interpolation_suffix) and
+                const keyframe_name_interpolation =
+                    std.ascii.eqlIgnoreCase(trimAscii(prefix), "@keyframes") and
+                    trimAscii(interior).len > 0;
+                if ((interpolation_prefix or interpolation_suffix or
+                    keyframe_name_interpolation) and
                     !containsUnquotedAny(interior, ":;"))
                 {
                     return false;

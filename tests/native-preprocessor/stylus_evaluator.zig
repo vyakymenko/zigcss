@@ -293,6 +293,48 @@ const font_face_css =
     "@font-face{font-family:\"Lower\";src:url(\"lower.woff\")}" ++
     "@font-face{font-family:'Explicit'}";
 
+const keyframe_loop_terminal_input =
+    \\vendors = official
+    \\for index in 1..3
+    \\  @keyframes {'pulse' + index}
+    \\    from
+    \\      opacity index
+;
+
+const keyframe_loop_terminal_css =
+    "@keyframes pulse1{from{opacity:1}}" ++
+    "@keyframes pulse2{from{opacity:2}}" ++
+    "@keyframes pulse3{from{opacity:3}}";
+
+const keyframe_semantic_input =
+    \\steps()
+    \\  75%
+    \\    opacity 1
+    \\@keyframes early
+    \\  from
+    \\    opacity 0
+    \\vendors = official
+    \\@keyframes pulse {
+    \\  from { opacity: 0; background-image: radial-gradient(yellow 0%, red 50%, black 100%); }
+    \\  50% {}
+    \\  to {}
+    \\  steps() if true
+    \\  steps() unless true
+    \\}
+    \\.owner
+    \\  @keyframes nested
+    \\    from
+    \\      opacity 0
+;
+
+const keyframe_semantic_css =
+    "@keyframes nested{from{opacity:0}}" ++
+    "@-moz-keyframes early{from{opacity:0}}" ++
+    "@-webkit-keyframes early{from{opacity:0}}" ++
+    "@-o-keyframes early{ from { opacity: 0; } }" ++
+    "@keyframes early{from{opacity:0}}" ++
+    "@keyframes pulse{from{opacity:0;background-image:radial-gradient(#ff0 0%, #f00 50%, #000 100%)}75%{opacity:1}}";
+
 const complex_for_input =
     \\values = a b c d
     \\body
@@ -2417,6 +2459,61 @@ test "native Stylus evaluates compact declaration values inside explicit CSS blo
         .type_mismatch,
         "native Stylus callable arguments are invalid",
         @intCast(std.mem.indexOf(u8, invalid, "@keyframes").?),
+    );
+}
+
+test "native Stylus keyframe steps preserve the finite empty block contract" {
+    var first = try compile(std.testing.allocator, keyframe_semantic_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, keyframe_semantic_input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(keyframe_semantic_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
+test "native Stylus keyframe loops own finite lower terminal and over-limit boundaries" {
+    const lower_input =
+        \\vendors = official
+        \\for index in 1..1
+        \\  @keyframes {'pulse' + index}
+        \\    from
+        \\      opacity index
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_loop_iterations = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "@keyframes pulse1{from{opacity:1}}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 3;
+    var first = try compile(std.testing.allocator, keyframe_loop_terminal_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, keyframe_loop_terminal_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(keyframe_loop_terminal_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 2;
+    try expectSemanticRejectionWithLimits(
+        keyframe_loop_terminal_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, keyframe_loop_terminal_input, "for index").?),
     );
 }
 
@@ -5119,6 +5216,18 @@ fn exerciseKeyframeVendorAllocationFailures(allocator: std.mem.Allocator) !void 
     );
 }
 
+fn exerciseKeyframeConformanceAllocationFailures(allocator: std.mem.Allocator) !void {
+    var semantic = try compile(allocator, keyframe_semantic_input, .{});
+    defer semantic.deinit();
+    try std.testing.expectEqualStrings(keyframe_semantic_css, semantic.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 3;
+    var result = try compile(allocator, keyframe_loop_terminal_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(keyframe_loop_terminal_css, result.css());
+}
+
 fn exercisePropertySlashAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
@@ -5508,6 +5617,14 @@ test "native Stylus keyframe vendor transaction handles every allocation failure
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseKeyframeVendorAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus keyframe conformance handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseKeyframeConformanceAllocationFailures,
         .{},
     );
 }

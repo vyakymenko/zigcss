@@ -2394,6 +2394,11 @@ const ActiveProperty = struct {
     scope: native_environment.ScopeId,
 };
 
+const PendingRootAtRule = struct {
+    id: native_syntax.NodeId,
+    scope: native_environment.ScopeId,
+};
+
 const NestedRule = struct {
     id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
@@ -2700,6 +2705,8 @@ const Engine = struct {
         try self.collectStaticExtensions(root_statements, null, false);
         var ordinary: std.ArrayList(native_syntax.NodeId) = .empty;
         defer ordinary.deinit(self.allocator);
+        var pending_keyframes: std.ArrayList(PendingRootAtRule) = .empty;
+        defer pending_keyframes.deinit(self.allocator);
         for ([_][]const u8{ "@charset", "@import" }) |keyword| {
             for (root_statements) |statement_id| {
                 const statement = try self.document.get(statement_id);
@@ -2712,28 +2719,43 @@ const Engine = struct {
             const statement = try self.document.get(statement_id);
             if (statement.kind == .at_rule and statement.text != null) {
                 const raw = std.mem.trim(u8, try self.sources.slice(statement.text.?), " \t\r\n\x0c;");
-                if (startsWordAscii(raw, "@charset") or startsWordAscii(raw, "@import") or
-                    startsWordAscii(raw, "@keyframes"))
-                {
+                if (startsWordAscii(raw, "@charset") or startsWordAscii(raw, "@import")) {
+                    continue;
+                }
+                if (startsWordAscii(raw, "@keyframes")) {
+                    if (ordinary.items.len > 0) {
+                        const returned = try self.executeStatements(
+                            ordinary.items,
+                            &scope,
+                            null,
+                            false,
+                        );
+                        if (returned != null) return error.InvalidDocument;
+                        ordinary.clearRetainingCapacity();
+                    }
+                    try pending_keyframes.append(self.allocator, .{
+                        .id = statement_id,
+                        .scope = scope,
+                    });
                     continue;
                 }
             }
             try ordinary.append(self.allocator, statement_id);
         }
-        const returned = try self.executeStatements(
-            ordinary.items,
-            &scope,
-            null,
-            false,
-        );
-        if (returned != null) return error.InvalidDocument;
-        for (root_statements) |statement_id| {
-            const statement = try self.document.get(statement_id);
-            if (statement.kind != .at_rule or statement.text == null) continue;
-            const raw = std.mem.trim(u8, try self.sources.slice(statement.text.?), " \t\r\n\x0c;");
-            if (startsWordAscii(raw, "@keyframes")) {
-                try self.emitAtRule(statement_id, scope, null);
-            }
+        if (ordinary.items.len > 0) {
+            const returned = try self.executeStatements(
+                ordinary.items,
+                &scope,
+                null,
+                false,
+            );
+            if (returned != null) return error.InvalidDocument;
+        }
+        const completed_scope = scope;
+        defer scope = completed_scope;
+        for (pending_keyframes.items) |pending| {
+            scope = pending.scope;
+            try self.emitAtRule(pending.id, pending.scope, null);
         }
     }
 
@@ -3876,10 +3898,47 @@ const Engine = struct {
         const callable_count = self.active_callables.items.len;
         try self.active_callables.appendSlice(self.allocator, child.active_callables);
         defer self.active_callables.shrinkRetainingCapacity(callable_count);
+        if (!at_rule and self.active_keyframe_header != null) {
+            const node = try self.document.get(child.id);
+            const children = try self.document.children(child.id);
+            if (node.kind == .expression or (node.kind == .rule and children.len == 1)) {
+                try self.emitEmptyKeyframeStep(child.id, child.scope);
+                return;
+            }
+        }
         if (at_rule) {
             try self.emitAtRule(child.id, child.scope, parent_selector);
         } else {
             try self.emitRule(child.id, child.scope, parent_selector);
+        }
+    }
+
+    fn emitEmptyKeyframeStep(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+        scope: native_environment.ScopeId,
+    ) Error!void {
+        const node = try self.document.get(node_id);
+        const text = switch (node.kind) {
+            .expression => node.text orelse return error.InvalidDocument,
+            .rule => blk: {
+                const children = try self.document.children(node_id);
+                if (children.len != 1) return error.InvalidDocument;
+                const selector = try self.document.get(children[0]);
+                if (selector.kind != .selector or selector.text == null) {
+                    return error.InvalidDocument;
+                }
+                break :blk selector.text.?;
+            },
+            else => return error.InvalidDocument,
+        };
+        const rendered = try self.renderTextOwned(text, scope, .selector, 0);
+        defer self.allocator.free(rendered);
+        const normalized = try self.normalizeSelectorLines(text, rendered);
+        defer self.allocator.free(normalized);
+        if (!isKeyframeStepSelector(normalized)) {
+            try self.reportInvalidArguments(text);
+            return error.InvalidArguments;
         }
     }
 
@@ -4306,16 +4365,18 @@ const Engine = struct {
             null;
         defer if (spaced_media_header) |owned| self.allocator.free(owned);
         const final_header = spaced_media_header orelse emitted_header;
-        const retains_parent_selector = !startsWordAscii(final_header, "@font-face");
+        const is_keyframes = isKeyframesHeader(final_header);
+        const retains_parent_selector = !startsWordAscii(final_header, "@font-face") and
+            !is_keyframes;
         const content_parent_selector = if (retains_parent_selector)
             parent_selector
         else
             null;
-        const media_checkpoint = if (is_media and self.mode == .emit)
+        const content_checkpoint = if ((is_media or is_keyframes) and self.mode == .emit)
             try self.transaction.stagingCheckpoint()
         else
             null;
-        errdefer if (media_checkpoint) |checkpoint_value| {
+        errdefer if (content_checkpoint) |checkpoint_value| {
             self.transaction.restoreStaging(checkpoint_value) catch {};
         };
         try self.emitMapped(at_rule.text.?, null, final_header);
@@ -4370,7 +4431,7 @@ const Engine = struct {
         if (returned != null) return error.InvalidDocument;
 
         try self.emit(if (self.emittingOKeyframes()) " { " else "{");
-        const content_start = if (media_checkpoint != null)
+        const content_start = if (content_checkpoint != null)
             self.transaction.position()
         else
             null;
@@ -4394,7 +4455,7 @@ const Engine = struct {
             try self.emitNestedOutput(child, content_parent_selector, true);
         }
         for (cached.items) |*item| try self.emitCachedRule(item);
-        if (media_checkpoint) |checkpoint_value| {
+        if (content_checkpoint) |checkpoint_value| {
             if (std.meta.eql(content_start.?, self.transaction.position())) {
                 try self.transaction.restoreStaging(checkpoint_value);
                 return;
@@ -4817,7 +4878,31 @@ const Engine = struct {
                 .expression => {
                     previous_condition = null;
                     if (output) |destination| {
-                        try self.invokeMixinStatement(statement_id, scope, destination);
+                        const text = statement.text orelse return error.InvalidDocument;
+                        const raw = std.mem.trim(
+                            u8,
+                            try self.sources.slice(text),
+                            " \t\r\n\x0c;",
+                        );
+                        if (self.active_keyframe_header != null and
+                            isKeyframeStepSelector(raw))
+                        {
+                            const active_callables = try self.allocator.dupe(
+                                []const u8,
+                                self.active_callables.items,
+                            );
+                            destination.nested.append(self.allocator, .{
+                                .id = statement_id,
+                                .scope = scope.*,
+                                .class_prefix = self.active_class_prefix,
+                                .active_callables = active_callables,
+                            }) catch |failure| {
+                                self.allocator.free(active_callables);
+                                return failure;
+                            };
+                        } else {
+                            try self.invokeMixinStatement(statement_id, scope, destination);
+                        }
                     } else if (allow_return) {
                         const text = statement.text orelse return error.InvalidDocument;
                         const raw = std.mem.trim(
@@ -5263,14 +5348,28 @@ const Engine = struct {
         const text = statement.text orelse return error.InvalidDocument;
         const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;");
         if (nameEql(raw, "null")) return;
-        const call = parseCall(raw) orelse parseBareCall(raw) orelse {
+        var expression = raw;
+        if (self.active_keyframe_header != null) {
+            const postfix = splitPostfixCondition(raw);
+            if (postfix.condition) |condition| {
+                var selected = try self.evaluateCondition(
+                    text,
+                    raw[condition.expression.start..condition.expression.end],
+                    scope.*,
+                );
+                if (condition.negated) selected = !selected;
+                if (!selected) return;
+                expression = raw[postfix.declaration.start..postfix.declaration.end];
+            }
+        }
+        const call = parseCall(expression) orelse parseBareCall(expression) orelse {
             try self.reportUndefinedCallable(text);
             return error.UndefinedCallable;
         };
-        const name = raw[call.name.start..call.name.end];
+        const name = expression[call.name.start..call.name.end];
         if (try self.resolveCallable(scope.*, name) == null) {
             if (call.parenthesized and isBuiltinCallableName(name)) {
-                _ = try self.evaluateValue(text, raw, scope.*, 0);
+                _ = try self.evaluateValue(text, expression, scope.*, 0);
                 return;
             }
             try self.reportUndefinedCallable(text);
@@ -5278,7 +5377,7 @@ const Engine = struct {
         }
         const returned = try self.invokeUserCallable(
             text,
-            raw,
+            expression,
             call,
             scope.*,
             output,
@@ -7015,6 +7114,11 @@ const Engine = struct {
                 try self.reportInvalidArguments(span);
                 return error.InvalidArguments;
             }
+            if (self.active_keyframe_header != null and
+                nameEql(name, "radial-gradient"))
+            {
+                return self.evaluateKeyframeRadialGradient(span, input, call);
+            }
             return self.ownValue(span, .{ .string = .{ .bytes = input } });
         }
         if (parseBareCall(input)) |call| {
@@ -7068,6 +7172,85 @@ const Engine = struct {
             return self.evaluateList(span, input, space_items.items, .space, scope, depth + 1);
         }
         return self.ownValue(span, .{ .string = .{ .bytes = input } });
+    }
+
+    fn evaluateKeyframeRadialGradient(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+    ) Error!*const native_value.Value {
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        var copied: usize = 0;
+        var cursor = call.arguments.start;
+        var quote: u8 = 0;
+        var escaped = false;
+        var block_comment = false;
+        while (cursor < call.arguments.end) {
+            const byte = raw[cursor];
+            if (block_comment) {
+                if (byte == '*' and cursor + 1 < call.arguments.end and
+                    raw[cursor + 1] == '/')
+                {
+                    block_comment = false;
+                    cursor += 2;
+                } else {
+                    cursor += 1;
+                }
+                continue;
+            }
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                } else if (byte == '\\') {
+                    escaped = true;
+                } else if (byte == quote) {
+                    quote = 0;
+                }
+                cursor += 1;
+                continue;
+            }
+            if (byte == '/' and cursor + 1 < call.arguments.end and
+                raw[cursor + 1] == '*')
+            {
+                block_comment = true;
+                cursor += 2;
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                quote = byte;
+                cursor += 1;
+                continue;
+            }
+            if (!isNameStart(raw, cursor) or
+                (cursor > call.arguments.start and
+                    (std.ascii.isAlphanumeric(raw[cursor - 1]) or
+                        std.mem.indexOfScalar(u8, "_$-#", raw[cursor - 1]) != null)))
+            {
+                cursor += 1;
+                continue;
+            }
+            const end = @min(nameEnd(raw, cursor), call.arguments.end);
+            const token = raw[cursor..end];
+            const is_nested_function = end < call.arguments.end and raw[end] == '(';
+            const color = if (!is_nested_function and
+                !std.ascii.eqlIgnoreCase(token, "transparent"))
+                native_color.parseLiteral(token)
+            else
+                null;
+            if (color) |parsed| {
+                try self.appendTemporary(&output, span, raw[copied..cursor]);
+                const value: native_value.Value = .{ .color = parsed };
+                const serialized = try self.serializeValueOwned(&value, .value, span);
+                defer self.allocator.free(serialized);
+                try self.appendTemporary(&output, span, serialized);
+                copied = end;
+            }
+            cursor = end;
+        }
+        try self.appendTemporary(&output, span, raw[copied..]);
+        return self.ownStringResult(span, output.items, false);
     }
 
     fn evaluateList(
@@ -11509,6 +11692,45 @@ const Engine = struct {
         );
     }
 };
+
+fn isKeyframeStepSelector(raw: []const u8) bool {
+    var selectors = std.mem.splitScalar(u8, raw, ',');
+    var count: usize = 0;
+    while (selectors.next()) |part| {
+        const selector = std.mem.trim(u8, part, " \t\r\n\x0c");
+        if (selector.len == 0) return false;
+        count += 1;
+        if (std.ascii.eqlIgnoreCase(selector, "from") or
+            std.ascii.eqlIgnoreCase(selector, "to"))
+        {
+            continue;
+        }
+        if (selector[selector.len - 1] != '%') return false;
+        const percentage = std.mem.trimRight(
+            u8,
+            selector[0 .. selector.len - 1],
+            " \t\r\n\x0c",
+        );
+        if (percentage.len == 0) return false;
+        const value = std.fmt.parseFloat(f64, percentage) catch return false;
+        if (!std.math.isFinite(value)) return false;
+    }
+    return count > 0;
+}
+
+fn isKeyframesHeader(raw_input: []const u8) bool {
+    const raw = std.mem.trimLeft(u8, raw_input, " \t\r\n\x0c");
+    var end: usize = 0;
+    while (end < raw.len and !std.ascii.isWhitespace(raw[end]) and
+        raw[end] != ';' and raw[end] != '{') : (end += 1)
+    {}
+    const keyword = raw[0..end];
+    if (std.ascii.eqlIgnoreCase(keyword, "@keyframes")) return true;
+    const suffix = "-keyframes";
+    return keyword.len > suffix.len + 2 and
+        keyword[0] == '@' and keyword[1] == '-' and
+        std.ascii.eqlIgnoreCase(keyword[keyword.len - suffix.len ..], suffix);
+}
 
 fn eolEscapeEnd(raw: []const u8, opening: usize) ?usize {
     if (opening >= raw.len or raw[opening] != '\\') return null;
