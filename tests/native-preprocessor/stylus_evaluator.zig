@@ -400,6 +400,22 @@ const function_arguments_css = "body{padding:15;padding:1 2}" ++
     ".defaults{p0:4px;p1:5px}.opaque{color:#000}" ++
     ".translucent{color:rgba(0,0,0,0.5)}img{width:auto!important}";
 
+const keyword_arguments_input =
+    \\pad-y(top, bottom)
+    \\  padding-top top
+    \\  padding-bottom bottom
+    \\body
+    \\  pad-y(bottom: 100px, top: 15px)
+    \\  quotient operate(right: 2, left: 10, op: '/')
+    \\  joined join(1 2 3, delim: '|')
+    \\  spread join(1, delim: '|', 2, 3)
+    \\  tint rgba(alpha: 0.5, green: 50, red: 100, 10)
+;
+
+const keyword_arguments_css = "body{padding-top:15px;padding-bottom:100px;" ++
+    "quotient:5;joined:'1|2|3';spread:'1|2|3';" ++
+    "tint:rgba(100,50,10,0.5)}";
+
 const function_property_alias_input =
     \\box-shadow-important()
     \\  push(arguments, !important)
@@ -4509,6 +4525,96 @@ test "native Stylus function arguments preserve defaults forwarding and property
     );
 }
 
+test "native Stylus keyword arguments bind builtins and user callables deterministically" {
+    const lower_input =
+        \\body
+        \\  quotient operate(10, op: '/', 2)
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{quotient:5}", lower.css());
+
+    var first = try compile(std.testing.allocator, keyword_arguments_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, keyword_arguments_input, .{});
+    defer second.deinit();
+    try std.testing.expectEqualStrings(keyword_arguments_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const collection_input =
+        \\body
+        \\  joined join(1 2 3, delim: '|')
+    ;
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_collection_items = 3;
+    var collection = try compile(std.testing.allocator, collection_input, terminal);
+    defer collection.deinit();
+    try std.testing.expectEqualStrings("body{joined:'1|2|3'}", collection.css());
+
+    var over_limit = terminal;
+    over_limit.values.max_collection_items = 2;
+    try expectSemanticRejectionWithLimits(
+        collection_input,
+        over_limit,
+        error.ValueLimitExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.indexOf(u8, collection_input, "join(1 2 3").?),
+    );
+
+    const duplicate =
+        \\body
+        \\  value operate(op: '/', left: 10, right: 2, op: '*')
+    ;
+    try expectSemanticRejection(
+        duplicate,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, duplicate, "operate").?),
+    );
+
+    const missing =
+        \\body
+        \\  value operate(op: '/', left: 10)
+    ;
+    try expectSemanticRejection(
+        missing,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, missing, "operate").?),
+    );
+
+    const excess =
+        \\body
+        \\  value rgba(red: 100, green: 50, blue: 10, alpha: 0.5, 1)
+    ;
+    try expectSemanticRejection(
+        excess,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, excess, "rgba").?),
+    );
+
+    const unknown =
+        \\body
+        \\  value join(separator: '|', 1, 2)
+    ;
+    try expectSemanticRejection(
+        unknown,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, unknown, "join").?),
+    );
+}
+
 test "native Stylus property functions emit declarations through callable aliases" {
     const lower_input =
         \\border-radius(size)
@@ -5577,6 +5683,12 @@ fn exerciseFunctionArgumentsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(function_arguments_css, result.css());
 }
 
+fn exerciseKeywordArgumentsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, keyword_arguments_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(keyword_arguments_css, result.css());
+}
+
 fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 1;
@@ -5940,6 +6052,14 @@ test "native Stylus function arguments handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseFunctionArgumentsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus keyword arguments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseKeywordArgumentsAllocationFailures,
         .{},
     );
 }

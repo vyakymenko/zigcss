@@ -7723,6 +7723,22 @@ const Engine = struct {
         }
         var arguments = if (nameEql(name, "join"))
             try self.evaluateJoinCallArguments(span, raw, call, scope)
+        else if (nameEql(name, "rgb"))
+            try self.evaluateNamedColorCallArguments(
+                span,
+                raw,
+                call,
+                scope,
+                &.{ "red", "green", "blue" },
+            )
+        else if (nameEql(name, "rgba"))
+            try self.evaluateNamedColorCallArguments(
+                span,
+                raw,
+                call,
+                scope,
+                &.{ "red", "green", "blue", "alpha" },
+            )
         else
             try self.evaluateCallArguments(span, raw, call, scope);
         defer arguments.deinit(self.allocator);
@@ -9340,6 +9356,103 @@ const Engine = struct {
         return output;
     }
 
+    fn bindBuiltinArgumentText(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        parameter_names: []const []const u8,
+        has_rest_parameter: bool,
+    ) Error!std.ArrayList([]const u8) {
+        var ranges = try splitTopLevel(
+            self.allocator,
+            raw[call.arguments.start..call.arguments.end],
+            ',',
+        );
+        defer ranges.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) ranges.clearRetainingCapacity();
+
+        const named_values = try self.allocator.alloc(?[]const u8, parameter_names.len);
+        defer self.allocator.free(named_values);
+        @memset(named_values, null);
+        var positional: std.ArrayList([]const u8) = .empty;
+        defer positional.deinit(self.allocator);
+        try positional.ensureTotalCapacity(self.allocator, ranges.items.len);
+
+        var had_named = false;
+        for (ranges.items) |range| {
+            const argument = std.mem.trim(
+                u8,
+                raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+                " \t\r\n\x0c",
+            );
+            if (argument.len == 0) return self.invalidBuiltinArguments(span);
+            const named = splitNamedArgument(argument) orelse {
+                positional.appendAssumeCapacity(argument);
+                continue;
+            };
+            had_named = true;
+            const parameter_index = for (parameter_names, 0..) |name, index| {
+                if (std.mem.eql(u8, name, named.name)) break index;
+            } else return self.invalidBuiltinArguments(span);
+            if (named_values[parameter_index] != null) {
+                return self.invalidBuiltinArguments(span);
+            }
+            named_values[parameter_index] = named.value;
+        }
+
+        if (!had_named) {
+            const output = positional;
+            positional = .empty;
+            return output;
+        }
+
+        var output: std.ArrayList([]const u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try output.ensureTotalCapacity(self.allocator, ranges.items.len);
+        var positional_index: usize = 0;
+        for (named_values) |named_value| {
+            if (named_value) |value| {
+                output.appendAssumeCapacity(value);
+            } else if (positional_index < positional.items.len) {
+                output.appendAssumeCapacity(positional.items[positional_index]);
+                positional_index += 1;
+            } else {
+                return self.invalidBuiltinArguments(span);
+            }
+        }
+        if (!has_rest_parameter and positional_index != positional.items.len) {
+            return self.invalidBuiltinArguments(span);
+        }
+        output.appendSliceAssumeCapacity(positional.items[positional_index..]);
+        return output;
+    }
+
+    fn evaluateNamedColorCallArguments(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+        parameter_names: []const []const u8,
+    ) Error!std.ArrayList(*const native_value.Value) {
+        var argument_text = try self.bindBuiltinArgumentText(
+            span,
+            raw,
+            call,
+            parameter_names,
+            false,
+        );
+        defer argument_text.deinit(self.allocator);
+        var output: std.ArrayList(*const native_value.Value) = .empty;
+        errdefer output.deinit(self.allocator);
+        try output.ensureTotalCapacity(self.allocator, argument_text.items.len);
+        for (argument_text.items) |argument| {
+            output.appendAssumeCapacity(try self.evaluateValue(span, argument, scope, 0));
+        }
+        return output;
+    }
+
     fn flattenColorBuiltinArguments(
         self: *Engine,
         span: native_source.Span,
@@ -9576,20 +9689,16 @@ const Engine = struct {
     ) Error!std.ArrayList(*const native_value.Value) {
         var output: std.ArrayList(*const native_value.Value) = .empty;
         errdefer output.deinit(self.allocator);
-        var ranges = try splitTopLevel(self.allocator, raw[call.arguments.start..call.arguments.end], ',');
-        defer ranges.deinit(self.allocator);
-        if (call.arguments.start == call.arguments.end) ranges.clearRetainingCapacity();
-        try output.ensureTotalCapacity(self.allocator, ranges.items.len);
-        for (ranges.items, 0..) |range, index| {
-            const argument = std.mem.trim(
-                u8,
-                raw[call.arguments.start + range.start .. call.arguments.start + range.end],
-                " \t\r\n\x0c",
-            );
-            if (argument.len == 0) {
-                try self.reportInvalidArguments(span);
-                return error.InvalidArguments;
-            }
+        var arguments = try self.bindBuiltinArgumentText(
+            span,
+            raw,
+            call,
+            &.{"delim"},
+            true,
+        );
+        defer arguments.deinit(self.allocator);
+        try output.ensureTotalCapacity(self.allocator, arguments.items.len);
+        for (arguments.items, 0..) |argument, index| {
             if (index == 0) {
                 output.appendAssumeCapacity(try self.evaluateValue(span, argument, scope, 0));
                 continue;
@@ -9648,38 +9757,35 @@ const Engine = struct {
         call: Call,
         scope: native_environment.ScopeId,
     ) Error!*const native_value.Value {
-        var ranges = try splitTopLevel(self.allocator, raw[call.arguments.start..call.arguments.end], ',');
-        defer ranges.deinit(self.allocator);
-        if (ranges.items.len != 3) return self.invalidBuiltinArguments(span);
-        var arguments: [3][]const u8 = undefined;
-        for (ranges.items, 0..) |range, index| {
-            arguments[index] = std.mem.trim(
-                u8,
-                raw[call.arguments.start + range.start .. call.arguments.start + range.end],
-                " \t\r\n\x0c",
-            );
-            if (arguments[index].len == 0) return self.invalidBuiltinArguments(span);
-        }
-        const operation = if (parseGenericTernary(arguments[0])) |ternary| blk: {
-            const condition = arguments[0][ternary.condition.start..ternary.condition.end];
+        var arguments = try self.bindBuiltinArgumentText(
+            span,
+            raw,
+            call,
+            &.{ "op", "left", "right" },
+            false,
+        );
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len != 3) return self.invalidBuiltinArguments(span);
+        const operation = if (parseGenericTernary(arguments.items[0])) |ternary| blk: {
+            const condition = arguments.items[0][ternary.condition.start..ternary.condition.end];
             const selected = if (try self.evaluateCondition(span, condition, scope))
                 ternary.when_true
             else
                 ternary.when_false;
             break :blk try self.evaluateValue(
                 span,
-                arguments[0][selected.start..selected.end],
+                arguments.items[0][selected.start..selected.end],
                 scope,
                 0,
             );
-        } else try self.evaluateValue(span, arguments[0], scope, 0);
+        } else try self.evaluateValue(span, arguments.items[0], scope, 0);
         if (operation.* != .string or !operation.string.quoted or operation.string.bytes.len != 1 or
             std.mem.indexOfScalar(u8, "+-*/%", operation.string.bytes[0]) == null)
         {
             return self.invalidBuiltinArguments(span);
         }
-        const left = try self.evaluateValue(span, arguments[1], scope, 0);
-        const right = try self.evaluateValue(span, arguments[2], scope, 0);
+        const left = try self.evaluateValue(span, arguments.items[1], scope, 0);
+        const right = try self.evaluateValue(span, arguments.items[2], scope, 0);
         return self.evaluateGenericBinary(span, left, right, operation.string.bytes[0]);
     }
 
