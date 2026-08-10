@@ -476,6 +476,39 @@ test "native Stylus parser owns single-line callable blocks without consuming in
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .declaration));
 }
 
+test "native Stylus parser preserves variable block insertion as an expression" {
+    const input =
+        \\emit()
+        \\  for $block in $blocks
+        \\    {$block}
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("variable-block-insertion.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    var insertion_kind: ?syntax.Kind = null;
+    for (document.nodes()) |node| {
+        const text = node.text orelse continue;
+        const raw = std.mem.trim(
+            u8,
+            try sources.slice(text),
+            " \t\r\n\x0c;",
+        );
+        if (std.mem.eql(u8, raw, "{$block}")) insertion_kind = node.kind;
+    }
+    try std.testing.expectEqual(syntax.Kind.expression, insertion_kind.?);
+}
+
 test "native Stylus parser preserves spaced keyframe name interpolation" {
     const input =
         \\@keyframes {'foo' + 1}

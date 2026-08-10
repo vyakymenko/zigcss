@@ -2260,6 +2260,7 @@ const StylusMatchFlags = struct {
 
 const StylusLiteralPattern = struct {
     bytes: []const u8,
+    literal_len: usize,
     anchor_start: bool,
     anchor_end: bool,
 };
@@ -2288,6 +2289,11 @@ const MemberAssignment = struct {
     path: []const u8,
     value: []const u8,
     value_empty: bool,
+};
+
+const MemberTarget = struct {
+    base: []const u8,
+    path: []const u8,
 };
 
 const ResolvedMember = union(enum) {
@@ -2423,9 +2429,13 @@ const NestedRule = struct {
     scope: native_environment.ScopeId,
     class_prefix: ?[]const u8 = null,
     active_callables: []const []const u8 = &.{},
+    rule_selector: ?[]u8 = null,
+    selector_identity: ?[]u8 = null,
 
     fn deinit(self: *NestedRule, allocator: std.mem.Allocator) void {
         allocator.free(self.active_callables);
+        if (self.rule_selector) |selector| allocator.free(selector);
+        if (self.selector_identity) |selector| allocator.free(selector);
         self.* = undefined;
     }
 };
@@ -2653,6 +2663,12 @@ const BlockValue = struct {
     block_id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
     replay_side_effects: bool,
+    selector_identity: ?[]u8,
+
+    fn deinit(self: *BlockValue, allocator: std.mem.Allocator) void {
+        if (self.selector_identity) |selector| allocator.free(selector);
+        self.* = undefined;
+    }
 };
 
 const EngineMode = enum {
@@ -2771,6 +2787,7 @@ const Engine = struct {
         self.current_property_bindings.deinit(self.allocator);
         for (self.json_local_names.items) |name| self.allocator.free(name);
         self.json_local_names.deinit(self.allocator);
+        for (self.block_values.items) |*block_value| block_value.deinit(self.allocator);
         self.block_values.deinit(self.allocator);
         self.caller_scopes.deinit(self.allocator);
         self.active_callables.deinit(self.allocator);
@@ -3095,12 +3112,25 @@ const Engine = struct {
             return error.ValueLimitExceeded;
         }
         const index = self.block_values.items.len;
-        try self.block_values.append(self.allocator, .{
+        const captured_selector = self.active_selector_identity orelse
+            self.active_rule_selector;
+        const selector_identity = if (captured_selector) |selector|
+            try self.allocator.dupe(u8, selector)
+        else
+            null;
+        self.block_values.append(self.allocator, .{
             .block_id = block_id,
             .scope = scope,
             .replay_side_effects = replay_side_effects,
-        });
-        errdefer _ = self.block_values.pop();
+            .selector_identity = selector_identity,
+        }) catch |failure| {
+            if (selector_identity) |selector| self.allocator.free(selector);
+            return failure;
+        };
+        errdefer {
+            var removed = self.block_values.pop().?;
+            removed.deinit(self.allocator);
+        }
         var marker_buffer: [block_value_prefix.len + 10]u8 = undefined;
         const marker = std.fmt.bufPrint(
             &marker_buffer,
@@ -4205,8 +4235,16 @@ const Engine = struct {
         at_rule: bool,
     ) Error!void {
         const previous_prefix = self.active_class_prefix;
+        const previous_rule_selector = self.active_rule_selector;
+        const previous_selector_identity = self.active_selector_identity;
         self.active_class_prefix = child.class_prefix;
-        defer self.active_class_prefix = previous_prefix;
+        self.active_rule_selector = child.rule_selector;
+        self.active_selector_identity = child.selector_identity;
+        defer {
+            self.active_class_prefix = previous_prefix;
+            self.active_rule_selector = previous_rule_selector;
+            self.active_selector_identity = previous_selector_identity;
+        }
         const callable_count = self.active_callables.items.len;
         try self.active_callables.appendSlice(self.allocator, child.active_callables);
         defer self.active_callables.shrinkRetainingCapacity(callable_count);
@@ -4223,6 +4261,37 @@ const Engine = struct {
         } else {
             try self.emitRule(child.id, child.scope, parent_selector);
         }
+    }
+
+    fn appendNestedOutput(
+        self: *Engine,
+        destination: *std.ArrayList(NestedRule),
+        statement_id: native_syntax.NodeId,
+        scope: native_environment.ScopeId,
+    ) Error!void {
+        const active_callables = try self.allocator.dupe(
+            []const u8,
+            self.active_callables.items,
+        );
+        errdefer self.allocator.free(active_callables);
+        const rule_selector = if (self.active_rule_selector) |selector|
+            try self.allocator.dupe(u8, selector)
+        else
+            null;
+        errdefer if (rule_selector) |selector| self.allocator.free(selector);
+        const selector_identity = if (self.active_selector_identity) |selector|
+            try self.allocator.dupe(u8, selector)
+        else
+            null;
+        errdefer if (selector_identity) |selector| self.allocator.free(selector);
+        try destination.append(self.allocator, .{
+            .id = statement_id,
+            .scope = scope,
+            .class_prefix = self.active_class_prefix,
+            .active_callables = active_callables,
+            .rule_selector = rule_selector,
+            .selector_identity = selector_identity,
+        });
     }
 
     fn emitEmptyKeyframeStep(
@@ -5579,19 +5648,11 @@ const Engine = struct {
                         scope.*,
                         self.active_selector_identity,
                     );
-                    const active_callables = try self.allocator.dupe(
-                        []const u8,
-                        self.active_callables.items,
+                    try self.appendNestedOutput(
+                        destination.nested,
+                        statement_id,
+                        scope.*,
                     );
-                    destination.nested.append(self.allocator, .{
-                        .id = statement_id,
-                        .scope = scope.*,
-                        .class_prefix = self.active_class_prefix,
-                        .active_callables = active_callables,
-                    }) catch |failure| {
-                        self.allocator.free(active_callables);
-                        return failure;
-                    };
                 },
                 .at_rule => {
                     previous_condition = null;
@@ -5630,19 +5691,11 @@ const Engine = struct {
                         try self.emitAtRule(statement_id, scope.*, self.active_selector_scope);
                         continue;
                     };
-                    const active_callables = try self.allocator.dupe(
-                        []const u8,
-                        self.active_callables.items,
+                    try self.appendNestedOutput(
+                        destination.at_rules,
+                        statement_id,
+                        scope.*,
                     );
-                    destination.at_rules.append(self.allocator, .{
-                        .id = statement_id,
-                        .scope = scope.*,
-                        .class_prefix = self.active_class_prefix,
-                        .active_callables = active_callables,
-                    }) catch |failure| {
-                        self.allocator.free(active_callables);
-                        return failure;
-                    };
                 },
                 .expression => {
                     previous_condition = null;
@@ -5656,19 +5709,11 @@ const Engine = struct {
                         if (self.active_keyframe_header != null and
                             isKeyframeStepSelector(raw))
                         {
-                            const active_callables = try self.allocator.dupe(
-                                []const u8,
-                                self.active_callables.items,
+                            try self.appendNestedOutput(
+                                destination.nested,
+                                statement_id,
+                                scope.*,
                             );
-                            destination.nested.append(self.allocator, .{
-                                .id = statement_id,
-                                .scope = scope.*,
-                                .class_prefix = self.active_class_prefix,
-                                .active_callables = active_callables,
-                            }) catch |failure| {
-                                self.allocator.free(active_callables);
-                                return failure;
-                            };
                         } else {
                             try self.invokeMixinStatement(statement_id, scope, destination);
                         }
@@ -6034,6 +6079,16 @@ const Engine = struct {
         const block = try self.document.get(block_value.block_id);
         if (block.kind != .block) return error.InvalidDocument;
         var block_scope = block_value.scope;
+        const previous_rule_selector = self.active_rule_selector;
+        const previous_selector_identity = self.active_selector_identity;
+        if (block_value.selector_identity) |selector| {
+            self.active_rule_selector = selector;
+            self.active_selector_identity = selector;
+        }
+        defer {
+            self.active_rule_selector = previous_rule_selector;
+            self.active_selector_identity = previous_selector_identity;
+        }
         const declaration_start = if (output) |destination|
             destination.declarations.items.len
         else
@@ -10219,9 +10274,16 @@ const Engine = struct {
             raw[call.arguments.start + ranges.items[0].start .. call.arguments.start + ranges.items[0].end],
             " \t\r\n\x0c",
         );
-        if (!validVariableName(variable)) return self.invalidBuiltinArguments(span);
-        const current = (try self.lookupBinding(scope, variable)) orelse
+        const member_target = parseMemberTarget(variable);
+        if (!validVariableName(variable) and member_target == null) {
             return self.invalidBuiltinArguments(span);
+        }
+        const current = if (member_target != null)
+            (try self.evaluateMemberChain(span, variable, scope)) orelse
+                return self.invalidBuiltinArguments(span)
+        else
+            (try self.lookupBinding(scope, variable)) orelse
+                return self.invalidBuiltinArguments(span);
         var values: std.ArrayList(native_value.Value) = .empty;
         defer values.deinit(self.allocator);
         if (current.* == .list) try values.appendSlice(self.allocator, current.list.items) else if (current.* != .null_value) try values.append(self.allocator, current.*);
@@ -10239,7 +10301,13 @@ const Engine = struct {
                 .items = values.items,
                 .separator = if (current.* == .list) current.list.separator else .space,
             } });
-            if (!(try self.updateMutationBinding(scope, variable, replacement))) {
+            if (!(try self.updateMutationTarget(
+                span,
+                scope,
+                variable,
+                member_target,
+                replacement,
+            ))) {
                 return self.invalidBuiltinArguments(span);
             }
             return removed;
@@ -10279,10 +10347,42 @@ const Engine = struct {
             .items = values.items,
             .separator = if (current.* == .list) current.list.separator else .space,
         } });
-        if (!(try self.updateMutationBinding(scope, variable, replacement))) {
+        if (!(try self.updateMutationTarget(
+            span,
+            scope,
+            variable,
+            member_target,
+            replacement,
+        ))) {
             return self.invalidBuiltinArguments(span);
         }
         return self.ownUnitlessNumber(span, @floatFromInt(values.items.len));
+    }
+
+    fn updateMutationTarget(
+        self: *Engine,
+        span: native_source.Span,
+        scope: native_environment.ScopeId,
+        name: []const u8,
+        member_target: ?MemberTarget,
+        replacement: *const native_value.Value,
+    ) Error!bool {
+        if (member_target) |target| {
+            try self.assignMemberReplacement(
+                span,
+                .{
+                    .base = target.base,
+                    .path = target.path,
+                    .value = "",
+                    .value_empty = true,
+                },
+                replacement,
+                scope,
+                true,
+            );
+            return true;
+        }
+        return self.updateMutationBinding(scope, name, replacement);
     }
 
     fn updateMutationBinding(
@@ -11700,6 +11800,9 @@ const Engine = struct {
                 0,
             );
         }
+        if (try self.evaluateMemberChain(span, source_condition, scope.*)) |member| {
+            return isTruthy(member);
+        }
         if (parseCall(source_condition)) |call| {
             const name = source_condition[call.name.start..call.name.end];
             if (nameEql(name, "selector-exists") and self.findCallable(name) == null) {
@@ -11708,6 +11811,14 @@ const Engine = struct {
                     source_condition,
                     call,
                     scope.*,
+                ));
+            }
+            if (isBuiltinCallableName(name)) {
+                return isTruthy(try self.evaluateValue(
+                    span,
+                    source_condition,
+                    scope.*,
+                    depth + 1,
                 ));
             }
         }
@@ -16282,12 +16393,22 @@ fn parseMemberAssignment(raw_input: []const u8) ?MemberAssignment {
     const separator = equals orelse return null;
     const left = std.mem.trim(u8, raw[0..separator], " \t\r\n\x0c");
     const value = std.mem.trim(u8, raw[separator + 1 ..], " \t\r\n\x0c");
-    if (left.len < 3) return null;
-    if (!isNameStart(left, 0)) return null;
-    const base_end = nameEnd(left, 0);
-    const base = left[0..base_end];
-    if (!validVariableName(base) or base_end >= left.len) return null;
-    const path = left[base_end..];
+    const target = parseMemberTarget(left) orelse return null;
+    return .{
+        .base = target.base,
+        .path = target.path,
+        .value = value,
+        .value_empty = value.len == 0,
+    };
+}
+
+fn parseMemberTarget(raw_input: []const u8) ?MemberTarget {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    if (raw.len < 3 or !isNameStart(raw, 0)) return null;
+    const base_end = nameEnd(raw, 0);
+    const base = raw[0..base_end];
+    if (!validVariableName(base) or base_end >= raw.len) return null;
+    const path = raw[base_end..];
     var cursor: usize = 0;
     var member_count: usize = 0;
     while (cursor < path.len) {
@@ -16295,12 +16416,7 @@ fn parseMemberAssignment(raw_input: []const u8) ?MemberAssignment {
         member_count += 1;
     }
     if (member_count == 0) return null;
-    return .{
-        .base = base,
-        .path = path,
-        .value = value,
-        .value_empty = value.len == 0,
-    };
+    return .{ .base = base, .path = path };
 }
 
 fn parseMemberReference(raw: []const u8, cursor: *usize) ?MemberReference {
@@ -16928,18 +17044,46 @@ fn parseStylusLiteralPattern(raw: []const u8) ?StylusLiteralPattern {
         anchor_start = true;
         start += 1;
     }
-    if (start < end and raw[end - 1] == '$') {
+    if (start < end and raw[end - 1] == '$' and
+        !stylusPatternByteEscaped(raw, end - 1))
+    {
         anchor_end = true;
         end -= 1;
     }
-    for (raw[start..end]) |byte| {
-        if (std.mem.indexOfScalar(u8, "\\.^$*+?()[]{}|", byte) != null) return null;
+    var literal_len: usize = 0;
+    var index = start;
+    while (index < end) {
+        const byte = raw[index];
+        if (byte == '\\') {
+            index += 1;
+            if (index >= end or
+                std.mem.indexOfScalar(u8, "\\.^$*+?()[]{}|", raw[index]) == null)
+            {
+                return null;
+            }
+        } else if (std.mem.indexOfScalar(u8, ".^$*+?()[]{}|", byte) != null) {
+            return null;
+        }
+        literal_len += 1;
+        index += 1;
     }
     return .{
         .bytes = raw[start..end],
+        .literal_len = literal_len,
         .anchor_start = anchor_start,
         .anchor_end = anchor_end,
     };
+}
+
+fn stylusPatternByteEscaped(raw: []const u8, index: usize) bool {
+    if (index == 0 or index >= raw.len) return false;
+    var cursor = index;
+    var slashes: usize = 0;
+    while (cursor > 0 and raw[cursor - 1] == '\\') {
+        cursor -= 1;
+        slashes += 1;
+    }
+    return slashes % 2 == 1;
 }
 
 fn parseStylusStructuredMatchPattern(raw: []const u8) ?StylusStructuredMatchPattern {
@@ -17014,8 +17158,8 @@ fn findStylusLiteralMatch(
     flags: StylusMatchFlags,
     search_start: usize,
 ) ?ByteRange {
-    if (pattern.bytes.len > subject.len or search_start > subject.len) return null;
-    const terminal = subject.len - pattern.bytes.len;
+    if (pattern.literal_len > subject.len or search_start > subject.len) return null;
+    const terminal = subject.len - pattern.literal_len;
     var index = search_start;
     while (index <= terminal) : (index += 1) {
         if (pattern.anchor_start and index != 0 and
@@ -17023,17 +17167,42 @@ fn findStylusLiteralMatch(
         {
             continue;
         }
-        if (pattern.anchor_end and index + pattern.bytes.len != subject.len and
-            !(flags.multiline and subject[index + pattern.bytes.len] == '\n'))
+        if (pattern.anchor_end and index + pattern.literal_len != subject.len and
+            !(flags.multiline and subject[index + pattern.literal_len] == '\n'))
         {
             continue;
         }
-        if (sliceEql(subject[index .. index + pattern.bytes.len], pattern.bytes, flags.ignore_case)) {
-            return .{ .start = index, .end = index + pattern.bytes.len };
+        if (stylusLiteralPatternEql(
+            subject[index .. index + pattern.literal_len],
+            pattern.bytes,
+            flags.ignore_case,
+        )) {
+            return .{ .start = index, .end = index + pattern.literal_len };
         }
         if (pattern.anchor_start and !flags.multiline) break;
     }
     return null;
+}
+
+fn stylusLiteralPatternEql(
+    subject: []const u8,
+    encoded: []const u8,
+    ignore_case: bool,
+) bool {
+    var subject_index: usize = 0;
+    var pattern_index: usize = 0;
+    while (pattern_index < encoded.len) {
+        if (encoded[pattern_index] == '\\') pattern_index += 1;
+        if (pattern_index >= encoded.len or subject_index >= subject.len or
+            foldStylusMatchByte(encoded[pattern_index], ignore_case) !=
+                foldStylusMatchByte(subject[subject_index], ignore_case))
+        {
+            return false;
+        }
+        pattern_index += 1;
+        subject_index += 1;
+    }
+    return subject_index == subject.len;
 }
 
 fn sliceStartsWith(subject: []const u8, prefix: []const u8, ignore_case: bool) bool {

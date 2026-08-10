@@ -3223,6 +3223,7 @@ test "native Stylus evaluates bounded convert and match builtins" {
         \\parsed = match('^(height|width)?([<>=]{1,})(.*)', 'height>=10px')
         \\without-dimension = match('^(height|width)?([<>=]{1,})(.*)', '>400px')
         \\direction = 'min'
+        \\condition = '(min-width: 1px)'
         \\.probe
         \\  numeric: convert('1.334em')
         \\  color-type: type(convert('#c00'))
@@ -3230,6 +3231,8 @@ test "native Stylus evaluates bounded convert and match builtins" {
         \\  space-list: convert('10 20 30')
         \\  comma-list: convert('10, 20, 30')
         \\  prefix: match('^pad', 'padding')
+        \\  escaped-paren: match('\(', '(min-width: 1px)')
+        \\  escaped-suffix: match('-gradient\(', 'linear-gradient(red, blue)')
         \\  captures: parsed
         \\  operator: parsed[2]
         \\  converted: convert(parsed[3])
@@ -3241,15 +3244,19 @@ test "native Stylus evaluates bounded convert and match builtins" {
         \\    state: bad
         \\  else
         \\    state: good
+        \\  if match('\(', condition)
+        \\    escaped-condition: good
     ;
     var compiled = try compile(std.testing.allocator, input, .{});
     defer compiled.deinit();
     try std.testing.expectEqualStrings(
         ".probe{numeric:1.334em;color-type:'rgba';ident-type:'ident';" ++
             "space-list:10 20 30;comma-list:10, 20, 30;prefix:'pad';" ++
+            "escaped-paren:'(';escaped-suffix:'-gradient(';" ++
             "captures:'height>=10px' 'height' '>=' '10px';operator:'>=';" ++
             "converted:10px;global:'ain' 'AIN' 'ain' 'ain';" ++
-            "invalid-flags:'ain';fallback:'min-width';operated:401px;state:good}",
+            "invalid-flags:'ain';fallback:'min-width';operated:401px;state:good;" ++
+            "escaped-condition:good}",
         compiled.css(),
     );
 
@@ -3804,6 +3811,117 @@ test "native Stylus prefixes class selectors inside a bounded block mixin" {
         .unsupported_feature,
         "native Stylus prefix-classes() requires a content block",
         0,
+    );
+}
+
+const subscript_mutation_terminal_input =
+    \\$cache = {}
+    \\$condition = 'lap'
+    \\$cache[$condition] = ()
+    \\body
+    \\  first push($cache[$condition], alpha)
+    \\  second push($cache[$condition], beta)
+    \\  result $cache[$condition]
+;
+
+const cached_content_block_input =
+    \\$cache = {}
+    \\capture($condition)
+    \\  helper($condition)
+    \\    unless $cache[$condition]
+    \\      $cache[$condition] = ()
+    \\    push($cache[$condition], block)
+    \\  +helper($condition)
+    \\    {selector()}
+    \\      {block}
+    \\.foo
+    \\  +capture('screen')
+    \\    width 20px
+    \\.probe
+    \\  keys length($cache)
+    \\  blocks length($cache['screen'])
+    \\emit()
+    \\  for $media, $blocks in $cache
+    \\    @media $media
+    \\      for $block in $blocks
+    \\        {$block}
+    \\emit()
+;
+
+const cached_content_block_css =
+    ".probe{keys:1;blocks:1}@media screen{.foo{width:20px}}";
+
+test "native Stylus mutation builtins own the finite subscript target contract" {
+    const lower_input =
+        \\$cache = { 'lap': () }
+        \\body
+        \\  count push($cache['lap'], alpha)
+        \\  result $cache['lap']
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.values.max_collection_items = 8;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{count:1;result:alpha}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_collection_items = 15;
+    var first = try compile(std.testing.allocator, subscript_mutation_terminal_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, subscript_mutation_terminal_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings("body{first:1;second:2;result:alpha beta}", first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.values.max_collection_items = 14;
+    try expectSemanticRejectionWithLimits(
+        subscript_mutation_terminal_input,
+        over_limit,
+        error.ValueLimitExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.lastIndexOf(
+            u8,
+            subscript_mutation_terminal_input,
+            "$cache[$condition]",
+        ).?),
+    );
+}
+
+test "native Stylus cached content blocks retain finite selector and media context" {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    terminal.max_loop_iterations = 2;
+    terminal.max_selectors = 3;
+    var first = try compile(std.testing.allocator, cached_content_block_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, cached_content_block_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(cached_content_block_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 1;
+    try expectSemanticRejectionWithLimits(
+        cached_content_block_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(
+            u8,
+            cached_content_block_input,
+            "for $block",
+        ).?),
     );
 }
 
@@ -7641,6 +7759,40 @@ fn exercisePostfixGuardedAssignmentAllocationFailures(allocator: std.mem.Allocat
     try std.testing.expectEqualStrings(postfix_guarded_assignment_css, result.css());
 }
 
+fn exerciseCachedContentBlockAllocationFailures(allocator: std.mem.Allocator) !void {
+    var mutation_limits = stylus_evaluator.Limits{};
+    mutation_limits.values.max_collection_items = 15;
+    var mutation = try compile(
+        allocator,
+        subscript_mutation_terminal_input,
+        mutation_limits,
+    );
+    defer mutation.deinit();
+    try std.testing.expectEqualStrings(
+        "body{first:1;second:2;result:alpha beta}",
+        mutation.css(),
+    );
+
+    var block_limits = stylus_evaluator.Limits{};
+    block_limits.max_call_depth = 2;
+    block_limits.max_loop_iterations = 2;
+    block_limits.max_selectors = 3;
+    var block = try compile(allocator, cached_content_block_input, block_limits);
+    defer block.deinit();
+    try std.testing.expectEqualStrings(cached_content_block_css, block.css());
+
+    var escaped_match = try compile(
+        allocator,
+        "body\n  value match('-gradient\\(', 'linear-gradient(')\n",
+        .{},
+    );
+    defer escaped_match.deinit();
+    try std.testing.expectEqualStrings(
+        "body{value:'-gradient('}",
+        escaped_match.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -8077,6 +8229,14 @@ test "native Stylus postfix guarded assignments handle every allocation failure"
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exercisePostfixGuardedAssignmentAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus cached content blocks handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCachedContentBlockAllocationFailures,
         .{},
     );
 }
