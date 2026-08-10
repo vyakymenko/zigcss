@@ -468,6 +468,29 @@ const root_conditional_assignment_input =
 const root_conditional_assignment_css =
     "body{values:'first' 'first'}";
 
+const postfix_guarded_assignment_input =
+    \\$foo = #000 if "foo" == "foo"
+    \\
+    \\$bar = #FFF
+    \\$bar = #000 if "foo" == "bar"
+    \\
+    \\$baz = #000 unless "foo" == "bar"
+    \\
+    \\$raz = #FFF
+    \\$raz = #000 unless "foo" == "foo"
+    \\
+    \\.foo
+    \\  background: $foo
+    \\  color: $bar
+    \\
+    \\.bar
+    \\  background: $baz
+    \\  color: $raz
+;
+
+const postfix_guarded_assignment_css =
+    ".foo{background:#000;color:#fff}.bar{background:#000;color:#fff}";
+
 const function_arguments_input =
     \\sum()
     \\  n = 0
@@ -4251,6 +4274,64 @@ test "native Stylus root conditional assignments own the finite alias and bindin
     );
 }
 
+test "native Stylus postfix guarded assignments own the finite condition contract" {
+    const lower_input =
+        \\$chosen = #000 if "foo" == "foo"
+        \\body
+        \\  background $chosen
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.environment.max_bindings = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{background:#000}", lower.css());
+
+    const skipped_input =
+        \\$kept = #FFF
+        \\$kept = missing if "foo" == "bar"
+        \\body
+        \\  color $kept
+    ;
+    var skipped_limits = stylus_evaluator.Limits{};
+    skipped_limits.environment.max_bindings = 2;
+    var skipped = try compile(std.testing.allocator, skipped_input, skipped_limits);
+    defer skipped.deinit();
+    try std.testing.expectEqualStrings("body{color:#fff}", skipped.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.environment.max_bindings = 8;
+    var first = try compile(
+        std.testing.allocator,
+        postfix_guarded_assignment_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        postfix_guarded_assignment_input,
+        terminal,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(postfix_guarded_assignment_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.environment.max_bindings = 7;
+    try expectSemanticRejectionWithLimits(
+        postfix_guarded_assignment_input,
+        over_limit,
+        error.BindingLimitExceeded,
+        .resource_limit,
+        "native Stylus lexical environment limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, postfix_guarded_assignment_input, "color: $raz").?),
+    );
+}
+
 test "native Stylus preserves comment-separated conditional chains" {
     var first = try compile(std.testing.allocator, commented_if_else_input, .{});
     defer first.deinit();
@@ -7488,6 +7569,14 @@ fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Alloca
     try std.testing.expectEqualStrings(root_conditional_assignment_css, result.css());
 }
 
+fn exercisePostfixGuardedAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.environment.max_bindings = 8;
+    var result = try compile(allocator, postfix_guarded_assignment_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(postfix_guarded_assignment_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -7908,6 +7997,14 @@ test "native Stylus root conditional assignments handle every allocation failure
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseRootConditionalAssignmentAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus postfix guarded assignments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePostfixGuardedAssignmentAllocationFailures,
         .{},
     );
 }

@@ -2980,7 +2980,18 @@ const Engine = struct {
             try self.assignMemberBlock(text, member, block_value, scope.*);
             return;
         }
-        const assignment = parseAssignment(raw) orelse {
+        const postfix = splitPostfixCondition(raw);
+        if (postfix.condition) |condition| {
+            var selected = try self.evaluateMutableCondition(
+                text,
+                raw[condition.expression.start..condition.expression.end],
+                scope,
+            );
+            if (condition.negated) selected = !selected;
+            if (!selected) return;
+        }
+        const assignment_raw = raw[postfix.declaration.start..postfix.declaration.end];
+        const assignment = parseAssignment(assignment_raw) orelse {
             try self.transaction.report(
                 .err,
                 .syntax,
