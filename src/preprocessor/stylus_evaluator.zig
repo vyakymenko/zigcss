@@ -3574,28 +3574,21 @@ const Engine = struct {
             }
             if (raw[cursor] == '[') {
                 const closing = std.mem.indexOfScalarPos(u8, raw, cursor + 1, ']') orelse return null;
-                const index_value = try self.evaluateValue(span, raw[cursor + 1 .. closing], scope, 0);
+                const index_value = if (cursor + 1 == closing)
+                    try self.ownValue(span, .{ .list = .{
+                        .items = &.{},
+                        .separator = .space,
+                    } })
+                else
+                    try self.evaluateValue(span, raw[cursor + 1 .. closing], scope, 0);
                 current = switch (current.*) {
                     .list => |list| blk: {
                         if (index_value.* == .list) {
-                            var selected: std.ArrayList(native_value.Value) = .empty;
-                            defer selected.deinit(self.allocator);
-                            try selected.ensureTotalCapacity(
-                                self.allocator,
-                                index_value.list.items.len,
-                            );
-                            for (index_value.list.items) |item| {
-                                const index = integerScalar(item) orelse return null;
-                                const normalized = normalizeIndex(index, list.items.len) orelse {
-                                    selected.appendAssumeCapacity(.{ .null_value = {} });
-                                    continue;
-                                };
-                                selected.appendAssumeCapacity(list.items[normalized]);
-                            }
-                            break :blk try self.ownValue(span, .{ .list = .{
-                                .items = selected.items,
-                                .separator = index_value.list.separator,
-                            } });
+                            break :blk (try self.selectListMembers(
+                                span,
+                                list,
+                                index_value.list,
+                            )) orelse return null;
                         }
                         const index = integerScalar(index_value.*) orelse return null;
                         const normalized = normalizeIndex(index, list.items.len) orelse
@@ -3617,6 +3610,29 @@ const Engine = struct {
             return null;
         }
         return self.ownValue(span, current.*);
+    }
+
+    fn selectListMembers(
+        self: *Engine,
+        span: native_source.Span,
+        list: native_value.List,
+        indices: native_value.List,
+    ) Error!?*const native_value.Value {
+        var selected: std.ArrayList(native_value.Value) = .empty;
+        defer selected.deinit(self.allocator);
+        try selected.ensureTotalCapacity(self.allocator, indices.items.len);
+        for (indices.items) |item| {
+            const index = integerScalar(item) orelse return null;
+            const normalized = normalizeIndex(index, list.items.len) orelse continue;
+            selected.appendAssumeCapacity(list.items[normalized]);
+        }
+        if (selected.items.len == 0) {
+            return self.ownValue(span, .{ .null_value = {} });
+        }
+        return self.ownValue(span, .{ .list = .{
+            .items = selected.items,
+            .separator = indices.separator,
+        } });
     }
 
     fn collectStaticExtensions(
@@ -8105,12 +8121,28 @@ const Engine = struct {
                 scope,
                 depth + 1,
             );
-            const index_value = try self.evaluateValue(
-                span,
-                input[indexing.index.start..indexing.index.end],
-                scope,
-                depth + 1,
-            );
+            const index_value = if (indexing.index.start == indexing.index.end)
+                try self.ownValue(span, .{ .list = .{
+                    .items = &.{},
+                    .separator = .space,
+                } })
+            else
+                try self.evaluateValue(
+                    span,
+                    input[indexing.index.start..indexing.index.end],
+                    scope,
+                    depth + 1,
+                );
+            if (collection.* == .list and index_value.* == .list) {
+                return (try self.selectListMembers(
+                    span,
+                    collection.list,
+                    index_value.list,
+                )) orelse {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                };
+            }
             // Stylus list reads ignore an unmatched quoted selector and return
             // an empty selection, which renders as null. Keep unquoted
             // numeric-overflow tokens on the existing fail-closed path.
@@ -15213,7 +15245,7 @@ const IndexExpression = struct {
 };
 
 fn findTrailingIndex(raw: []const u8) ?IndexExpression {
-    if (raw.len < 3 or raw[raw.len - 1] != ']') return null;
+    if (raw.len < 2 or raw[raw.len - 1] != ']') return null;
     var quote: u8 = 0;
     var escaped = false;
     var round_depth: usize = 0;
@@ -15253,7 +15285,7 @@ fn findTrailingIndex(raw: []const u8) ?IndexExpression {
     const open = opening orelse return null;
     const base = trimRange(raw, .{ .start = 0, .end = open });
     const index = trimRange(raw, .{ .start = open + 1, .end = raw.len - 1 });
-    if (base.start == base.end or index.start == index.end) return null;
+    if (base.start == base.end) return null;
     return .{ .base = base, .index = index };
 }
 

@@ -422,6 +422,25 @@ const operator_subscript_assignment_css =
     "scalar:1 'two' 'two';replaced:1 2 asdf 'three';" ++
     "forwarded:1 2 asdf 'three'}";
 
+const operator_subscript_range_input =
+    \\values = a b c d e
+    \\nested = (1 2) (3 4)
+    \\body
+    \\  exclusive values[0...2]
+    \\  inclusive values[1..3]
+    \\  selected values[0 2 4]
+    \\  partial values[0 9]
+    \\  partial-count length(values[0 9])
+    \\  nested nested[0..1]
+    \\  empty ()[]
+    \\  missing ()[1]
+    \\  empty-range ()[1..3]
+;
+
+const operator_subscript_range_css =
+    "body{exclusive:a b;inclusive:b c d;selected:a c e;partial:a;partial-count:1;" ++
+    "nested:1 2 3 4;empty:;missing:;empty-range:}";
+
 const root_conditional_assignment_input =
     \\primary := 'first'
     \\primary := 'second'
@@ -3477,6 +3496,58 @@ test "native Stylus list subscript assignment owns the finite mutation contract"
         .resource_limit,
         "native Stylus value limit exceeded",
         @intCast(std.mem.indexOf(u8, over_limit_input, "values[1000000]").?),
+    );
+}
+
+test "native Stylus list subscript ranges own the finite selection contract" {
+    const lower_input =
+        \\values = a b
+        \\body
+        \\  singleton (a b)[0..0]
+        \\  named-empty values[]
+        \\  grouped-empty ()[]
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{singleton:a;named-empty:;grouped-empty:}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 3;
+    var first = try compile(
+        std.testing.allocator,
+        operator_subscript_range_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        operator_subscript_range_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(operator_subscript_range_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 2;
+    try expectSemanticRejectionWithLimits(
+        operator_subscript_range_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(
+            u8,
+            operator_subscript_range_input,
+            "values[0...2]",
+        ).?),
     );
 }
 
@@ -7077,6 +7148,14 @@ fn exerciseOperatorSubscriptAssignmentAllocationFailures(allocator: std.mem.Allo
     try std.testing.expectEqualStrings(operator_subscript_assignment_css, result.css());
 }
 
+fn exerciseOperatorSubscriptRangeAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 3;
+    var result = try compile(allocator, operator_subscript_range_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(operator_subscript_range_css, result.css());
+}
+
 fn exerciseOperatorSemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_expression_depth = 6;
@@ -7469,6 +7548,14 @@ test "native Stylus list subscript assignment handles every allocation failure" 
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOperatorSubscriptAssignmentAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus list subscript ranges handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOperatorSubscriptRangeAllocationFailures,
         .{},
     );
 }
