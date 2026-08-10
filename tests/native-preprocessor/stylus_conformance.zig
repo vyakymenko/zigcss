@@ -296,12 +296,12 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
             include_css_exact_count += @intFromBool(case.providerOptions.includeCss);
             exact_case_id_hash.update(case.id);
             exact_case_id_hash.update("\x00");
-            const became_exact_with_interpolated_properties = std.mem.eql(
+            const became_exact_with_introspection = std.mem.eql(
                 u8,
                 case.id,
-                "stylus-official-interpolation-properties",
+                "stylus-official-introspection",
             );
-            if (!became_exact_with_interpolated_properties) {
+            if (!became_exact_with_introspection) {
                 prior_exact_case_id_hash.update(case.id);
                 prior_exact_case_id_hash.update("\x00");
             }
@@ -312,8 +312,8 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
 
     const exact_hash = exact_case_id_hash.final();
-    if (exact_success_count != 264 or nonconforming_count != 62 or
-        exact_hash != 0xdd02d5c7b49bad32)
+    if (exact_success_count != 265 or nonconforming_count != 61 or
+        exact_hash != 0xda90fdcb8f17a9c5)
     {
         std.debug.print(
             "\nnative Stylus exact inventory: {d} exact, {d} nonconforming, {x:0>16}\n",
@@ -324,15 +324,15 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     try std.testing.expectEqual(@as(usize, 7), include_css_success_count);
     try std.testing.expectEqual(@as(usize, 7), include_css_exact_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 264), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 62), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0xdd02d5c7b49bad32), exact_hash);
+    try std.testing.expectEqual(@as(usize, 265), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 61), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xda90fdcb8f17a9c5), exact_hash);
     try std.testing.expectEqual(
-        @as(u64, 0xa6b8e7fa95e9d2ea),
+        @as(u64, 0xdd02d5c7b49bad32),
         prior_exact_case_id_hash.final(),
     );
     try std.testing.expectEqualStrings(
-        "stylus-official-introspection",
+        "stylus-official-keyframes",
         first_nonconforming_id.?,
     );
 }
@@ -1993,6 +1993,64 @@ test "native Stylus closes the finite interpolated property conformance family" 
     std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
         std.debug.print(
             "\nnative Stylus interpolated property mismatch\nexpected: {s}\nactual:   {s}\n",
+            .{ expected_css.css(), first.css() },
+        );
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), first.edges().len);
+    try expectDependencyDeterminism(&first, &second);
+}
+
+test "native Stylus closes the finite introspection conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(
+        parsed.value.cases,
+        "stylus-official-introspection",
+    );
+    try std.testing.expectEqualStrings("introspection", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+    try std.testing.expectEqualStrings("expanded", case.style);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var first = try compileNativeWithLimits(allocator, case, input, terminal);
+    defer first.deinit();
+    var second = try compileNativeWithLimits(allocator, case, input, terminal);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print(
+            "\nnative Stylus introspection mismatch\nexpected: {s}\nactual:   {s}\n",
             .{ expected_css.css(), first.css() },
         );
         return failure;

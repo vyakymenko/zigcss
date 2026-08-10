@@ -393,6 +393,24 @@ const interpolated_property_css =
     "#login{border-radius:1px 2px/3px 4px;value:'one';" ++
     "position:absolute;top:0;right:0}";
 
+const mixin_introspection_input =
+    \\reset()
+    \\  if mixin == 'root'
+    \\    got
+    \\      root true
+    \\  else if mixin
+    \\    got 'a mixin'
+    \\  else
+    \\    'not a mixin'
+    \\reset()
+    \\body
+    \\  reset()
+    \\  foo reset()
+;
+
+const mixin_introspection_css =
+    "got{root:true}body{got:'a mixin';foo:'not a mixin'}";
+
 const anonymous_functions_input =
     \\mixin(add) {
     \\  mul = @(c, d) {
@@ -3217,6 +3235,52 @@ test "native Stylus interpolated property callables preserve the finite terminal
     );
 }
 
+test "native Stylus callable context introspection preserves the finite terminal contract" {
+    const lower_input =
+        \\probe()
+        \\  if mixin == 'root'
+        \\    got
+        \\      root true
+        \\probe()
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("got{root:true}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var first = try compile(std.testing.allocator, mixin_introspection_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, mixin_introspection_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(mixin_introspection_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const over_limit_input =
+        \\probe()
+        \\  mixin
+        \\outer()
+        \\  probe()
+        \\body
+        \\  outer()
+    ;
+    try expectSemanticRejectionWithLimits(
+        over_limit_input,
+        terminal,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.indexOf(u8, over_limit_input, "  probe()\nbody").? + 2),
+    );
+}
+
 test "native Stylus define owns local and explicit global scope" {
     const input =
         \\a = 1
@@ -5273,6 +5337,14 @@ fn exerciseInterpolatedPropertyAllocationFailures(allocator: std.mem.Allocator) 
     try std.testing.expectEqualStrings(interpolated_property_css, result.css());
 }
 
+fn exerciseMixinIntrospectionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var result = try compile(allocator, mixin_introspection_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(mixin_introspection_css, result.css());
+}
+
 fn exerciseAnonymousFunctionsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 2;
@@ -5620,6 +5692,14 @@ test "native Stylus interpolated property callables handle every allocation fail
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseInterpolatedPropertyAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus callable context introspection handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMixinIntrospectionAllocationFailures,
         .{},
     );
 }

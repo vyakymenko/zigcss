@@ -5507,6 +5507,16 @@ const Engine = struct {
             try self.reportUndefinedCallable(span);
             return error.UndefinedCallable;
         };
+        const mixin_context: native_value.Value = if (require_return)
+            .{ .boolean = false }
+        else
+            .{ .string = .{
+                .bytes = if (output == null and self.active_callables.items.len == 0)
+                    "root"
+                else
+                    "block",
+                .quoted = true,
+            } };
         const previous_property_call_span = self.active_property_call_span;
         if (self.active_property_call_span == null) {
             if (self.active_property) |property| {
@@ -5601,6 +5611,13 @@ const Engine = struct {
             try self.reportResource(span, "native Stylus lexical scope limit exceeded");
             return failure;
         };
+        const owned_mixin_context = try self.ownValue(span, mixin_context);
+        call_scope = try self.setBinding(
+            call_scope,
+            "mixin",
+            owned_mixin_context,
+            span,
+        );
         const content_block = self.pending_content_block;
         self.pending_content_block = null;
         defer self.pending_content_block = content_block;
