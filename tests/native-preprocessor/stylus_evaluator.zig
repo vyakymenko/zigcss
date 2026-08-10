@@ -379,6 +379,20 @@ const operator_range_assignment_css =
     "body{selected:5 4;grouped-tail:6 7 8 9 10;" ++
     "before:1 2 3 'foo' 'foo';after:1 2 3 'foo' 'foo'}";
 
+const operator_subscript_input =
+    \\pair(a, b)
+    \\  return a b
+    \\body
+    \\  missing (1 2 3)['test'] == null
+    \\  nested (1 (2 (3 4)))[1][1][1]
+    \\  callable pair(5, 10)[1]
+    \\  logical !(1 0)[1]
+    \\  negative - - -(1 2 3)[2]
+;
+
+const operator_subscript_css =
+    "body{missing:true;nested:4;callable:10;logical:true;negative:-3}";
+
 const root_conditional_assignment_input =
     \\primary := 'first'
     \\primary := 'second'
@@ -3355,6 +3369,40 @@ test "native Stylus range indexes own the finite selection and assignment contra
             operator_range_assignment_input,
             "values = 1..5",
         ).?),
+    );
+}
+
+test "native Stylus list subscripts own the finite read contract" {
+    const lower_input =
+        \\body
+        \\  missing (1 2 3)['missing'] == null
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{missing:true}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_depth = 4;
+    var first = try compile(std.testing.allocator, operator_subscript_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, operator_subscript_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(operator_subscript_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.values.max_depth = 3;
+    try expectSemanticRejectionWithLimits(
+        operator_subscript_input,
+        over_limit,
+        error.ValueDepthExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.indexOf(u8, operator_subscript_input, "(1 (2 (3 4)))").?),
     );
 }
 
@@ -6941,6 +6989,14 @@ fn exerciseOperatorRangeAssignmentAllocationFailures(allocator: std.mem.Allocato
     try std.testing.expectEqualStrings(operator_range_assignment_css, result.css());
 }
 
+fn exerciseOperatorSubscriptAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_depth = 4;
+    var result = try compile(allocator, operator_subscript_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(operator_subscript_css, result.css());
+}
+
 fn exerciseOperatorSemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_expression_depth = 6;
@@ -7317,6 +7373,14 @@ test "native Stylus range index assignment handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOperatorRangeAssignmentAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus list subscripts handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOperatorSubscriptAllocationFailures,
         .{},
     );
 }

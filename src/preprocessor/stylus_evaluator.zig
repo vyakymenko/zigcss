@@ -8098,6 +8098,12 @@ const Engine = struct {
                 scope,
                 depth + 1,
             );
+            // Stylus list reads ignore an unmatched quoted selector and return
+            // an empty selection, which renders as null. Keep unquoted
+            // numeric-overflow tokens on the existing fail-closed path.
+            if (collection.* == .list and index_value.* == .string and index_value.string.quoted) {
+                return self.ownValue(span, .{ .null_value = {} });
+            }
             if (index_value.* != .number or index_value.number.numerator_units.len != 0 or
                 index_value.number.denominator_units.len != 0 or
                 @trunc(index_value.number.value) != index_value.number.value)
@@ -8128,6 +8134,9 @@ const Engine = struct {
                     return error.InvalidOperation;
                 },
             };
+        }
+        if (findAdjacentNumericExpression(input, self.limits.max_expression_depth)) |items| {
+            return self.evaluateList(span, input, &items, .space, scope, depth + 1);
         }
         if (input.len >= 2 and (input[0] == '\'' or input[0] == '"') and
             closingQuote(input, 0) == input.len - 1)
@@ -15233,6 +15242,57 @@ fn findTrailingIndex(raw: []const u8) ?IndexExpression {
     const index = trimRange(raw, .{ .start = open + 1, .end = raw.len - 1 });
     if (base.start == base.end or index.start == index.end) return null;
     return .{ .base = base, .index = index };
+}
+
+fn findAdjacentNumericExpression(
+    raw: []const u8,
+    max_depth: u16,
+) ?[2]ByteRange {
+    // Stylus treats an adjacent parenthesized primary after a numeric unit as
+    // the next item in an expression list rather than as a callable.
+    var quote: u8 = 0;
+    var escaped = false;
+    var round_depth: usize = 0;
+    var square_depth: usize = 0;
+    for (raw, 0..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(' => {
+                if (round_depth == 0 and square_depth == 0) {
+                    const left = trimRange(raw, .{ .start = 0, .end = index });
+                    const right = trimRange(raw, .{ .start = index, .end = raw.len });
+                    if (left.start != left.end and right.start != right.end and
+                        looksNumeric(raw[left.start..left.end]))
+                    {
+                        var numeric = NumericParser{
+                            .input = raw[left.start..left.end],
+                            .max_depth = max_depth,
+                        };
+                        if (numeric.parse()) |_| return .{ left, right } else |_| {}
+                    }
+                }
+                round_depth += 1;
+            },
+            ')' => round_depth -|= 1,
+            '[' => square_depth += 1,
+            ']' => square_depth -|= 1,
+            else => {},
+        }
+    }
+    return null;
 }
 
 fn normalizeIndex(index: i64, length: usize) ?usize {
