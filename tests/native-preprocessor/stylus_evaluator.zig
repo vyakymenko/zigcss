@@ -379,6 +379,18 @@ const operator_range_assignment_css =
     "body{selected:5 4;grouped-tail:6 7 8 9 10;" ++
     "before:1 2 3 'foo' 'foo';after:1 2 3 'foo' 'foo'}";
 
+const root_conditional_assignment_input =
+    \\primary := 'first'
+    \\primary := 'second'
+    \\secondary ?= 'first'
+    \\secondary ?= 'second'
+    \\body
+    \\  values primary secondary
+;
+
+const root_conditional_assignment_css =
+    "body{values:'first' 'first'}";
+
 const function_arguments_input =
     \\sum()
     \\  n = 0
@@ -3483,6 +3495,53 @@ test "native Stylus operators own the finite coercion and precedence contract" {
     );
 }
 
+test "native Stylus root conditional assignments own the finite alias and binding contract" {
+    const lower_input =
+        \\primary := 'first'
+        \\primary := 'second'
+        \\body
+        \\  primary primary
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.environment.max_bindings = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{primary:'first'}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.environment.max_bindings = 3;
+    var first = try compile(
+        std.testing.allocator,
+        root_conditional_assignment_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        root_conditional_assignment_input,
+        terminal,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(root_conditional_assignment_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.environment.max_bindings = 1;
+    try expectSemanticRejectionWithLimits(
+        root_conditional_assignment_input,
+        over_limit,
+        error.BindingLimitExceeded,
+        .resource_limit,
+        "native Stylus lexical environment limit exceeded",
+        @intCast(std.mem.indexOf(u8, root_conditional_assignment_input, "secondary ?=").?),
+    );
+}
+
 test "native Stylus preserves comment-separated conditional chains" {
     var first = try compile(std.testing.allocator, commented_if_else_input, .{});
     defer first.deinit();
@@ -6584,6 +6643,14 @@ fn exerciseOperatorSemanticsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(operator_semantics_css, result.css());
 }
 
+fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.environment.max_bindings = 3;
+    var result = try compile(allocator, root_conditional_assignment_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(root_conditional_assignment_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -6916,6 +6983,14 @@ test "native Stylus operators handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOperatorSemanticsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus root conditional assignments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseRootConditionalAssignmentAllocationFailures,
         .{},
     );
 }

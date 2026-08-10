@@ -15329,7 +15329,9 @@ fn parseAssignment(raw_input: []const u8) ?Assignment {
         return .{
             .name = name,
             .value = value,
-            .conditional = prefix == '?',
+            // The pinned Stylus lexer normalizes `:=` to the same conditional
+            // assignment token as `?=` before evaluation.
+            .conditional = prefix == '?' or prefix == ':',
             .operator = if (has_prefix and prefix != '?' and prefix != ':') prefix else null,
         };
     }
