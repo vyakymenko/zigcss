@@ -4704,7 +4704,11 @@ const Engine = struct {
                             continue;
                         }
                     }
-                    var declaration = (try self.renderDeclaration(statement_id, scope)) orelse continue;
+                    var declaration = (try self.renderDeclaration(
+                        statement_id,
+                        scope,
+                        destination,
+                    )) orelse continue;
                     errdefer declaration.deinit(self.allocator);
                     const reference_name = try std.fmt.allocPrint(self.allocator, "@{s}", .{declaration.property});
                     defer self.allocator.free(reference_name);
@@ -5109,12 +5113,24 @@ const Engine = struct {
                 return self.ownValue(span, .{ .null_value = {} });
             }
         }
-        return self.evaluateValue(
-            span,
+        const expression = std.mem.trim(
+            u8,
             raw[postfix.declaration.start..postfix.declaration.end],
-            scope,
-            0,
+            " \t\r\n\x0c;",
         );
+        if (expression.len >= 2 and expression[0] == '{' and
+            matchingCurly(expression, 0) == expression.len - 1)
+        {
+            const interpolated = std.mem.trim(
+                u8,
+                expression[1 .. expression.len - 1],
+                " \t\r\n\x0c",
+            );
+            if (interpolated.len > 0 and findTopLevelScalar(interpolated, ':') == null) {
+                return self.evaluateValue(span, interpolated, scope, 0);
+            }
+        }
+        return self.evaluateValue(span, expression, scope, 0);
     }
 
     fn executeBlockInsertion(
@@ -6080,6 +6096,7 @@ const Engine = struct {
                 expression_span,
                 declaration.span,
                 &loop_scope,
+                output,
             )) orelse {
                 parent_scope.* = loop_scope;
                 continue;
@@ -6161,10 +6178,11 @@ const Engine = struct {
         self: *Engine,
         declaration_id: native_syntax.NodeId,
         scope: *native_environment.ScopeId,
+        output: RuleOutput,
     ) Error!?RenderedDeclaration {
         const declaration = try self.document.get(declaration_id);
         const text = declaration.text orelse return error.InvalidDocument;
-        return self.renderDeclarationText(text, declaration.span, scope);
+        return self.renderDeclarationText(text, declaration.span, scope, output);
     }
 
     fn renderDeclarationText(
@@ -6172,6 +6190,7 @@ const Engine = struct {
         text: native_source.Span,
         declaration_span: native_source.Span,
         scope: *native_environment.ScopeId,
+        output: RuleOutput,
     ) Error!?RenderedDeclaration {
         const raw = try self.sources.slice(text);
         const postfix_split = splitPostfixCondition(raw);
@@ -6221,6 +6240,63 @@ const Engine = struct {
                 .side_effect = false,
             };
         }
+        const source_property = declaration_raw[relative_parts[0].start..relative_parts[0].end];
+        const value_raw = raw[parts[1].start..parts[1].end];
+        if (parseDeclarationCall(declaration_raw) == null and
+            std.mem.indexOfScalar(u8, source_property, '{') != null and
+            validVariableName(property) and
+            try self.resolveCallable(scope.*, property) != null and
+            !self.isActiveCallable(property))
+        {
+            const invocation = try std.fmt.allocPrint(
+                self.allocator,
+                "{s} {s}",
+                .{ property, value_raw },
+            );
+            defer self.allocator.free(invocation);
+            const property_syntax = std.mem.indexOfScalar(
+                u8,
+                declaration_raw[relative_parts[0].end..relative_parts[1].start],
+                ':',
+            ) != null;
+            const call: Call = .{
+                .name = .{ .start = 0, .end = property.len },
+                .arguments = .{ .start = property.len + 1, .end = invocation.len },
+                .parenthesized = property_syntax,
+                .property_syntax = property_syntax,
+            };
+            const previous_property = self.active_property;
+            const previous_property_value = self.active_property_value;
+            const previous_property_call_span = self.active_property_call_span;
+            const property_binding_start = self.current_property_bindings.items.len;
+            self.active_property = .{
+                .property = property,
+                .value_span = value_span,
+                .scope = scope.*,
+            };
+            self.active_property_value = null;
+            self.active_property_call_span = null;
+            defer {
+                self.active_property = previous_property;
+                self.active_property_value = previous_property_value;
+                self.active_property_call_span = previous_property_call_span;
+                self.current_property_bindings.shrinkRetainingCapacity(
+                    property_binding_start,
+                );
+            }
+            const returned = try self.invokeUserCallable(
+                text,
+                invocation,
+                call,
+                scope.*,
+                output,
+                false,
+                null,
+            );
+            if (returned != null) return error.InvalidDocument;
+            self.allocator.free(property);
+            return null;
+        }
         const previous_property = self.active_property;
         const previous_property_value = self.active_property_value;
         const property_binding_start = self.current_property_bindings.items.len;
@@ -6235,7 +6311,6 @@ const Engine = struct {
             self.active_property_value = previous_property_value;
             self.current_property_bindings.shrinkRetainingCapacity(property_binding_start);
         }
-        const value_raw = raw[parts[1].start..parts[1].end];
         if (parseAssignment(value_raw)) |assignment| {
             if (assignment.value.len == 0) {
                 try self.reportInvalidOperation(value_span);
@@ -8655,7 +8730,7 @@ const Engine = struct {
             .bytes = property.property,
             .quoted = true,
         } });
-        const expression_value = try self.evaluateValue(
+        const expression_value = try self.evaluateDeclarationValue(
             span,
             normalized.items,
             property.scope,

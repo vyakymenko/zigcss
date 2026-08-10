@@ -296,12 +296,12 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
             include_css_exact_count += @intFromBool(case.providerOptions.includeCss);
             exact_case_id_hash.update(case.id);
             exact_case_id_hash.update("\x00");
-            const became_exact_with_import_ordering = std.mem.eql(
+            const became_exact_with_interpolated_properties = std.mem.eql(
                 u8,
                 case.id,
-                "stylus-official-import-ordering",
+                "stylus-official-interpolation-properties",
             );
-            if (!became_exact_with_import_ordering) {
+            if (!became_exact_with_interpolated_properties) {
                 prior_exact_case_id_hash.update(case.id);
                 prior_exact_case_id_hash.update("\x00");
             }
@@ -312,8 +312,8 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
 
     const exact_hash = exact_case_id_hash.final();
-    if (exact_success_count != 263 or nonconforming_count != 63 or
-        exact_hash != 0xa6b8e7fa95e9d2ea)
+    if (exact_success_count != 264 or nonconforming_count != 62 or
+        exact_hash != 0xdd02d5c7b49bad32)
     {
         std.debug.print(
             "\nnative Stylus exact inventory: {d} exact, {d} nonconforming, {x:0>16}\n",
@@ -324,15 +324,15 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     try std.testing.expectEqual(@as(usize, 7), include_css_success_count);
     try std.testing.expectEqual(@as(usize, 7), include_css_exact_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 263), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 63), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0xa6b8e7fa95e9d2ea), exact_hash);
+    try std.testing.expectEqual(@as(usize, 264), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 62), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xdd02d5c7b49bad32), exact_hash);
     try std.testing.expectEqual(
-        @as(u64, 0x4fe3883c14f04e8e),
+        @as(u64, 0xa6b8e7fa95e9d2ea),
         prior_exact_case_id_hash.final(),
     );
     try std.testing.expectEqualStrings(
-        "stylus-official-interpolation-properties",
+        "stylus-official-introspection",
         first_nonconforming_id.?,
     );
 }
@@ -1945,6 +1945,64 @@ test "native Stylus closes the finite CSS selector interpolation conformance fam
     try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
     try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try expectDependencyDeterminism(&first, &second);
+}
+
+test "native Stylus closes the finite interpolated property conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(
+        parsed.value.cases,
+        "stylus-official-interpolation-properties",
+    );
+    try std.testing.expectEqualStrings("interpolation", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+    try std.testing.expectEqualStrings("expanded", case.style);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var first = try compileNativeWithLimits(allocator, case, input, terminal);
+    defer first.deinit();
+    var second = try compileNativeWithLimits(allocator, case, input, terminal);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print(
+            "\nnative Stylus interpolated property mismatch\nexpected: {s}\nactual:   {s}\n",
+            .{ expected_css.css(), first.css() },
+        );
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), first.edges().len);
     try expectDependencyDeterminism(&first, &second);
 }
 
