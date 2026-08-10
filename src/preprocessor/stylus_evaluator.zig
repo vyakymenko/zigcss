@@ -7697,6 +7697,23 @@ const Engine = struct {
                 return error.InvalidArguments;
             }
         }
+        const grouped_ternary_input = stripOuterParentheses(source_input);
+        if (grouped_ternary_input.len != source_input.len and
+            parseGenericTernary(grouped_ternary_input) != null)
+        {
+            const start = @intFromPtr(grouped_ternary_input.ptr) -
+                @intFromPtr(source_input.ptr);
+            const range = ByteRange{
+                .start = start,
+                .end = start + grouped_ternary_input.len,
+            };
+            return self.evaluateValue(
+                try self.relativeSpan(span, range),
+                grouped_ternary_input,
+                scope,
+                depth + 1,
+            );
+        }
         if (parseGenericTernary(source_input)) |ternary| {
             const condition = source_input[ternary.condition.start..ternary.condition.end];
             const selected = if (try self.evaluateCondition(
@@ -14410,6 +14427,9 @@ fn findComparison(raw: []const u8) ?Comparison {
     var quote: u8 = 0;
     var escaped = false;
     var depth: usize = 0;
+    // Recursive evaluation consumes the selected operator first, so retain
+    // the rightmost top-level comparison to preserve Stylus left associativity.
+    var result: ?Comparison = null;
     var index: usize = 0;
     while (index < raw.len) : (index += 1) {
         const byte = raw[index];
@@ -14433,48 +14453,60 @@ fn findComparison(raw: []const u8) ?Comparison {
             else => {},
         }
         if (depth != 0) continue;
-        if (wordAt(raw, index, "isnt")) return .{
-            .start = index,
-            .end = index + 4,
-            .operator = .not_equal,
-        };
+        if (wordAt(raw, index, "isnt")) {
+            result = .{
+                .start = index,
+                .end = index + 4,
+                .operator = .not_equal,
+            };
+            index += 3;
+            continue;
+        }
         if (wordAt(raw, index, "is")) {
             var end = index + 2;
             while (end < raw.len and std.ascii.isWhitespace(raw[end])) end += 1;
-            if (wordAt(raw, end, "not")) return .{
-                .start = index,
-                .end = end + 3,
-                .operator = .not_equal,
-            };
-            return .{ .start = index, .end = index + 2, .operator = .equal };
+            if (wordAt(raw, end, "not")) {
+                result = .{
+                    .start = index,
+                    .end = end + 3,
+                    .operator = .not_equal,
+                };
+                index = end + 2;
+                continue;
+            }
+            result = .{ .start = index, .end = index + 2, .operator = .equal };
+            index += 1;
+            continue;
         }
         if (index + 1 < raw.len) {
             const pair = raw[index .. index + 2];
-            if (std.mem.eql(u8, pair, "==")) return .{
-                .start = index,
-                .end = index + 2,
-                .operator = .equal,
-            };
-            if (std.mem.eql(u8, pair, "!=")) return .{
-                .start = index,
-                .end = index + 2,
-                .operator = .not_equal,
-            };
-            if (std.mem.eql(u8, pair, ">=")) return .{
-                .start = index,
-                .end = index + 2,
-                .operator = .greater_equal,
-            };
-            if (std.mem.eql(u8, pair, "<=")) return .{
-                .start = index,
-                .end = index + 2,
-                .operator = .less_equal,
-            };
+            const operator: ?ComparisonOperator = if (std.mem.eql(u8, pair, "=="))
+                .equal
+            else if (std.mem.eql(u8, pair, "!="))
+                .not_equal
+            else if (std.mem.eql(u8, pair, ">="))
+                .greater_equal
+            else if (std.mem.eql(u8, pair, "<="))
+                .less_equal
+            else
+                null;
+            if (operator) |matched| {
+                result = .{
+                    .start = index,
+                    .end = index + 2,
+                    .operator = matched,
+                };
+                index += 1;
+                continue;
+            }
         }
-        if (byte == '>') return .{ .start = index, .end = index + 1, .operator = .greater };
-        if (byte == '<') return .{ .start = index, .end = index + 1, .operator = .less };
+        if (byte == '>') {
+            result = .{ .start = index, .end = index + 1, .operator = .greater };
+        } else if (byte == '<') {
+            result = .{ .start = index, .end = index + 1, .operator = .less };
+        }
     }
-    return null;
+    return result;
 }
 
 fn wordAt(raw: []const u8, start: usize, word: []const u8) bool {
@@ -14491,7 +14523,7 @@ fn isTruthy(value: *const native_value.Value) bool {
         .number => |number| number.value != 0 or
             number.numerator_units.len != 0 or number.denominator_units.len != 0,
         .string => |string| string.bytes.len != 0,
-        .list => |list| list.truthy_override orelse true,
+        .list => |list| list.truthy_override orelse (list.items.len != 0),
         else => true,
     };
 }
@@ -14896,9 +14928,92 @@ fn valueIsType(value: native_value.Value, expected: []const u8, engine: *const E
 }
 
 fn stylusValueEqual(left: native_value.Value, right: native_value.Value) bool {
+    return stylusValueEqualDepth(left, right, 0);
+}
+
+fn stylusValueEqualDepth(
+    left: native_value.Value,
+    right: native_value.Value,
+    depth: u16,
+) bool {
+    if (depth > 64) return false;
+    if (left == .number and right == .number) {
+        return stylusNumberEqual(left.number, right.number);
+    }
+    if (left == .string and right == .number) {
+        const scalar = parseLooseEqualityNumber(left.string.bytes) orelse return false;
+        return scalar == right.number.value;
+    }
+    if (left == .number and right == .string) {
+        const scalar = parseStylusFloatPrefix(right.string.bytes) orelse return false;
+        return left.number.value == scalar;
+    }
+    if (left == .list) {
+        const other_items = if (right == .list) right.list.items else &.{right};
+        if (left.list.items.len != other_items.len) return false;
+        for (left.list.items, other_items) |item, other| {
+            if (!stylusValueEqualDepth(item, other, depth + 1)) return false;
+        }
+        return true;
+    }
+    if (right == .list and right.list.items.len == 1) {
+        return stylusValueEqualDepth(left, right.list.items[0], depth + 1);
+    }
     if (native_value.eql(left, right)) return true;
-    if (left == .string and right == .string) return std.mem.eql(u8, left.string.bytes, right.string.bytes);
+    if (left == .string and right == .string) {
+        return std.mem.eql(u8, left.string.bytes, right.string.bytes);
+    }
     return false;
+}
+
+const StylusUnitFamily = enum { physical_length, time, frequency };
+
+const StylusUnitFactor = struct {
+    scale: f64,
+    family: StylusUnitFamily,
+};
+
+// This is the complete finite conversion table owned by Stylus 0.64.0's
+// Unit.coerce(). Unrelated simple units retain scalar comparison semantics.
+fn stylusUnitFactor(unit: []const u8) ?StylusUnitFactor {
+    if (std.mem.eql(u8, unit, "mm")) return .{ .scale = 1, .family = .physical_length };
+    if (std.mem.eql(u8, unit, "cm")) return .{ .scale = 10, .family = .physical_length };
+    if (std.mem.eql(u8, unit, "in")) return .{ .scale = 25.4, .family = .physical_length };
+    if (std.mem.eql(u8, unit, "pt")) return .{
+        .scale = @as(f64, 25.4) / 72,
+        .family = .physical_length,
+    };
+    if (std.mem.eql(u8, unit, "ms")) return .{ .scale = 1, .family = .time };
+    if (std.mem.eql(u8, unit, "s")) return .{ .scale = 1000, .family = .time };
+    if (std.mem.eql(u8, unit, "Hz")) return .{ .scale = 1, .family = .frequency };
+    if (std.mem.eql(u8, unit, "kHz")) return .{ .scale = 1000, .family = .frequency };
+    return null;
+}
+
+fn stylusNumberEqual(left: native_value.Number, right: native_value.Number) bool {
+    if (left.denominator_units.len != 0 or right.denominator_units.len != 0 or
+        left.numerator_units.len > 1 or right.numerator_units.len > 1)
+    {
+        return native_value.eql(.{ .number = left }, .{ .number = right });
+    }
+    var right_value = right.value;
+    if (left.numerator_units.len == 1 and right.numerator_units.len == 1) {
+        const left_factor = stylusUnitFactor(left.numerator_units[0]);
+        const right_factor = stylusUnitFactor(right.numerator_units[0]);
+        if (left_factor != null and right_factor != null and
+            left_factor.?.family == right_factor.?.family)
+        {
+            right_value *= right_factor.?.scale / left_factor.?.scale;
+        }
+    }
+    return left.value == right_value;
+}
+
+fn parseLooseEqualityNumber(raw: []const u8) ?f64 {
+    const input = std.mem.trim(u8, raw, " \t\r\n\x0c");
+    if (input.len == 0) return 0;
+    const value = std.fmt.parseFloat(f64, input) catch return null;
+    return if (std.math.isFinite(value)) value else null;
 }
 
 fn singleUnit(number: native_value.Number) ?[]const u8 {

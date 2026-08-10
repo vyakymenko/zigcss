@@ -827,6 +827,33 @@ const complex_operator_precedence_input =
 const complex_operator_precedence_css =
     "body{nested:yes;adjacent:yay;false-branch:nah;callable:true}";
 
+const equality_semantics_input =
+    \\marker = 'yay'
+    \\body
+    \\  string-left '1' == 1
+    \\  number-left 1 == '1'
+    \\  chained 5 == 1 == false
+    \\  time-forward 1000ms == 1s
+    \\  time-reverse 1s == 1000ms
+    \\  physical-lower 10mm == 1cm
+    \\  physical-terminal 72pt == 1in
+    \\  frequency 1000Hz == 1kHz
+    \\  unrelated-units 1px == 1s
+    \\  prefix-forward 5 == '5x'
+    \\  prefix-reverse '5x' == 5
+    \\  identifier wahoo == 'wahoo'
+    \\  defined yes == (marker is defined ? yes : nope)
+    \\  list (1 2 3) == (1 2 3)
+    \\  empty !!()
+;
+
+const equality_semantics_css =
+    "body{string-left:true;number-left:true;chained:true;" ++
+    "time-forward:true;time-reverse:true;physical-lower:true;" ++
+    "physical-terminal:true;frequency:true;unrelated-units:true;" ++
+    "prefix-forward:true;prefix-reverse:false;identifier:true;defined:true;" ++
+    "list:true;empty:false}";
+
 const commented_if_else_input =
     \\.base
     \\  color red
@@ -3551,7 +3578,44 @@ test "native Stylus complex operators own the finite ternary precedence contract
         error.ExpressionDepthExceeded,
         .resource_limit,
         "native Stylus expression depth exceeded",
-        @intCast(std.mem.indexOf(u8, complex_operator_precedence_input, "(b == 15").?),
+        @intCast(std.mem.indexOf(u8, complex_operator_precedence_input, "b == 15").?),
+    );
+}
+
+test "native Stylus equality owns the finite coercion and expression contract" {
+    const lower_input =
+        \\body
+        \\  numeric '1' == 1
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_expression_depth = 3;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{numeric:true}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 6;
+    var first = try compile(std.testing.allocator, equality_semantics_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, equality_semantics_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(equality_semantics_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 5;
+    try expectSemanticRejectionWithLimits(
+        equality_semantics_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, equality_semantics_input, "(1 2 3)").?),
     );
 }
 
@@ -6711,6 +6775,14 @@ fn exerciseComplexOperatorPrecedenceAllocationFailures(allocator: std.mem.Alloca
     try std.testing.expectEqualStrings(complex_operator_precedence_css, result.css());
 }
 
+fn exerciseEqualitySemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 6;
+    var result = try compile(allocator, equality_semantics_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(equality_semantics_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -7059,6 +7131,14 @@ test "native Stylus complex operators handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseComplexOperatorPrecedenceAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus equality handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseEqualitySemanticsAllocationFailures,
         .{},
     );
 }
