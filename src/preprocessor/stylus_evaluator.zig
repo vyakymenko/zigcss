@@ -2285,9 +2285,14 @@ const MemberReference = union(enum) {
 
 const MemberAssignment = struct {
     base: []const u8,
-    member: MemberReference,
+    path: []const u8,
     value: []const u8,
     value_empty: bool,
+};
+
+const ResolvedMember = union(enum) {
+    key: []const u8,
+    index: usize,
 };
 
 const Call = struct {
@@ -2917,8 +2922,9 @@ const Engine = struct {
                 return;
             }
             if (try self.hasExplicitOpeningBrace(node_id)) {
-                try self.reportInvalidOperation(text);
-                return error.InvalidOperation;
+                const object = try self.evaluateObjectBlock(node_id, scope.*);
+                try self.assignMemberReplacement(text, member, object, scope.*, true);
+                return;
             }
             const block_value = try self.ownBlockValue(
                 text,
@@ -3079,63 +3085,13 @@ const Engine = struct {
         block_value: *const native_value.Value,
         scope: native_environment.ScopeId,
     ) Error!void {
-        const current = (try self.lookupBinding(scope, assignment.base)) orelse {
-            try self.reportUndefinedVariable(span);
-            return error.UndefinedVariable;
-        };
-        const replacement = switch (assignment.member) {
-            .key => |key| blk: {
-                if (current.* != .map) {
-                    try self.reportInvalidOperation(span);
-                    return error.InvalidOperation;
-                }
-                var entries: std.ArrayList(native_value.Entry) = .empty;
-                defer entries.deinit(self.allocator);
-                var replaced = false;
-                for (current.map.entries) |entry| {
-                    if (entry.key == .string and std.mem.eql(u8, entry.key.string.bytes, key)) {
-                        try entries.append(self.allocator, .{
-                            .key = entry.key,
-                            .value = block_value.*,
-                        });
-                        replaced = true;
-                    } else {
-                        try entries.append(self.allocator, entry);
-                    }
-                }
-                if (!replaced) try entries.append(self.allocator, .{
-                    .key = .{ .string = .{ .bytes = key } },
-                    .value = block_value.*,
-                });
-                break :blk try self.ownValue(span, .{ .map = .{ .entries = entries.items } });
-            },
-            .index => |index| blk: {
-                if (current.* != .list or index > current.list.items.len) {
-                    try self.reportInvalidOperation(span);
-                    return error.InvalidOperation;
-                }
-                var items: std.ArrayList(native_value.Value) = .empty;
-                defer items.deinit(self.allocator);
-                try items.appendSlice(self.allocator, current.list.items);
-                if (index == items.items.len) {
-                    try items.append(self.allocator, block_value.*);
-                } else {
-                    items.items[index] = block_value.*;
-                }
-                break :blk try self.ownValue(span, .{ .list = .{
-                    .items = items.items,
-                    .separator = current.list.separator,
-                    .bracketed = current.list.bracketed,
-                } });
-            },
-            .expression => {
-                try self.reportInvalidOperation(span);
-                return error.InvalidOperation;
-            },
-        };
-        if (!(try self.updateBinding(scope, assignment.base, replacement))) {
-            return error.UndefinedVariable;
-        }
+        try self.assignMemberReplacement(
+            span,
+            assignment,
+            block_value,
+            scope,
+            false,
+        );
     }
 
     fn assignMemberValue(
@@ -3144,6 +3100,15 @@ const Engine = struct {
         assignment: MemberAssignment,
         scope: native_environment.ScopeId,
     ) Error!void {
+        _ = try self.evaluateMemberAssignment(span, assignment, scope);
+    }
+
+    fn evaluateMemberAssignment(
+        self: *Engine,
+        span: native_source.Span,
+        assignment: MemberAssignment,
+        scope: native_environment.ScopeId,
+    ) Error!?*const native_value.Value {
         const postfix = splitPostfixCondition(assignment.value);
         if (postfix.condition) |condition| {
             var selected = try self.evaluateCondition(
@@ -3152,33 +3117,146 @@ const Engine = struct {
                 scope,
             );
             if (condition.negated) selected = !selected;
-            if (!selected) return;
+            if (!selected) return null;
         }
         const value_raw = assignment.value[postfix.declaration.start..postfix.declaration.end];
         const value = try self.evaluateValue(span, value_raw, scope, 0);
+        try self.assignMemberReplacement(span, assignment, value, scope, true);
+        return value;
+    }
+
+    fn assignMemberReplacement(
+        self: *Engine,
+        span: native_source.Span,
+        assignment: MemberAssignment,
+        value: *const native_value.Value,
+        scope: native_environment.ScopeId,
+        propagate_mutation: bool,
+    ) Error!void {
         const current = (try self.lookupBinding(scope, assignment.base)) orelse {
             try self.reportUndefinedVariable(span);
             return error.UndefinedVariable;
         };
+        var members = try self.resolveMemberPath(span, assignment.path, scope);
+        defer members.deinit(self.allocator);
+        const replacement = try self.replaceMemberPath(
+            span,
+            current,
+            members.items,
+            0,
+            value,
+        );
+        const updated = if (propagate_mutation)
+            try self.updateMutationBinding(scope, assignment.base, replacement)
+        else
+            try self.updateBinding(scope, assignment.base, replacement);
+        if (!updated) return error.UndefinedVariable;
+    }
 
-        const resolved_member: union(enum) { key: []const u8, index: usize } = switch (assignment.member) {
-            .key => |key| .{ .key = key },
-            .index => |index| .{ .index = index },
-            .expression => |raw_member| blk: {
-                const member_value = try self.evaluateValue(span, raw_member, scope, 0);
-                if (stringBytes(member_value.*)) |key| break :blk .{ .key = key };
-                const signed = integerScalar(member_value.*) orelse {
+    fn resolveMemberPath(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!std.ArrayList(ResolvedMember) {
+        var members: std.ArrayList(ResolvedMember) = .empty;
+        errdefer members.deinit(self.allocator);
+        var cursor: usize = 0;
+        while (cursor < raw.len) {
+            const member = parseMemberReference(raw, &cursor) orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            if (members.items.len >= self.limits.values.max_depth) {
+                try self.reportResource(span, "native Stylus value limit exceeded");
+                return error.ValueDepthExceeded;
+            }
+            const resolved: ResolvedMember = switch (member) {
+                .key => |key| .{ .key = key },
+                .index => |index| .{ .index = index },
+                .expression => |expression| blk: {
+                    const member_value = try self.evaluateValue(span, expression, scope, 0);
+                    if (stringBytes(member_value.*)) |key| break :blk .{ .key = key };
+                    const signed = integerScalar(member_value.*) orelse {
+                        try self.reportInvalidOperation(span);
+                        return error.InvalidOperation;
+                    };
+                    const index = std.math.cast(usize, signed) orelse {
+                        try self.reportInvalidOperation(span);
+                        return error.InvalidOperation;
+                    };
+                    break :blk .{ .index = index };
+                },
+            };
+            try members.append(self.allocator, resolved);
+        }
+        if (members.items.len == 0) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        return members;
+    }
+
+    fn replaceMemberPath(
+        self: *Engine,
+        span: native_source.Span,
+        current: *const native_value.Value,
+        members: []const ResolvedMember,
+        member_index: usize,
+        value: *const native_value.Value,
+    ) Error!*const native_value.Value {
+        if (member_index >= members.len) return error.InvalidDocument;
+        try self.transaction.consumeOperations(1);
+        if (member_index + 1 == members.len) {
+            return self.replaceDirectMember(span, current, members[member_index], value);
+        }
+        const child = switch (members[member_index]) {
+            .key => |key| blk: {
+                if (current.* != .map) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
-                };
-                const index = std.math.cast(usize, signed) orelse {
+                }
+                for (current.map.entries) |*entry| {
+                    if (entry.key == .string and
+                        std.mem.eql(u8, entry.key.string.bytes, key))
+                    {
+                        break :blk &entry.value;
+                    }
+                }
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            },
+            .index => |index| blk: {
+                if (current.* != .list or index >= current.list.items.len) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
-                };
-                break :blk .{ .index = index };
+                }
+                break :blk &current.list.items[index];
             },
         };
-        const replacement = switch (resolved_member) {
+        const replacement = try self.replaceMemberPath(
+            span,
+            child,
+            members,
+            member_index + 1,
+            value,
+        );
+        return self.replaceDirectMember(
+            span,
+            current,
+            members[member_index],
+            replacement,
+        );
+    }
+
+    fn replaceDirectMember(
+        self: *Engine,
+        span: native_source.Span,
+        current: *const native_value.Value,
+        member: ResolvedMember,
+        value: *const native_value.Value,
+    ) Error!*const native_value.Value {
+        return switch (member) {
             .key => |key| blk: {
                 if (current.* != .map) {
                     try self.reportInvalidOperation(span);
@@ -3226,9 +3304,6 @@ const Engine = struct {
                 } });
             },
         };
-        if (!(try self.updateMutationBinding(scope, assignment.base, replacement))) {
-            return error.UndefinedVariable;
-        }
     }
 
     fn evaluateObjectBlock(
@@ -6751,6 +6826,31 @@ const Engine = struct {
             self.active_property_value = previous_property_value;
             self.current_property_bindings.shrinkRetainingCapacity(property_binding_start);
         }
+        if (parseMemberAssignment(value_raw)) |assignment| {
+            if (assignment.value.len == 0) {
+                try self.reportInvalidOperation(value_span);
+                return error.InvalidOperation;
+            }
+            const value = (try self.evaluateMemberAssignment(
+                value_span,
+                assignment,
+                scope.*,
+            )) orelse {
+                self.allocator.free(property);
+                return null;
+            };
+            return .{
+                .span = declaration_span,
+                .property = property,
+                .value = try self.serializeDeclarationValueOwned(
+                    value,
+                    value_span,
+                    assignment.value,
+                ),
+                .semantic_value = value,
+                .side_effect = false,
+            };
+        }
         if (parseAssignment(value_raw)) |assignment| {
             if (assignment.value.len == 0) {
                 try self.reportInvalidOperation(value_span);
@@ -7775,7 +7875,7 @@ const Engine = struct {
             };
             const result = switch (operator) {
                 '+', '-' => native_numeric.addPermissive(left_numeric, right_numeric, operator),
-                '*' => native_numeric.multiply(left_numeric, right_numeric, operator),
+                '*' => multiplyStylusNumbers(left_numeric, right_numeric),
                 '/' => divideStylusNumbers(left_numeric, right_numeric),
                 '%' => native_numeric.modulo(left_numeric, right_numeric),
                 else => return error.InvalidOperation,
@@ -14644,6 +14744,11 @@ fn parseMemberAssignment(raw_input: []const u8) ?MemberAssignment {
             '(', '[', '{' => depth += 1,
             ')', ']', '}' => depth -|= 1,
             '=' => if (depth == 0) {
+                if ((index + 1 < raw.len and raw[index + 1] == '=') or
+                    (index > 0 and std.mem.indexOfScalar(u8, "=!<>", raw[index - 1]) != null))
+                {
+                    continue;
+                }
                 equals = index;
                 break;
             },
@@ -14658,40 +14763,83 @@ fn parseMemberAssignment(raw_input: []const u8) ?MemberAssignment {
     const base_end = nameEnd(left, 0);
     const base = left[0..base_end];
     if (!validVariableName(base) or base_end >= left.len) return null;
-
-    if (left[base_end] == '.') {
-        const key = left[base_end + 1 ..];
-        if (!validVariableName(key)) return null;
-        return .{
-            .base = base,
-            .member = .{ .key = key },
-            .value = value,
-            .value_empty = value.len == 0,
-        };
+    const path = left[base_end..];
+    var cursor: usize = 0;
+    var member_count: usize = 0;
+    while (cursor < path.len) {
+        _ = parseMemberReference(path, &cursor) orelse return null;
+        member_count += 1;
     }
-    if (left[base_end] != '[' or left[left.len - 1] != ']') return null;
-    const raw_key = std.mem.trim(u8, left[base_end + 1 .. left.len - 1], " \t\r\n\x0c");
-    if (raw_key.len >= 2 and
-        ((raw_key[0] == '\'' and raw_key[raw_key.len - 1] == '\'') or
-            (raw_key[0] == '"' and raw_key[raw_key.len - 1] == '"')))
-    {
-        return .{
-            .base = base,
-            .member = .{ .key = raw_key[1 .. raw_key.len - 1] },
-            .value = value,
-            .value_empty = value.len == 0,
-        };
-    }
-    const member: MemberReference = if (std.fmt.parseUnsigned(usize, raw_key, 10)) |index|
-        .{ .index = index }
-    else |_|
-        .{ .expression = raw_key };
+    if (member_count == 0) return null;
     return .{
         .base = base,
-        .member = member,
+        .path = path,
         .value = value,
         .value_empty = value.len == 0,
     };
+}
+
+fn parseMemberReference(raw: []const u8, cursor: *usize) ?MemberReference {
+    if (cursor.* >= raw.len) return null;
+    if (raw[cursor.*] == '.') {
+        const start = cursor.* + 1;
+        if (start >= raw.len or !isNameStart(raw, start)) return null;
+        const end = nameEnd(raw, start);
+        cursor.* = end;
+        return .{ .key = raw[start..end] };
+    }
+    if (raw[cursor.*] != '[') return null;
+    const closing = matchingSquare(raw, cursor.*) orelse return null;
+    const member_raw = std.mem.trim(
+        u8,
+        raw[cursor.* + 1 .. closing],
+        " \t\r\n\x0c",
+    );
+    if (member_raw.len == 0) return null;
+    cursor.* = closing + 1;
+    if (member_raw.len >= 2 and
+        ((member_raw[0] == '\'' and member_raw[member_raw.len - 1] == '\'') or
+            (member_raw[0] == '"' and member_raw[member_raw.len - 1] == '"')))
+    {
+        return .{ .key = member_raw[1 .. member_raw.len - 1] };
+    }
+    return if (std.fmt.parseUnsigned(usize, member_raw, 10)) |index|
+        .{ .index = index }
+    else |_|
+        .{ .expression = member_raw };
+}
+
+fn matchingSquare(raw: []const u8, opening: usize) ?usize {
+    if (opening >= raw.len or raw[opening] != '[') return null;
+    var depth: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var cursor = opening;
+    while (cursor < raw.len) : (cursor += 1) {
+        const byte = raw[cursor];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '[') {
+            depth += 1;
+        } else if (byte == ']') {
+            if (depth == 0) return null;
+            depth -= 1;
+            if (depth == 0) return cursor;
+        }
+    }
+    return null;
 }
 
 fn validVariableName(name: []const u8) bool {
@@ -15657,7 +15805,7 @@ const NumericParser = struct {
             } else if (operation == '/') {
                 result = try divideStylusNumbers(result, right);
             } else {
-                result = try native_numeric.multiply(result, right, operation);
+                result = try multiplyStylusNumbers(result, right);
             }
         }
     }
@@ -15749,6 +15897,34 @@ fn divideStylusNumbers(
     else
         right.value;
     return native_numeric.Numeric.init(left.value / right_value, result_unit);
+}
+
+fn multiplyStylusNumbers(
+    left: native_numeric.Numeric,
+    right: native_numeric.Numeric,
+) native_numeric.Error!native_numeric.Numeric {
+    var left_numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    var left_denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    const left_number = try left.toNumber(&left_numerator, &left_denominator);
+    var right_numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    var right_denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    const right_number = try right.toNumber(&right_numerator, &right_denominator);
+
+    // Stylus Unit multiplication retains one scalar unit, preferring the
+    // left operand, instead of constructing compound CSS units.
+    const simple_left = left_number.denominator_units.len == 0 and
+        left_number.numerator_units.len <= 1;
+    const simple_right = right_number.denominator_units.len == 0 and
+        right_number.numerator_units.len <= 1;
+    if (!simple_left or !simple_right) return native_numeric.multiply(left, right, '*');
+
+    const result_unit = if (left_number.numerator_units.len == 1)
+        left_number.numerator_units[0]
+    else if (right_number.numerator_units.len == 1)
+        right_number.numerator_units[0]
+    else
+        null;
+    return native_numeric.Numeric.init(left.value * right.value, result_unit);
 }
 
 fn parseStylusFloatPrefix(raw: []const u8) ?f64 {

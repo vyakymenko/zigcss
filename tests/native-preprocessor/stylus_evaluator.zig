@@ -802,6 +802,29 @@ const unitful_mixin_condition_input =
 const unitful_mixin_condition_css =
     "body{result:above;result:below;result:zero}";
 
+const nested_object_member_input =
+    \\root = { branch: { leaf: {} } }
+    \\root['branch']['leaf']['settings'] = {
+    \\  width: 10px
+    \\  height: 20px
+    \\}
+    \\root.branch.leaf.inline = { width: 30px }
+    \\root.branch.leaf.factor = 10px * 2
+    \\root.branch.leaf.sized = { width: 20px * root.branch.leaf.factor }
+    \\body
+    \\  first root.branch.leaf.settings.width
+    \\  second root['branch'].leaf['settings'].height
+    \\  third root.branch['leaf'].inline.width
+    \\  fourth root.branch.leaf.sized.width
+    \\  assigned: root.branch.leaf.assigned = 100px
+    \\  observed root.branch.leaf.assigned
+    \\  comparison root.branch.leaf.missing == null
+;
+
+const nested_object_member_css =
+    "body{first:10px;second:20px;third:30px;fourth:400px;" ++
+    "assigned:100px;observed:100px;comparison:true}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2996,6 +3019,44 @@ test "native Stylus merge mutates maps with shallow and recursive precedence" {
         .type_mismatch,
         "native Stylus callable arguments are invalid",
         @intCast(std.mem.indexOf(u8, invalid, "merge").?),
+    );
+}
+
+test "native Stylus nested object members own the finite mutation depth contract" {
+    const lower_input =
+        \\root = {}
+        \\root.branch = { width: 1px }
+        \\body
+        \\  width root.branch.width
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.values.max_depth = 3;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{width:1px}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_depth = 5;
+    var first = try compile(std.testing.allocator, nested_object_member_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, nested_object_member_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(nested_object_member_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.values.max_depth = 4;
+    try expectSemanticRejectionWithLimits(
+        nested_object_member_input,
+        over_limit,
+        error.ValueDepthExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.indexOf(u8, nested_object_member_input, "root['branch']").?),
     );
 }
 
@@ -6277,6 +6338,14 @@ fn exerciseUnitfulMixinConditionAllocationFailures(allocator: std.mem.Allocator)
     try std.testing.expectEqualStrings(unitful_mixin_condition_css, result.css());
 }
 
+fn exerciseNestedObjectMemberAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_depth = 5;
+    var result = try compile(allocator, nested_object_member_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(nested_object_member_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -6577,6 +6646,14 @@ test "native Stylus nested mixin caller scope handles every allocation failure" 
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMixinCallerScopeAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus nested object members handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseNestedObjectMemberAllocationFailures,
         .{},
     );
 }
