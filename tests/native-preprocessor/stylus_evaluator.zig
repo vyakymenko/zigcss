@@ -364,6 +364,21 @@ const complex_for_css = "body{item:0 b;item:1 c}" ++
     "body{grid:0 x;grid:1 x;grid:0 y;grid:1 y}" ++
     "body{state:true}body{state:true}";
 
+const operator_range_assignment_input =
+    \\values = 1..5
+    \\grouped = (1..5) (6..10)
+    \\body
+    \\  selected values[-1..-2]
+    \\  grouped-tail grouped[length(grouped) - 1]
+    \\  before values
+    \\  values[-1..-2] = 'foo'
+    \\  after values
+;
+
+const operator_range_assignment_css =
+    "body{selected:5 4;grouped-tail:6 7 8 9 10;" ++
+    "before:1 2 3 'foo' 'foo';after:1 2 3 'foo' 'foo'}";
+
 const function_arguments_input =
     \\sum()
     \\  n = 0
@@ -3134,6 +3149,58 @@ test "native Stylus object mixins own the finite structural insertion contract" 
         .resource_limit,
         "native Stylus selector limit exceeded",
         @intCast(std.mem.indexOf(u8, object_mixin_input, "{theme}").?),
+    );
+}
+
+test "native Stylus range indexes own the finite selection and assignment contract" {
+    const lower_input =
+        \\values = 1 2 3
+        \\body
+        \\  before values
+        \\  values[-1] = 'tail'
+        \\  after values
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{before:1 2 'tail';after:1 2 'tail'}",
+        lower.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_loop_iterations = 5;
+    var first = try compile(
+        std.testing.allocator,
+        operator_range_assignment_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        operator_range_assignment_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(operator_range_assignment_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.max_loop_iterations = 4;
+    try expectSemanticRejectionWithLimits(
+        operator_range_assignment_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(
+            u8,
+            operator_range_assignment_input,
+            "values = 1..5",
+        ).?),
     );
 }
 
@@ -6431,6 +6498,14 @@ fn exerciseObjectMixinAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(object_mixin_css, result.css());
 }
 
+fn exerciseOperatorRangeAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 5;
+    var result = try compile(allocator, operator_range_assignment_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(operator_range_assignment_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -6747,6 +6822,14 @@ test "native Stylus object mixins handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseObjectMixinAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus range index assignment handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOperatorRangeAssignmentAllocationFailures,
         .{},
     );
 }

@@ -2292,7 +2292,8 @@ const MemberAssignment = struct {
 
 const ResolvedMember = union(enum) {
     key: []const u8,
-    index: usize,
+    index: i64,
+    indices: []const native_value.Value,
 };
 
 const Call = struct {
@@ -2381,6 +2382,7 @@ const RenderedDeclaration = struct {
     property: []u8,
     value: []u8,
     semantic_value: *const native_value.Value,
+    mutation_source: ?*const native_value.Value = null,
     side_effect: bool,
 
     fn deinit(self: *RenderedDeclaration, allocator: std.mem.Allocator) void {
@@ -3194,6 +3196,27 @@ const Engine = struct {
         else
             try self.updateBinding(scope, assignment.base, replacement);
         if (!updated) return error.UndefinedVariable;
+        try self.rewriteMutationDeclarations(current, replacement);
+    }
+
+    fn rewriteMutationDeclarations(
+        self: *Engine,
+        current: *const native_value.Value,
+        replacement: *const native_value.Value,
+    ) Error!void {
+        const output = self.active_output orelse return;
+        for (output.declarations.items) |*declaration| {
+            if (declaration.mutation_source != current) continue;
+            const serialized = try self.serializeValueOwned(
+                replacement,
+                .value,
+                declaration.span,
+            );
+            self.allocator.free(declaration.value);
+            declaration.value = serialized;
+            declaration.semantic_value = replacement;
+            declaration.mutation_source = replacement;
+        }
     }
 
     fn resolveMemberPath(
@@ -3216,19 +3239,27 @@ const Engine = struct {
             }
             const resolved: ResolvedMember = switch (member) {
                 .key => |key| .{ .key = key },
-                .index => |index| .{ .index = index },
+                .index => |index| .{ .index = std.math.cast(i64, index) orelse {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                } },
                 .expression => |expression| blk: {
                     const member_value = try self.evaluateValue(span, expression, scope, 0);
                     if (stringBytes(member_value.*)) |key| break :blk .{ .key = key };
+                    if (member_value.* == .list) {
+                        for (member_value.list.items) |item| {
+                            if (integerScalar(item) == null) {
+                                try self.reportInvalidOperation(span);
+                                return error.InvalidOperation;
+                            }
+                        }
+                        break :blk .{ .indices = member_value.list.items };
+                    }
                     const signed = integerScalar(member_value.*) orelse {
                         try self.reportInvalidOperation(span);
                         return error.InvalidOperation;
                     };
-                    const index = std.math.cast(usize, signed) orelse {
-                        try self.reportInvalidOperation(span);
-                        return error.InvalidOperation;
-                    };
-                    break :blk .{ .index = index };
+                    break :blk .{ .index = signed };
                 },
             };
             try members.append(self.allocator, resolved);
@@ -3269,12 +3300,20 @@ const Engine = struct {
                 try self.reportInvalidOperation(span);
                 return error.InvalidOperation;
             },
-            .index => |index| blk: {
-                if (current.* != .list or index >= current.list.items.len) {
+            .index => |signed_index| blk: {
+                if (current.* != .list) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 }
+                const index = normalizeIndex(signed_index, current.list.items.len) orelse {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                };
                 break :blk &current.list.items[index];
+            },
+            .indices => {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
             },
         };
         const replacement = try self.replaceMemberPath(
@@ -3322,12 +3361,22 @@ const Engine = struct {
                 });
                 break :blk try self.ownValue(span, .{ .map = .{ .entries = entries.items } });
             },
-            .index => |index| blk: {
+            .index => |signed_index| blk: {
                 if (current.* != .list) {
-                    if (index == 0) break :blk value;
+                    if (signed_index == 0) break :blk value;
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 }
+                const index = if (signed_index < 0)
+                    normalizeIndex(signed_index, current.list.items.len) orelse {
+                        try self.reportInvalidOperation(span);
+                        return error.InvalidOperation;
+                    }
+                else
+                    std.math.cast(usize, signed_index) orelse {
+                        try self.reportInvalidOperation(span);
+                        return error.InvalidOperation;
+                    };
                 if (index > current.list.items.len) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
@@ -3339,6 +3388,46 @@ const Engine = struct {
                     try items.append(self.allocator, value.*);
                 } else {
                     items.items[index] = value.*;
+                }
+                break :blk try self.ownValue(span, .{ .list = .{
+                    .items = items.items,
+                    .separator = current.list.separator,
+                    .bracketed = current.list.bracketed,
+                } });
+            },
+            .indices => |index_values| blk: {
+                if (current.* != .list) {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                var items: std.ArrayList(native_value.Value) = .empty;
+                defer items.deinit(self.allocator);
+                try items.appendSlice(self.allocator, current.list.items);
+                for (index_values) |index_value| {
+                    const signed_index = integerScalar(index_value) orelse {
+                        try self.reportInvalidOperation(span);
+                        return error.InvalidOperation;
+                    };
+                    const index = if (signed_index < 0)
+                        normalizeIndex(signed_index, items.items.len) orelse {
+                            try self.reportInvalidOperation(span);
+                            return error.InvalidOperation;
+                        }
+                    else
+                        std.math.cast(usize, signed_index) orelse {
+                            try self.reportInvalidOperation(span);
+                            return error.InvalidOperation;
+                        };
+                    if (index > items.items.len) {
+                        try self.reportInvalidOperation(span);
+                        return error.InvalidOperation;
+                    }
+                    try self.transaction.consumeOperations(1);
+                    if (index == items.items.len) {
+                        try items.append(self.allocator, value.*);
+                    } else {
+                        items.items[index] = value.*;
+                    }
                 }
                 break :blk try self.ownValue(span, .{ .list = .{
                     .items = items.items,
@@ -7265,11 +7354,17 @@ const Engine = struct {
             value_span,
             value_raw,
         );
+        const mutation_source = if (value.* == .list and
+            validVariableName(trimmed_value))
+            try self.lookupBinding(scope.*, trimmed_value)
+        else
+            null;
         return .{
             .span = declaration_span,
             .property = property,
             .value = serialized,
             .semantic_value = value,
+            .mutation_source = mutation_source,
             .side_effect = false,
         };
     }
@@ -7657,6 +7752,25 @@ const Engine = struct {
                 span,
                 .{ .boolean = try self.compareValues(span, left, right, comparison.operator) },
             );
+        }
+        if (findGenericBinary(source_input)) |binary| {
+            const left_raw = source_input[binary.left.start..binary.left.end];
+            const right_raw = source_input[binary.right.start..binary.right.end];
+            if (parseCall(left_raw) != null or parseCall(right_raw) != null) {
+                const left = try self.evaluateValue(
+                    try self.relativeSpan(span, binary.left),
+                    left_raw,
+                    scope,
+                    depth + 1,
+                );
+                const right = try self.evaluateValue(
+                    try self.relativeSpan(span, binary.right),
+                    right_raw,
+                    scope,
+                    depth + 1,
+                );
+                return self.evaluateGenericBinary(span, left, right, binary.operator);
+            }
         }
         const rendered = try self.renderRawOwned(span, raw, scope, .value, depth + 1);
         defer self.allocator.free(rendered);
