@@ -8062,6 +8062,13 @@ const Engine = struct {
             return self.ownValue(span, .{ .string = .{ .bytes = "!important" } });
         }
         if (findGenericBinary(input)) |binary| {
+            if (try self.evaluatePrefixedSubtractionList(
+                span,
+                input,
+                binary,
+                scope,
+                depth,
+            )) |list| return list;
             const left = try self.evaluateValue(span, input[binary.left.start..binary.left.end], scope, depth + 1);
             const right = try self.evaluateValue(span, input[binary.right.start..binary.right.end], scope, depth + 1);
             return self.evaluateGenericBinary(span, left, right, binary.operator);
@@ -8394,6 +8401,69 @@ const Engine = struct {
         } });
     }
 
+    fn evaluatePrefixedSubtractionList(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        binary: GenericBinary,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!?*const native_value.Value {
+        if (binary.operator != '-') return null;
+
+        const left_raw = raw[binary.left.start..binary.left.end];
+        var left_parts = try splitTopLevelWhitespace(self.allocator, left_raw);
+        defer left_parts.deinit(self.allocator);
+        if (left_parts.items.len < 2) return null;
+        for (left_parts.items) |part| {
+            const bytes = left_raw[part.start..part.end];
+            if ((bytes.len == 1 and std.mem.indexOfScalar(
+                u8,
+                "+-*/%~!<>=&|?:",
+                bytes[0],
+            ) != null) or
+                std.mem.eql(u8, bytes, "**") or
+                std.mem.eql(u8, bytes, "&&") or
+                std.mem.eql(u8, bytes, "||") or
+                std.mem.eql(u8, bytes, "is") or
+                std.mem.eql(u8, bytes, "in"))
+            {
+                return null;
+            }
+        }
+
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        try items.ensureTotalCapacity(self.allocator, left_parts.items.len);
+        for (left_parts.items[0 .. left_parts.items.len - 1]) |part| {
+            const absolute = ByteRange{
+                .start = binary.left.start + part.start,
+                .end = binary.left.start + part.end,
+            };
+            const item = try self.evaluateValue(
+                try self.relativeSpan(span, absolute),
+                raw[absolute.start..absolute.end],
+                scope,
+                depth + 1,
+            );
+            items.appendAssumeCapacity(item.*);
+        }
+
+        const tail_start = binary.left.start + left_parts.items[left_parts.items.len - 1].start;
+        const tail = ByteRange{ .start = tail_start, .end = binary.right.end };
+        const item = try self.evaluateValue(
+            try self.relativeSpan(span, tail),
+            raw[tail.start..tail.end],
+            scope,
+            depth + 1,
+        );
+        items.appendAssumeCapacity(item.*);
+        return self.ownValue(span, .{ .list = .{
+            .items = items.items,
+            .separator = .space,
+        } });
+    }
+
     fn evaluateDeclarationValue(
         self: *Engine,
         span: native_source.Span,
@@ -8608,6 +8678,21 @@ const Engine = struct {
             defer values.deinit(self.allocator);
             for (left.list.items) |item| if (!native_value.eql(item, right.*)) try values.append(self.allocator, item);
             return self.ownValue(span, .{ .list = .{ .items = values.items, .separator = left.list.separator } });
+        }
+        // Stylus identifiers prepend themselves to a negated unit when used
+        // as the left operand of subtraction (for example `auto - 10px`).
+        // The parser retains that expression as one item inside a wider
+        // whitespace-separated property value.
+        if (operator == '-' and left.* == .string and !left.string.quoted and
+            right.* == .number)
+        {
+            var number = right.number;
+            number.value = -number.value;
+            const values = [_]native_value.Value{ left.*, .{ .number = number } };
+            return self.ownValue(span, .{ .list = .{
+                .items = &values,
+                .separator = .space,
+            } });
         }
         if (operator == '%' and left.* == .string) {
             const arguments = if (right.* == .list)

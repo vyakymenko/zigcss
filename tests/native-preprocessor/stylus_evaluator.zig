@@ -441,6 +441,21 @@ const operator_subscript_range_css =
     "body{exclusive:a b;inclusive:b c d;selected:a c e;partial:a;partial-count:1;" ++
     "nested:1 2 3 4;empty:;missing:;empty-range:}";
 
+const operator_unary_input =
+    \\foo = 10px
+    \\.bar
+    \\  height foo
+    \\.baz
+    \\  margin 0 auto -(foo)
+    \\  margin 0 auto - foo
+    \\  padding +(foo)
+    \\  padding + foo
+;
+
+const operator_unary_css =
+    ".bar{height:10px}.baz{margin:0 auto -10px;margin:0 auto -10px;" ++
+    "padding:10px;padding:10px}";
+
 const root_conditional_assignment_input =
     \\primary := 'first'
     \\primary := 'second'
@@ -3548,6 +3563,47 @@ test "native Stylus list subscript ranges own the finite selection contract" {
             operator_subscript_range_input,
             "values[0...2]",
         ).?),
+    );
+}
+
+test "native Stylus unary signs own the finite numeric contract" {
+    const lower_input =
+        \\foo = 2px
+        \\body
+        \\  negative - foo
+        \\  positive +(foo)
+        \\  calculated 10px - 2px
+        \\  identified auto - 2px
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{negative:-2px;positive:2px;calculated:8px;identified:auto -2px}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 4;
+    var first = try compile(std.testing.allocator, operator_unary_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, operator_unary_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(operator_unary_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 3;
+    try expectSemanticRejectionWithLimits(
+        operator_unary_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, operator_unary_input, "auto -(foo)").?),
     );
 }
 
@@ -7156,6 +7212,14 @@ fn exerciseOperatorSubscriptRangeAllocationFailures(allocator: std.mem.Allocator
     try std.testing.expectEqualStrings(operator_subscript_range_css, result.css());
 }
 
+fn exerciseOperatorUnaryAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 4;
+    var result = try compile(allocator, operator_unary_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(operator_unary_css, result.css());
+}
+
 fn exerciseOperatorSemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_expression_depth = 6;
@@ -7556,6 +7620,14 @@ test "native Stylus list subscript ranges handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOperatorSubscriptRangeAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus unary signs handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOperatorUnaryAllocationFailures,
         .{},
     );
 }
