@@ -393,6 +393,35 @@ const operator_subscript_input =
 const operator_subscript_css =
     "body{missing:true;nested:4;callable:10;logical:true;negative:-3}";
 
+const operator_subscript_assignment_input =
+    \\items = 1 2
+    \\items[0] = foo
+    \\items[4] = 'tail'
+    \\scalar = 1
+    \\scalar[4..5] = 'two'
+    \\replace(values)
+    \\  values[2] = asdf
+    \\  values[3] = 'three'
+    \\  values
+    \\forward()
+    \\  arguments[2] = asdf
+    \\  arguments[3] = 'three'
+    \\  arguments
+    \\body
+    \\  items items
+    \\  first items[0]
+    \\  tail items[4]
+    \\  count length(items)
+    \\  scalar scalar
+    \\  replaced replace(1 2 3)
+    \\  forwarded forward(1 2 3)
+;
+
+const operator_subscript_assignment_css =
+    "body{items:foo 2 'tail';first:foo;tail:'tail';count:5;" ++
+    "scalar:1 'two' 'two';replaced:1 2 asdf 'three';" ++
+    "forwarded:1 2 asdf 'three'}";
+
 const root_conditional_assignment_input =
     \\primary := 'first'
     \\primary := 'second'
@@ -3403,6 +3432,51 @@ test "native Stylus list subscripts own the finite read contract" {
         .resource_limit,
         "native Stylus value limit exceeded",
         @intCast(std.mem.indexOf(u8, operator_subscript_input, "(1 (2 (3 4)))").?),
+    );
+}
+
+test "native Stylus list subscript assignment owns the finite mutation contract" {
+    const lower_input =
+        \\values = 1 2
+        \\values[2] = 'tail'
+        \\body
+        \\  result values
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{result:1 2 'tail'}", lower.css());
+
+    var first = try compile(
+        std.testing.allocator,
+        operator_subscript_assignment_input,
+        .{},
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        operator_subscript_assignment_input,
+        .{},
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(operator_subscript_assignment_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const over_limit_input =
+        \\values = 1
+        \\values[1000000] = 2
+        \\body
+        \\  result values
+    ;
+    try expectSemanticRejection(
+        over_limit_input,
+        error.ValueLimitExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.indexOf(u8, over_limit_input, "values[1000000]").?),
     );
 }
 
@@ -6997,6 +7071,12 @@ fn exerciseOperatorSubscriptAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(operator_subscript_css, result.css());
 }
 
+fn exerciseOperatorSubscriptAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, operator_subscript_assignment_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(operator_subscript_assignment_css, result.css());
+}
+
 fn exerciseOperatorSemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_expression_depth = 6;
@@ -7381,6 +7461,14 @@ test "native Stylus list subscripts handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOperatorSubscriptAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus list subscript assignment handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOperatorSubscriptAssignmentAllocationFailures,
         .{},
     );
 }

@@ -3281,16 +3281,17 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         if (member_index >= members.len) return error.InvalidDocument;
         try self.transaction.consumeOperations(1);
+        const unwrapped = unwrapStylusExpression(current);
         if (member_index + 1 == members.len) {
-            return self.replaceDirectMember(span, current, members[member_index], value);
+            return self.replaceDirectMember(span, unwrapped, members[member_index], value);
         }
         const child = switch (members[member_index]) {
             .key => |key| blk: {
-                if (current.* != .map) {
+                if (unwrapped.* != .map) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 }
-                for (current.map.entries) |*entry| {
+                for (unwrapped.map.entries) |*entry| {
                     if (entry.key == .string and
                         std.mem.eql(u8, entry.key.string.bytes, key))
                     {
@@ -3301,15 +3302,15 @@ const Engine = struct {
                 return error.InvalidOperation;
             },
             .index => |signed_index| blk: {
-                if (current.* != .list) {
+                if (unwrapped.* != .list) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 }
-                const index = normalizeIndex(signed_index, current.list.items.len) orelse {
+                const index = normalizeIndex(signed_index, unwrapped.list.items.len) orelse {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 };
-                break :blk &current.list.items[index];
+                break :blk &unwrapped.list.items[index];
             },
             .indices => {
                 try self.reportInvalidOperation(span);
@@ -3325,7 +3326,7 @@ const Engine = struct {
         );
         return self.replaceDirectMember(
             span,
-            current,
+            unwrapped,
             members[member_index],
             replacement,
         );
@@ -3364,78 +3365,90 @@ const Engine = struct {
             .index => |signed_index| blk: {
                 if (current.* != .list) {
                     if (signed_index == 0) break :blk value;
-                    try self.reportInvalidOperation(span);
-                    return error.InvalidOperation;
-                }
-                const index = if (signed_index < 0)
-                    normalizeIndex(signed_index, current.list.items.len) orelse {
+                    if (signed_index < 0) {
                         try self.reportInvalidOperation(span);
                         return error.InvalidOperation;
                     }
-                else
-                    std.math.cast(usize, signed_index) orelse {
-                        try self.reportInvalidOperation(span);
-                        return error.InvalidOperation;
-                    };
-                if (index > current.list.items.len) {
-                    try self.reportInvalidOperation(span);
-                    return error.InvalidOperation;
                 }
                 var items: std.ArrayList(native_value.Value) = .empty;
                 defer items.deinit(self.allocator);
-                try items.appendSlice(self.allocator, current.list.items);
-                if (index == items.items.len) {
-                    try items.append(self.allocator, value.*);
+                if (current.* == .list) {
+                    try items.appendSlice(self.allocator, current.list.items);
                 } else {
-                    items.items[index] = value.*;
+                    try items.append(self.allocator, current.*);
                 }
+                try self.replaceListIndex(span, &items, signed_index, value);
                 break :blk try self.ownValue(span, .{ .list = .{
                     .items = items.items,
-                    .separator = current.list.separator,
-                    .bracketed = current.list.bracketed,
+                    .separator = if (current.* == .list) current.list.separator else .space,
+                    .bracketed = current.* == .list and current.list.bracketed,
+                    .truthy_override = if (current.* == .list) current.list.truthy_override else null,
+                    .preserve = current.* == .list and current.list.preserve,
                 } });
             },
             .indices => |index_values| blk: {
-                if (current.* != .list) {
-                    try self.reportInvalidOperation(span);
-                    return error.InvalidOperation;
-                }
                 var items: std.ArrayList(native_value.Value) = .empty;
                 defer items.deinit(self.allocator);
-                try items.appendSlice(self.allocator, current.list.items);
+                if (current.* == .list) {
+                    try items.appendSlice(self.allocator, current.list.items);
+                } else {
+                    try items.append(self.allocator, current.*);
+                }
                 for (index_values) |index_value| {
                     const signed_index = integerScalar(index_value) orelse {
                         try self.reportInvalidOperation(span);
                         return error.InvalidOperation;
                     };
-                    const index = if (signed_index < 0)
-                        normalizeIndex(signed_index, items.items.len) orelse {
-                            try self.reportInvalidOperation(span);
-                            return error.InvalidOperation;
-                        }
-                    else
-                        std.math.cast(usize, signed_index) orelse {
-                            try self.reportInvalidOperation(span);
-                            return error.InvalidOperation;
-                        };
-                    if (index > items.items.len) {
-                        try self.reportInvalidOperation(span);
-                        return error.InvalidOperation;
-                    }
-                    try self.transaction.consumeOperations(1);
-                    if (index == items.items.len) {
-                        try items.append(self.allocator, value.*);
-                    } else {
-                        items.items[index] = value.*;
-                    }
+                    try self.replaceListIndex(span, &items, signed_index, value);
                 }
                 break :blk try self.ownValue(span, .{ .list = .{
                     .items = items.items,
-                    .separator = current.list.separator,
-                    .bracketed = current.list.bracketed,
+                    .separator = if (current.* == .list) current.list.separator else .space,
+                    .bracketed = current.* == .list and current.list.bracketed,
+                    .truthy_override = if (current.* == .list) current.list.truthy_override else null,
+                    .preserve = current.* == .list and current.list.preserve,
                 } });
             },
         };
+    }
+
+    fn replaceListIndex(
+        self: *Engine,
+        span: native_source.Span,
+        items: *std.ArrayList(native_value.Value),
+        signed_index: i64,
+        value: *const native_value.Value,
+    ) Error!void {
+        const index = if (signed_index < 0)
+            normalizeIndex(signed_index, items.items.len) orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            }
+        else
+            std.math.cast(usize, signed_index) orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+        const required_len = std.math.add(usize, index, 1) catch {
+            try self.reportResource(span, "native Stylus value limit exceeded");
+            return error.ValueLimitExceeded;
+        };
+        if (required_len > self.limits.values.max_collection_items) {
+            try self.reportResource(span, "native Stylus value limit exceeded");
+            return error.ValueLimitExceeded;
+        }
+        if (required_len > items.items.len) {
+            const extension_len = required_len - items.items.len;
+            try self.transaction.consumeOperations(@intCast(extension_len));
+            try items.ensureUnusedCapacity(self.allocator, extension_len);
+            while (items.items.len < index) {
+                items.appendAssumeCapacity(.{ .null_value = {} });
+            }
+            items.appendAssumeCapacity(value.*);
+            return;
+        }
+        try self.transaction.consumeOperations(1);
+        items.items[index] = value.*;
     }
 
     fn evaluateObjectBlock(
@@ -11668,7 +11681,7 @@ const Engine = struct {
                 return false;
             },
             .list => {
-                const haystack = unwrapMembershipExpression(raw_haystack);
+                const haystack = unwrapStylusExpression(raw_haystack);
                 const items = haystack.list.items;
                 try self.transaction.consumeOperations(@intCast(items.len));
                 for (items) |item| {
@@ -14911,7 +14924,7 @@ fn isTruthy(value: *const native_value.Value) bool {
     };
 }
 
-fn unwrapMembershipExpression(value: *const native_value.Value) *const native_value.Value {
+fn unwrapStylusExpression(value: *const native_value.Value) *const native_value.Value {
     var current = value;
     while (current.* == .list and !current.list.preserve and
         current.list.items.len == 1 and current.list.items[0] == .list)
