@@ -2593,6 +2593,12 @@ const StatementResult = struct {
     explicit: bool,
 };
 
+const CallableReturnPolicy = enum {
+    ignored,
+    optional,
+    required,
+};
+
 const BlockValue = struct {
     block_id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
@@ -4867,7 +4873,7 @@ const Engine = struct {
                         call,
                         scope.*,
                         output,
-                        false,
+                        .ignored,
                         statement_id,
                     );
                     if (returned != null) return error.InvalidDocument;
@@ -5049,7 +5055,7 @@ const Engine = struct {
                                 call,
                                 scope.*,
                                 destination,
-                                false,
+                                .ignored,
                                 null,
                             );
                             if (returned != null) return error.InvalidDocument;
@@ -5224,7 +5230,7 @@ const Engine = struct {
                                 call.?,
                                 scope.*,
                                 null,
-                                false,
+                                .ignored,
                                 null,
                             );
                             if (returned != null) return error.InvalidDocument;
@@ -5506,6 +5512,22 @@ const Engine = struct {
                 return self.evaluateValue(span, interpolated, scope, 0);
             }
         }
+        if (parseAssignment(expression) == null and parseMemberAssignment(expression) == null) {
+            if (parseCall(expression)) |call| {
+                const name = expression[call.name.start..call.name.end];
+                if (try self.resolveCallable(scope, name) != null) {
+                    return (try self.invokeUserCallable(
+                        span,
+                        expression,
+                        call,
+                        scope,
+                        null,
+                        .optional,
+                        null,
+                    )).?;
+                }
+            }
+        }
         return self.evaluateValue(span, expression, scope, 0);
     }
 
@@ -5672,7 +5694,7 @@ const Engine = struct {
             call,
             scope.*,
             output,
-            false,
+            .ignored,
             null,
         );
         if (returned != null) return error.InvalidDocument;
@@ -5731,7 +5753,7 @@ const Engine = struct {
             call,
             scope,
             output,
-            false,
+            .ignored,
             null,
         );
         if (returned != null) return error.InvalidDocument;
@@ -5889,7 +5911,7 @@ const Engine = struct {
         call: Call,
         caller_scope: native_environment.ScopeId,
         output: ?RuleOutput,
-        require_return: bool,
+        return_policy: CallableReturnPolicy,
         anonymous_node_id: ?native_syntax.NodeId,
     ) Error!?*const native_value.Value {
         const name = raw[call.name.start..call.name.end];
@@ -5897,7 +5919,7 @@ const Engine = struct {
             try self.reportUndefinedCallable(span);
             return error.UndefinedCallable;
         };
-        const mixin_context: native_value.Value = if (require_return)
+        const mixin_context: native_value.Value = if (return_policy != .ignored)
             .{ .boolean = false }
         else
             .{ .string = .{
@@ -6205,12 +6227,16 @@ const Engine = struct {
             output,
             true,
         );
-        if (!require_return) return null;
-        if (require_return and returned == null) {
+        if (return_policy == .ignored) return null;
+        if (returned) |result| return result.value;
+        if (return_policy == .optional) {
+            return self.ownValue(span, .{ .null_value = {} });
+        }
+        if (return_policy == .required) {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         }
-        return if (returned) |result| result.value else null;
+        unreachable;
     }
 
     fn findCallable(self: *const Engine, name: []const u8) ?Callable {
@@ -6580,7 +6606,7 @@ const Engine = struct {
                 call,
                 loop_scope,
                 output,
-                false,
+                .ignored,
                 null,
             );
             if (returned != null) return error.InvalidDocument;
@@ -6704,7 +6730,7 @@ const Engine = struct {
                 call,
                 scope.*,
                 output,
-                false,
+                .ignored,
                 null,
             );
             if (returned != null) return error.InvalidDocument;
@@ -7115,7 +7141,7 @@ const Engine = struct {
                     call,
                     scope,
                     null,
-                    true,
+                    .required,
                     null,
                 )).?;
             }
@@ -7403,7 +7429,7 @@ const Engine = struct {
                     call,
                     scope,
                     null,
-                    true,
+                    .required,
                     null,
                 )).?;
             }
@@ -7428,7 +7454,7 @@ const Engine = struct {
                     call,
                     scope,
                     null,
-                    true,
+                    .required,
                     null,
                 )).?;
             }

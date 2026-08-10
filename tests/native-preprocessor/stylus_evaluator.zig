@@ -532,6 +532,22 @@ const mixin_caller_scope_input =
 const mixin_caller_scope_css =
     "body{lexical:12;seen-first:1;seen-second:2;seen-items:1 2 3}";
 
+const implicit_callable_statement_input =
+    \\state = {}
+    \\assign(obj)
+    \\  obj.value = { text: 'ok' }
+    \\emit(params)
+    \\  body
+    \\    seen params.text
+    \\run()
+    \\  if true
+    \\    assign(state)
+    \\  emit(state.value)
+    \\run()
+;
+
+const implicit_callable_statement_css = "body{seen:'ok'}";
+
 const function_property_alias_input =
     \\box-shadow-important()
     \\  push(arguments, !important)
@@ -4980,6 +4996,56 @@ test "native Stylus nested mixins own the finite caller scope contract" {
     );
 }
 
+test "native Stylus implicit callable statements own the finite side-effect contract" {
+    const lower_input =
+        \\noop()
+        \\  local = 1
+        \\outer()
+        \\  if true
+        \\    noop()
+        \\  2
+        \\body
+        \\  value outer()
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{value:2}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var first = try compile(
+        std.testing.allocator,
+        implicit_callable_statement_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        implicit_callable_statement_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(implicit_callable_statement_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_call_depth = 1;
+    try expectSemanticRejectionWithLimits(
+        implicit_callable_statement_input,
+        over_limit,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.indexOf(u8, implicit_callable_statement_input, "assign(state)").?),
+    );
+}
+
 test "native Stylus property functions emit declarations through callable aliases" {
     const lower_input =
         \\border-radius(size)
@@ -6092,6 +6158,14 @@ fn exerciseMixinCallerScopeAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expectEqualStrings(mixin_caller_scope_css, result.css());
 }
 
+fn exerciseImplicitCallableStatementAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var result = try compile(allocator, implicit_callable_statement_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(implicit_callable_statement_css, result.css());
+}
+
 fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 1;
@@ -6503,6 +6577,14 @@ test "native Stylus nested mixin caller scope handles every allocation failure" 
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMixinCallerScopeAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus implicit callable statements handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseImplicitCallableStatementAllocationFailures,
         .{},
     );
 }

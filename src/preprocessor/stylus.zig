@@ -562,6 +562,11 @@ pub const Parser = struct {
             if (end < line_end) {
                 const interior = self.source_bytes[opening + 1 .. end];
                 const prefix = self.source_bytes[segment_start..opening];
+                if (std.mem.indexOfScalar(u8, interior, '{') == null and
+                    self.looksLikeInlineAssignmentValue(segment_start, opening))
+                {
+                    return false;
+                }
                 if (trimAscii(interior).len == 0 and
                     std.mem.indexOfScalar(u8, prefix, '=') != null)
                 {
@@ -587,6 +592,43 @@ pub const Parser = struct {
             }
         }
         return true;
+    }
+
+    fn looksLikeInlineAssignmentValue(
+        self: *const Parser,
+        segment_start: usize,
+        opening: usize,
+    ) bool {
+        var token_start: usize = 0;
+        while (token_start < self.tokens.len and
+            self.tokens[token_start].span.end <= segment_start)
+        {
+            token_start += 1;
+        }
+        var token_end = token_start;
+        while (token_end < self.tokens.len and
+            self.tokens[token_end].span.start < opening)
+        {
+            token_end += 1;
+        }
+
+        var paren_depth: usize = 0;
+        var square_depth: usize = 0;
+        for (self.tokens[token_start..token_end]) |token| {
+            switch (token.kind) {
+                .open_paren => paren_depth += 1,
+                .close_paren => paren_depth -|= 1,
+                .open_square => square_depth += 1,
+                .close_square => square_depth -|= 1,
+                .operator => if (paren_depth == 0 and square_depth == 0 and
+                    isAssignmentOperator(token.raw(self.source_bytes)))
+                {
+                    return true;
+                },
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn looksLikeInlineFunctionDefinition(
@@ -961,13 +1003,40 @@ pub const Parser = struct {
         return result == kind;
     }
 
+    fn lineIsBarePropertyHeader(self: *const Parser, line: Line) bool {
+        var saw_name = false;
+        var saw_colon = false;
+        for (self.tokens[line.token_start..line.token_end]) |token| {
+            switch (token.kind) {
+                .whitespace, .newline, .indent, .dedent, .eof => continue,
+                .identifier => {
+                    if (saw_name or saw_colon) return false;
+                    saw_name = true;
+                },
+                .colon => {
+                    if (!saw_name or saw_colon) return false;
+                    saw_colon = true;
+                },
+                else => return false,
+            }
+        }
+        return saw_name and saw_colon;
+    }
+
     fn declarationContinuationEnd(
         self: *const Parser,
         lines: []const Line,
         start: usize,
     ) ?usize {
-        if (start + 1 >= lines.len or lines[start + 1].indent <= lines[start].indent or
-            !looksLikeDeclaration(self.lineBytes(lines[start]), true))
+        if (start + 1 >= lines.len or lines[start + 1].indent <= lines[start].indent) {
+            return null;
+        }
+        const comma_led_property = self.lineIsBarePropertyHeader(lines[start]) and
+            self.lineEndsWithSignificantToken(lines[start + 1], .comma);
+        const comma_led_assignment = self.findAssignment(lines[start]) != null and
+            self.lineEndsWithSignificantToken(lines[start], .comma);
+        if (!looksLikeDeclaration(self.lineBytes(lines[start]), true) and
+            !comma_led_property and !comma_led_assignment)
         {
             return null;
         }
@@ -986,7 +1055,9 @@ pub const Parser = struct {
         }
         const terminal = last_significant orelse return null;
         if (terminal != .colon and terminal != .comma) return null;
-        if (terminal == .colon and !trailing_comment) return null;
+        if (terminal == .colon and !trailing_comment and !comma_led_property) {
+            return null;
+        }
 
         var end = start + 1;
         while (end + 1 < lines.len and lines[end + 1].indent > lines[start].indent) {
