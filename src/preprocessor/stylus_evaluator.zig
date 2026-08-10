@@ -6623,10 +6623,15 @@ const Engine = struct {
                     try rest_values.append(self.allocator, argument_values.items[positional_cursor].*);
                     argument_used.items[positional_cursor] = true;
                 }
-                const rest = try self.ownValue(span, .{ .list = .{
-                    .items = rest_values.items,
-                    .separator = .space,
-                } });
+                const rest = try self.ownValue(span, .{
+                    .list = .{
+                        .items = rest_values.items,
+                        .separator = .space,
+                        // Stylus marks rest expressions as preserved so `in`
+                        // does not recursively unwrap their sole expression.
+                        .preserve = true,
+                    },
+                });
                 call_scope = try self.setBinding(call_scope, parameter.name, rest, span);
                 continue;
             }
@@ -7824,22 +7829,31 @@ const Engine = struct {
                     valueIsType(value.*, expected.string.bytes, self) });
             }
         }
-        if (findComparison(source_input)) |comparison| {
-            const left = try self.evaluateValue(
+        if (findEqualityComparison(source_input)) |comparison| {
+            return self.evaluateComparison(
                 span,
-                source_input[0..comparison.start],
+                source_input,
+                comparison,
                 scope,
-                depth + 1,
+                depth,
             );
-            const right = try self.evaluateValue(
+        }
+        if (findMembership(source_input)) |membership| {
+            return self.evaluateMembership(
                 span,
-                source_input[comparison.end..],
+                source_input,
+                membership,
                 scope,
-                depth + 1,
+                depth,
             );
-            return self.ownValue(
+        }
+        if (findRelationalComparison(source_input)) |comparison| {
+            return self.evaluateComparison(
                 span,
-                .{ .boolean = try self.compareValues(span, left, right, comparison.operator) },
+                source_input,
+                comparison,
+                scope,
+                depth,
             );
         }
         if (findGenericBinary(source_input)) |binary| {
@@ -8026,13 +8040,14 @@ const Engine = struct {
             }
             return values;
         }
-        if (findComparison(input)) |comparison| {
-            const left = try self.evaluateValue(span, input[0..comparison.start], scope, depth + 1);
-            const right = try self.evaluateValue(span, input[comparison.end..], scope, depth + 1);
-            return self.ownValue(
-                span,
-                .{ .boolean = try self.compareValues(span, left, right, comparison.operator) },
-            );
+        if (findEqualityComparison(input)) |comparison| {
+            return self.evaluateComparison(span, input, comparison, scope, depth);
+        }
+        if (findMembership(input)) |membership| {
+            return self.evaluateMembership(span, input, membership, scope, depth);
+        }
+        if (findRelationalComparison(input)) |comparison| {
+            return self.evaluateComparison(span, input, comparison, scope, depth);
         }
         if (unaryPrefix(input)) |unary| {
             const operand = try self.evaluateValue(span, input[unary.end..], scope, depth + 1);
@@ -11444,19 +11459,33 @@ const Engine = struct {
                 expected_raw;
             return valueIsType(value.*, expected, self);
         }
-        if (findTopLevelSequence(source_condition, " in ")) |marker| {
-            const needle = try self.evaluateValue(span, source_condition[0..marker], scope, 0);
-            const haystack = try self.evaluateValue(
+        if (findEqualityComparison(source_condition)) |comparison| {
+            return self.evaluateComparisonBoolean(
                 span,
-                source_condition[marker + " in ".len ..],
+                source_condition,
+                comparison,
                 scope,
                 0,
             );
-            if (haystack.* == .list) {
-                for (haystack.list.items) |item| if (native_value.eql(needle.*, item)) return true;
-                return false;
-            }
-            return native_value.eql(needle.*, haystack.*);
+        }
+        if (findMembership(source_condition)) |membership| {
+            const result = try self.evaluateMembership(
+                span,
+                source_condition,
+                membership,
+                scope,
+                0,
+            );
+            return isTruthy(result);
+        }
+        if (findRelationalComparison(source_condition)) |comparison| {
+            return self.evaluateComparisonBoolean(
+                span,
+                source_condition,
+                comparison,
+                scope,
+                0,
+            );
         }
         if (parseCall(source_condition)) |call| {
             const name = source_condition[call.name.start..call.name.end];
@@ -11472,22 +11501,249 @@ const Engine = struct {
         const rendered = try self.renderRawOwned(span, raw, scope, .value, 0);
         defer self.allocator.free(rendered);
         const input = std.mem.trim(u8, rendered, " \t\r\n\x0c;");
-        if (findComparison(input)) |comparison| {
-            const left = try self.evaluateValue(
+        if (findEqualityComparison(input)) |comparison| {
+            return self.evaluateComparisonBoolean(span, input, comparison, scope, 0);
+        }
+        if (findMembership(input)) |membership| {
+            const result = try self.evaluateMembership(
                 span,
-                input[0..comparison.start],
+                input,
+                membership,
                 scope,
                 0,
             );
-            const right = try self.evaluateValue(
-                span,
-                input[comparison.end..],
-                scope,
-                0,
-            );
-            return self.compareValues(span, left, right, comparison.operator);
+            return isTruthy(result);
+        }
+        if (findRelationalComparison(input)) |comparison| {
+            return self.evaluateComparisonBoolean(span, input, comparison, scope, 0);
         }
         return isTruthy(try self.evaluateValue(span, input, scope, 0));
+    }
+
+    fn evaluateComparison(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        comparison: Comparison,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        return self.ownValue(span, .{ .boolean = try self.evaluateComparisonBoolean(
+            span,
+            raw,
+            comparison,
+            scope,
+            depth,
+        ) });
+    }
+
+    fn evaluateComparisonBoolean(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        comparison: Comparison,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!bool {
+        const left = try self.evaluateValue(
+            span,
+            raw[0..comparison.start],
+            scope,
+            depth + 1,
+        );
+        const right = try self.evaluateValue(
+            span,
+            raw[comparison.end..],
+            scope,
+            depth + 1,
+        );
+        return self.compareValues(span, left, right, comparison.operator);
+    }
+
+    fn evaluateMembership(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        membership: MembershipExpression,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        const left_span = try self.relativeSpan(span, membership.left);
+        const right_span = try self.relativeSpan(span, membership.right);
+        const left = try self.evaluateValue(
+            left_span,
+            raw[membership.left.start..membership.left.end],
+            scope,
+            depth + 1,
+        );
+        const right_raw = raw[membership.right.start..membership.right.end];
+        const right_is_expression = try self.membershipRightIsExpression(
+            right_raw,
+            scope,
+        );
+        const right = try self.evaluateValue(
+            right_span,
+            right_raw,
+            scope,
+            depth + 1,
+        );
+        const contained = try self.membershipContains(
+            right_span,
+            left,
+            right,
+            right_is_expression,
+        );
+        return self.ownValue(span, .{ .boolean = contained });
+    }
+
+    fn membershipRightIsExpression(
+        self: *const Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!bool {
+        const input = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+        if (stripOuterParentheses(input).len != input.len) return true;
+        if (validVariableName(input)) return try self.lookupBinding(scope, input) != null;
+        return parseCall(input) != null or parseBareCall(input) != null;
+    }
+
+    fn membershipContains(
+        self: *Engine,
+        span: native_source.Span,
+        needle: *const native_value.Value,
+        raw_haystack: *const native_value.Value,
+        authored_expression: bool,
+    ) Error!bool {
+        var needle_hash_bytes: std.ArrayList(u8) = .empty;
+        defer needle_hash_bytes.deinit(self.allocator);
+        const needle_hash = try self.membershipHash(
+            span,
+            needle.*,
+            &needle_hash_bytes,
+            0,
+        );
+
+        var candidate_hash_bytes: std.ArrayList(u8) = .empty;
+        defer candidate_hash_bytes.deinit(self.allocator);
+        switch (raw_haystack.*) {
+            .map => |map| {
+                try self.transaction.consumeOperations(@intCast(map.entries.len));
+                for (map.entries) |entry| {
+                    candidate_hash_bytes.clearRetainingCapacity();
+                    const candidate_hash = try self.membershipHash(
+                        span,
+                        entry.key,
+                        &candidate_hash_bytes,
+                        0,
+                    );
+                    if (stylusMembershipHashEqual(needle_hash, candidate_hash)) return true;
+                }
+                return false;
+            },
+            .list => {
+                const haystack = unwrapMembershipExpression(raw_haystack);
+                const items = haystack.list.items;
+                try self.transaction.consumeOperations(@intCast(items.len));
+                for (items) |item| {
+                    candidate_hash_bytes.clearRetainingCapacity();
+                    const candidate_hash = try self.membershipHash(
+                        span,
+                        item,
+                        &candidate_hash_bytes,
+                        0,
+                    );
+                    if (stylusMembershipHashEqual(needle_hash, candidate_hash)) return true;
+                }
+                return false;
+            },
+            else => if (authored_expression) {
+                try self.transaction.consumeOperations(1);
+                const candidate_hash = try self.membershipHash(
+                    span,
+                    raw_haystack.*,
+                    &candidate_hash_bytes,
+                    0,
+                );
+                return stylusMembershipHashEqual(needle_hash, candidate_hash);
+            } else {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            },
+        }
+    }
+
+    fn membershipHash(
+        self: *Engine,
+        span: native_source.Span,
+        value: native_value.Value,
+        bytes: *std.ArrayList(u8),
+        depth: u16,
+    ) Error!MembershipHash {
+        return switch (value) {
+            .null_value => .null_value,
+            .boolean => |boolean| .{ .boolean = boolean },
+            .number => |number| .{ .number = number.value },
+            .string, .selector => |string| .{ .string = string.bytes },
+            .list => |list| blk: {
+                try self.appendMembershipExpressionHash(
+                    span,
+                    list,
+                    bytes,
+                    depth + 1,
+                );
+                break :blk .{ .string = bytes.items };
+            },
+            .color => {
+                const serialized = try self.serializeValueForStyleOwned(
+                    &value,
+                    .value,
+                    span,
+                    .expanded,
+                );
+                defer self.allocator.free(serialized);
+                try self.appendTemporary(bytes, span, serialized);
+                return .{ .string = bytes.items };
+            },
+            .map, .argument_list, .callable => .null_value,
+        };
+    }
+
+    fn appendMembershipExpressionHash(
+        self: *Engine,
+        span: native_source.Span,
+        list: native_value.List,
+        bytes: *std.ArrayList(u8),
+        depth: u16,
+    ) Error!void {
+        if (depth > self.limits.values.max_depth) {
+            try self.reportResource(span, "native Stylus value depth exceeded");
+            return error.ValueDepthExceeded;
+        }
+        for (list.items, 0..) |item, index| {
+            if (index > 0) try self.appendTemporary(bytes, span, "::");
+            switch (try self.membershipHash(span, item, bytes, depth)) {
+                .null_value => {},
+                .boolean => |boolean| try self.appendTemporary(
+                    bytes,
+                    span,
+                    if (boolean) "true" else "false",
+                ),
+                .number => |number| {
+                    var buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+                    const serialized = serializeStylusNumberForStyle(
+                        number,
+                        .expanded,
+                        &buffer,
+                    ) catch {
+                        try self.reportInvalidOperation(span);
+                        return error.InvalidOperation;
+                    };
+                    try self.appendTemporary(bytes, span, serialized);
+                },
+                .string => |string| if (string.ptr != bytes.items.ptr)
+                    try self.appendTemporary(bytes, span, string),
+            }
+        }
     }
 
     fn compareValues(
@@ -13494,6 +13750,20 @@ const Comparison = struct {
     operator: ComparisonOperator,
 };
 
+const ComparisonKind = enum { equality, relational };
+
+const MembershipExpression = struct {
+    left: ByteRange,
+    right: ByteRange,
+};
+
+const MembershipHash = union(enum) {
+    null_value,
+    boolean: bool,
+    number: f64,
+    string: []const u8,
+};
+
 const DefinedTernary = struct {
     name: []const u8,
     when_defined: ByteRange,
@@ -14301,6 +14571,7 @@ fn joinArgumentIsOperation(raw: []const u8) bool {
         findGenericBinary(raw) != null or
         findRangeOperator(raw) != null or
         findComparison(raw) != null or
+        findMembership(raw) != null or
         unaryPrefix(raw) != null;
 }
 
@@ -14424,6 +14695,18 @@ fn findRangeOperator(raw: []const u8) ?RangeExpression {
 }
 
 fn findComparison(raw: []const u8) ?Comparison {
+    return findEqualityComparison(raw) orelse findRelationalComparison(raw);
+}
+
+fn findEqualityComparison(raw: []const u8) ?Comparison {
+    return findComparisonOfKind(raw, .equality);
+}
+
+fn findRelationalComparison(raw: []const u8) ?Comparison {
+    return findComparisonOfKind(raw, .relational);
+}
+
+fn findComparisonOfKind(raw: []const u8, kind: ComparisonKind) ?Comparison {
     var quote: u8 = 0;
     var escaped = false;
     var depth: usize = 0;
@@ -14453,7 +14736,7 @@ fn findComparison(raw: []const u8) ?Comparison {
             else => {},
         }
         if (depth != 0) continue;
-        if (wordAt(raw, index, "isnt")) {
+        if (kind == .equality and wordAt(raw, index, "isnt")) {
             result = .{
                 .start = index,
                 .end = index + 4,
@@ -14462,7 +14745,7 @@ fn findComparison(raw: []const u8) ?Comparison {
             index += 3;
             continue;
         }
-        if (wordAt(raw, index, "is")) {
+        if (kind == .equality and wordAt(raw, index, "is")) {
             var end = index + 2;
             while (end < raw.len and std.ascii.isWhitespace(raw[end])) end += 1;
             if (wordAt(raw, end, "not")) {
@@ -14480,16 +14763,20 @@ fn findComparison(raw: []const u8) ?Comparison {
         }
         if (index + 1 < raw.len) {
             const pair = raw[index .. index + 2];
-            const operator: ?ComparisonOperator = if (std.mem.eql(u8, pair, "=="))
-                .equal
-            else if (std.mem.eql(u8, pair, "!="))
-                .not_equal
-            else if (std.mem.eql(u8, pair, ">="))
-                .greater_equal
-            else if (std.mem.eql(u8, pair, "<="))
-                .less_equal
-            else
-                null;
+            const operator: ?ComparisonOperator = switch (kind) {
+                .equality => if (std.mem.eql(u8, pair, "=="))
+                    .equal
+                else if (std.mem.eql(u8, pair, "!="))
+                    .not_equal
+                else
+                    null,
+                .relational => if (std.mem.eql(u8, pair, ">="))
+                    .greater_equal
+                else if (std.mem.eql(u8, pair, "<="))
+                    .less_equal
+                else
+                    null,
+            };
             if (operator) |matched| {
                 result = .{
                     .start = index,
@@ -14500,19 +14787,88 @@ fn findComparison(raw: []const u8) ?Comparison {
                 continue;
             }
         }
-        if (byte == '>') {
+        if (kind == .relational and byte == '>') {
             result = .{ .start = index, .end = index + 1, .operator = .greater };
-        } else if (byte == '<') {
+        } else if (kind == .relational and byte == '<') {
             result = .{ .start = index, .end = index + 1, .operator = .less };
         }
     }
     return result;
 }
 
+fn findMembership(raw: []const u8) ?MembershipExpression {
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    var depth: usize = 0;
+    var result: ?MembershipExpression = null;
+    var index: usize = 0;
+    while (index + 1 < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (line_comment) {
+            if (byte == '\n' or byte == '\r' or byte == '\x0c') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\\') {
+            index += @intFromBool(index + 1 < raw.len);
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len) {
+            if (raw[index + 1] == '/') {
+                line_comment = true;
+                index += 1;
+                continue;
+            }
+            if (raw[index + 1] == '*') {
+                block_comment = true;
+                index += 1;
+                continue;
+            }
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (depth != 0 or !wordAt(raw, index, "in")) continue;
+        const left = trimRange(raw, .{ .start = 0, .end = index });
+        const right = trimRange(raw, .{ .start = index + 2, .end = raw.len });
+        if (left.start == left.end or right.start == right.end) continue;
+        result = .{ .left = left, .right = right };
+        index += 1;
+    }
+    return result;
+}
+
 fn wordAt(raw: []const u8, start: usize, word: []const u8) bool {
     if (start + word.len > raw.len or !std.ascii.eqlIgnoreCase(raw[start .. start + word.len], word)) return false;
-    const before = start == 0 or std.ascii.isWhitespace(raw[start - 1]) or raw[start - 1] == '(';
-    const after = start + word.len == raw.len or std.ascii.isWhitespace(raw[start + word.len]) or raw[start + word.len] == ')';
+    const before = start == 0 or (!std.ascii.isAlphanumeric(raw[start - 1]) and
+        raw[start - 1] != '_' and raw[start - 1] != '-');
+    const after = start + word.len == raw.len or
+        (!std.ascii.isAlphanumeric(raw[start + word.len]) and
+            raw[start + word.len] != '_' and raw[start + word.len] != '-');
     return before and after;
 }
 
@@ -14526,6 +14882,52 @@ fn isTruthy(value: *const native_value.Value) bool {
         .list => |list| list.truthy_override orelse (list.items.len != 0),
         else => true,
     };
+}
+
+fn unwrapMembershipExpression(value: *const native_value.Value) *const native_value.Value {
+    var current = value;
+    while (current.* == .list and !current.list.preserve and
+        current.list.items.len == 1 and current.list.items[0] == .list)
+    {
+        current = &current.list.items[0];
+    }
+    return current;
+}
+
+fn stylusMembershipHashEqual(left: MembershipHash, right: MembershipHash) bool {
+    if (std.meta.activeTag(left) == std.meta.activeTag(right)) {
+        return switch (left) {
+            .null_value => true,
+            .boolean => |value| value == right.boolean,
+            .number => |value| value == right.number,
+            .string => |value| std.mem.eql(u8, value, right.string),
+        };
+    }
+    return switch (left) {
+        .boolean => |value| stylusMembershipHashEqual(
+            .{ .number = @floatFromInt(@intFromBool(value)) },
+            right,
+        ),
+        .number => |value| switch (right) {
+            .boolean => |boolean| value == @as(f64, @floatFromInt(@intFromBool(boolean))),
+            .string => |string| value == parseJavascriptNumber(string),
+            else => false,
+        },
+        .string => |string| switch (right) {
+            .boolean => |boolean| parseJavascriptNumber(string) ==
+                @as(f64, @floatFromInt(@intFromBool(boolean))),
+            .number => |number| parseJavascriptNumber(string) == number,
+            else => false,
+        },
+        .null_value => false,
+    };
+}
+
+fn parseJavascriptNumber(raw: []const u8) f64 {
+    const input = std.mem.trim(u8, raw, " \t\r\n\x0c");
+    if (input.len == 0) return 0;
+    const value = std.fmt.parseFloat(f64, input) catch return std.math.nan(f64);
+    return if (std.math.isFinite(value)) value else std.math.nan(f64);
 }
 
 fn compareScalars(left: f64, right: f64, operator: ComparisonOperator) bool {

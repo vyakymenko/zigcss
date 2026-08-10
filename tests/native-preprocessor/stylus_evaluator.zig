@@ -854,6 +854,35 @@ const equality_semantics_css =
     "prefix-forward:true;prefix-reverse:false;identifier:true;defined:true;" ++
     "list:true;empty:false}";
 
+const membership_semantics_input =
+    \\rest(args...)
+    \\  (3 2) in args
+    \\argument-hit()
+    \\  test in arguments
+    \\lookup = { foo: bar }
+    \\body
+    \\  scalar-hit 2 in (1 2 3)
+    \\  scalar-miss 4 in (1 2 3)
+    \\  unit-hash 1px in (1s)
+    \\  quoted-hash 'foo' in (foo)
+    \\  adjacent 1 in(1)
+    \\  relational 1 < 2 in (true)
+    \\  equality true == 1 in (1)
+    \\  tuple (test 'one') in ((test 'one') 2)
+    \\  rest-single rest(3 2)
+    \\  rest-comma rest(3, 2)
+    \\  arguments-single argument-hit(a test c)
+    \\  precedence 1 in (1) == true
+    \\  map-hit 'foo' in lookup
+    \\  map-miss baz in lookup
+;
+
+const membership_semantics_css =
+    "body{scalar-hit:true;scalar-miss:false;unit-hash:true;quoted-hash:true;" ++
+    "adjacent:true;relational:true;equality:true;tuple:true;rest-single:true;" ++
+    "rest-comma:false;arguments-single:true;precedence:true;map-hit:true;" ++
+    "map-miss:false}";
+
 const commented_if_else_input =
     \\.base
     \\  color red
@@ -3616,6 +3645,56 @@ test "native Stylus equality owns the finite coercion and expression contract" {
         .resource_limit,
         "native Stylus expression depth exceeded",
         @intCast(std.mem.indexOf(u8, equality_semantics_input, "(1 2 3)").?),
+    );
+}
+
+test "native Stylus membership owns the finite hash and expression contract" {
+    const lower_input =
+        \\body
+        \\  present 2 in (1 2 3)
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_expression_depth = 8;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{present:true}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 9;
+    var first = try compile(std.testing.allocator, membership_semantics_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, membership_semantics_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(membership_semantics_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 8;
+    try expectSemanticRejectionWithLimits(
+        membership_semantics_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, membership_semantics_input, "((test 'one') 2)").?),
+    );
+
+    const invalid_input =
+        \\body
+        \\  before yes
+        \\  invalid 1 in 1
+    ;
+    try expectSemanticRejection(
+        invalid_input,
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus expression is invalid",
+        @intCast(std.mem.lastIndexOf(u8, invalid_input, "1").?),
     );
 }
 
@@ -6783,6 +6862,14 @@ fn exerciseEqualitySemanticsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(equality_semantics_css, result.css());
 }
 
+fn exerciseMembershipSemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 9;
+    var result = try compile(allocator, membership_semantics_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(membership_semantics_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -7139,6 +7226,14 @@ test "native Stylus equality handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseEqualitySemanticsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus membership handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMembershipSemanticsAllocationFailures,
         .{},
     );
 }
