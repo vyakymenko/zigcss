@@ -8240,6 +8240,10 @@ const Engine = struct {
             {
                 return self.evaluateKeyframeRadialGradient(span, input, call);
             }
+            if (try self.normalizeMultilineFunctionOwned(span, input)) |normalized| {
+                defer self.allocator.free(normalized);
+                return self.ownValue(span, .{ .string = .{ .bytes = normalized } });
+            }
             return self.ownValue(span, .{ .string = .{ .bytes = input } });
         }
         if (parseBareCall(input)) |call| {
@@ -11989,6 +11993,88 @@ const Engine = struct {
         depth: u16,
     ) Error![]u8 {
         return self.renderRawOwned(span, try self.sources.slice(span), scope, context, depth);
+    }
+
+    fn normalizeMultilineFunctionOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+    ) Error!?[]u8 {
+        if (std.mem.indexOfAny(u8, raw, "\r\n") == null) return null;
+
+        try self.transaction.consumeOperations(@intCast(raw.len));
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var index: usize = 0;
+        var depth: usize = 0;
+        var quote: u8 = 0;
+        var escaped = false;
+        var pending_space = false;
+        while (index < raw.len) : (index += 1) {
+            const byte = raw[index];
+            if (quote != 0) {
+                try self.appendTemporary(&output, span, raw[index .. index + 1]);
+                if (escaped) {
+                    escaped = false;
+                } else if (byte == '\\') {
+                    escaped = true;
+                } else if (byte == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (byte == '\\') {
+                if (pending_space) {
+                    try self.appendNormalizedFunctionSpace(&output, span, byte, depth);
+                    pending_space = false;
+                }
+                const end = @min(index + 2, raw.len);
+                try self.appendTemporary(&output, span, raw[index..end]);
+                index = end - 1;
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                if (pending_space) {
+                    try self.appendNormalizedFunctionSpace(&output, span, byte, depth);
+                    pending_space = false;
+                }
+                quote = byte;
+                try self.appendTemporary(&output, span, raw[index .. index + 1]);
+                continue;
+            }
+            if (std.ascii.isWhitespace(byte)) {
+                pending_space = true;
+                continue;
+            }
+            if (pending_space) {
+                try self.appendNormalizedFunctionSpace(&output, span, byte, depth);
+                pending_space = false;
+            }
+            try self.appendTemporary(&output, span, raw[index .. index + 1]);
+            switch (byte) {
+                '(' => depth += 1,
+                ')' => depth -|= 1,
+                else => {},
+            }
+        }
+        return try output.toOwnedSlice(self.allocator);
+    }
+
+    fn appendNormalizedFunctionSpace(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        span: native_source.Span,
+        next: u8,
+        depth: usize,
+    ) Error!void {
+        if (output.items.len == 0 or
+            next == '(' or next == ')' or next == ',' or next == ';')
+        {
+            return;
+        }
+        const previous = output.items[output.items.len - 1];
+        if (previous == '(' or (previous == ',' and depth > 1)) return;
+        try self.appendTemporary(output, span, " ");
     }
 
     fn renderRawOwned(

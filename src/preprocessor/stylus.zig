@@ -1043,10 +1043,14 @@ pub const Parser = struct {
         }
         const comma_led_property = self.lineIsBarePropertyHeader(lines[start]) and
             self.lineEndsWithSignificantToken(lines[start + 1], .comma);
+        const parenthesized_property = self.lineIsBarePropertyHeader(lines[start]) and
+            self.linesArePhysicallyAdjacent(lines[start], lines[start + 1]) and
+            self.parenthesizedContinuationEnd(lines, start + 1) != null;
         const comma_led_assignment = self.findAssignment(lines[start]) != null and
             self.lineEndsWithSignificantToken(lines[start], .comma);
         if (!looksLikeDeclaration(self.lineBytes(lines[start]), true) and
-            !comma_led_property and !comma_led_assignment)
+            !comma_led_property and !parenthesized_property and
+            !comma_led_assignment)
         {
             return null;
         }
@@ -1065,7 +1069,9 @@ pub const Parser = struct {
         }
         const terminal = last_significant orelse return null;
         if (terminal != .colon and terminal != .comma) return null;
-        if (terminal == .colon and !trailing_comment and !comma_led_property) {
+        if (terminal == .colon and !trailing_comment and
+            !comma_led_property and !parenthesized_property)
+        {
             return null;
         }
 

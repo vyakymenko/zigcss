@@ -1097,6 +1097,22 @@ const object_mixin_css =
     ".host{color:#f00;border:1px solid #00f;box-shadow:none}" ++
     ".host:hover{color:#0f0}@media print{.host .child{width:2px}}";
 
+const multiline_function_property_input =
+    \\#wrapper
+    \\  background-image:
+    \\    linear-gradient(
+    \\      top,
+    \\      rgba(0, 0, 0, 0.3) 0,
+    \\      rgba(0, 0, 0, 0) 20%,
+    \\      rgba(0, 0, 0, 0) 80%,
+    \\      rgba(0, 0, 0, 0.3) 100%
+    \\    )
+;
+
+const multiline_function_property_css =
+    "#wrapper{background-image:linear-gradient(top, rgba(0,0,0,0.3) 0, " ++
+    "rgba(0,0,0,0) 20%, rgba(0,0,0,0) 80%, rgba(0,0,0,0.3) 100%)}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2342,6 +2358,57 @@ test "native Stylus evaluates the fixed variable property selector expression sl
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
     try std.testing.expect(first.map() != null);
     try std.testing.expect(first.map().?.segments().len >= 9);
+}
+
+test "native Stylus multiline functions own the finite property value contract" {
+    const lower_input =
+        \\body
+        \\  image:
+        \\    linear-gradient(
+        \\      red,
+        \\      blue
+        \\    )
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_expression_depth = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{image:linear-gradient(red, blue)}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 4;
+    var first = try compile(
+        std.testing.allocator,
+        multiline_function_property_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        multiline_function_property_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(multiline_function_property_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 3;
+    try expectSemanticRejectionWithLimits(
+        multiline_function_property_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, multiline_function_property_input, "linear-gradient").?),
+    );
 }
 
 test "native Stylus compressed numbers retain the finite provider unit exclusions" {
@@ -6741,6 +6808,14 @@ fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !v
     );
 }
 
+fn exerciseMultilineFunctionPropertyAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_expression_depth = 4;
+    var result = try compile(allocator, multiline_function_property_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(multiline_function_property_css, result.css());
+}
+
 fn exerciseSingleLineCallableAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
@@ -7332,6 +7407,14 @@ test "native Stylus compact declaration transaction handles every allocation fai
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCompactDeclarationAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus multiline function property handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMultilineFunctionPropertyAllocationFailures,
         .{},
     );
 }

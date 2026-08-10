@@ -103,6 +103,9 @@ const multiline_assignment_input =
 const parse_fixture_path =
     "tests/preprocessors/stylus/corpus/files/upstream/cases/parse.styl";
 
+const properties_fixture_path =
+    "tests/preprocessors/stylus/corpus/files/upstream/cases/properties.styl";
+
 const parse_comment_lower_input =
     \\body
     \\  color red
@@ -110,6 +113,15 @@ const parse_comment_lower_input =
     \\    // nested
     \\   // uneven
     \\  border 1px solid blue
+;
+
+const properties_function_lower_input =
+    \\body
+    \\  background-image:
+    \\    linear-gradient(
+    \\      red,
+    \\      blue
+    \\    )
 ;
 
 fn countKind(document: *const syntax.Document, kind: syntax.Kind) usize {
@@ -367,6 +379,76 @@ test "native Stylus parser closes an inline explicit block before cosmetic inden
         "a:hover",
         try sources.slice((try document.get(link_children[0])).text.?),
     );
+}
+
+test "native Stylus parser owns the finite indented function property contract" {
+    const allocator = std.testing.allocator;
+    var lower_sources = source.Table.init(allocator, .{});
+    defer lower_sources.deinit();
+    const lower_source_id = try lower_sources.add(
+        "properties-function-lower.styl",
+        properties_function_lower_input,
+    );
+    var lower_limits = stylus.Limits{};
+    lower_limits.max_statements = 2;
+    var lower_parser = try stylus.Parser.init(
+        allocator,
+        &lower_sources,
+        lower_source_id,
+        lower_limits,
+        .{},
+    );
+    defer lower_parser.deinit();
+    var lower_document = try lower_parser.parse();
+    defer lower_document.deinit();
+    try std.testing.expectEqual(@as(usize, 1), countKind(&lower_document, .declaration));
+    try std.testing.expectEqual(@as(usize, 1), countKind(&lower_document, .expression));
+
+    const input = try std.fs.cwd().readFileAlloc(
+        allocator,
+        properties_fixture_path,
+        10 * 1024 * 1024,
+    );
+    defer allocator.free(input);
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("properties.styl", input);
+    var terminal_limits = stylus.Limits{};
+    terminal_limits.max_statements = 9;
+    var parser = try stylus.Parser.init(
+        allocator,
+        &sources,
+        source_id,
+        terminal_limits,
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 4), root_children.len);
+    try std.testing.expectEqual(@as(usize, 5), countKind(&document, .declaration));
+    try std.testing.expectEqual(@as(usize, 5), countKind(&document, .expression));
+
+    var over_limit = terminal_limits;
+    over_limit.max_statements = 8;
+    var limited = try stylus.Parser.init(
+        allocator,
+        &sources,
+        source_id,
+        over_limit,
+        .{},
+    );
+    defer limited.deinit();
+    if (limited.parse()) |unexpected| {
+        var unexpected_document = unexpected;
+        unexpected_document.deinit();
+        return error.TestExpectedError;
+    } else |err| {
+        try std.testing.expectEqual(error.StatementLimitExceeded, err);
+    }
+    try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
 }
 
 test "native Stylus parser owns single-line callable blocks without consuming interpolation braces" {
@@ -1763,6 +1845,26 @@ fn exerciseParseFixtureAllocationFailures(allocator: std.mem.Allocator) !void {
     }
 }
 
+fn exercisePropertiesFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input = try std.fs.cwd().readFileAlloc(
+        std.testing.allocator,
+        properties_fixture_path,
+        10 * 1024 * 1024,
+    );
+    defer std.testing.allocator.free(input);
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("properties.styl", input);
+    var limits = stylus.Limits{};
+    limits.max_statements = 9;
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, limits, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 4), (try document.children(document.root)).len);
+    try std.testing.expectEqual(@as(usize, 5), countKind(&document, .declaration));
+}
+
 fn exerciseSpacedSelectorInterpolationAllocationFailures(allocator: std.mem.Allocator) !void {
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
@@ -1973,6 +2075,14 @@ test "native Stylus parse fixture handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseParseFixtureAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus indented function property handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePropertiesFunctionAllocationFailures,
         .{},
     );
 }
