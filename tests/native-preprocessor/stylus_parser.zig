@@ -235,6 +235,89 @@ test "native Stylus parser owns trailing-comma newline selector groups" {
     try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
 }
 
+test "native Stylus parser owns conditional descendant-class selector groups" {
+    const input =
+        \\if true
+        \\  tag .class
+        \\  bar
+        \\    foo bar
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("selector-conditional-group.styl", input);
+    var terminal_limits = stylus.Limits{};
+    terminal_limits.max_statements = 3;
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        terminal_limits,
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root.len);
+    try std.testing.expectEqual(syntax.Kind.conditional, (try document.get(root[0])).kind);
+    const conditional_children = try document.children(root[0]);
+    const conditional_block = try document.children(conditional_children[1]);
+    try std.testing.expectEqual(@as(usize, 1), conditional_block.len);
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(conditional_block[0])).kind);
+    const group_children = try document.children(conditional_block[0]);
+    try std.testing.expectEqualStrings(
+        "tag .class\n  bar",
+        try sources.slice((try document.get(group_children[0])).text.?),
+    );
+    try std.testing.expectEqual(@as(usize, 1), countKind(&document, .declaration));
+
+    var over_limit = terminal_limits;
+    over_limit.max_statements = 2;
+    var limited = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        over_limit,
+        .{},
+    );
+    defer limited.deinit();
+    try std.testing.expectError(error.StatementLimitExceeded, limited.parse());
+    try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
+}
+
+test "native Stylus parser keeps dotted property values out of descendant-class groups" {
+    const input =
+        \\if true
+        \\  display vars.nope
+        \\  bar
+        \\    foo baz
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("selector-dotted-property.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root.len);
+    const conditional_children = try document.children(root[0]);
+    const conditional_block = try document.children(conditional_children[1]);
+    try std.testing.expectEqual(@as(usize, 2), conditional_block.len);
+    const declaration = try document.get(conditional_block[0]);
+    try std.testing.expectEqual(syntax.Kind.declaration, declaration.kind);
+    try std.testing.expectEqualStrings("display vars.nope", try sources.slice(declaration.text.?));
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(conditional_block[1])).kind);
+}
+
 test "native Stylus parser classifies compact declarations inside explicit CSS blocks" {
     const input =
         \\html {margin:0;padding:0;border:0;}

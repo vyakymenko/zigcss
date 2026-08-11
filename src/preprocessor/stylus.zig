@@ -1033,6 +1033,22 @@ pub const Parser = struct {
         return saw_name and saw_colon;
     }
 
+    fn lineContainsDescendantClassSelector(self: *const Parser, line: Line) bool {
+        const tokens = self.tokens[line.token_start..line.token_end];
+        for (tokens, 0..) |token, index| {
+            if (token.kind != .delimiter or
+                !std.mem.eql(u8, token.raw(self.source_bytes), ".") or
+                index == 0 or tokens[index - 1].kind != .whitespace or
+                index + 1 >= tokens.len)
+            {
+                continue;
+            }
+            const name = tokens[index + 1];
+            if (name.kind == .identifier and token.span.end == name.span.start) return true;
+        }
+        return false;
+    }
+
     fn declarationContinuationEnd(
         self: *const Parser,
         lines: []const Line,
@@ -1133,6 +1149,7 @@ pub const Parser = struct {
             const bare_selector = std.mem.indexOfAny(u8, raw, " \t(){}=;") == null;
             const ancestry_selector = std.mem.startsWith(u8, raw, "^[");
             const pseudo_selector = startsPseudoSelector(raw);
+            const class_selector = self.lineContainsDescendantClassSelector(candidate);
             const declaration_like = looksLikeDeclaration(raw, false);
             const pseudo_selector_context = if (first_pseudo_selector) |first|
                 index >= first
@@ -1140,9 +1157,10 @@ pub const Parser = struct {
                 false;
             if (isComment(raw) or raw[0] == '@' or
                 (declaration_like and !ancestry_selector and !comma_led and
-                    !pseudo_selector_context) or
+                    !pseudo_selector_context and !class_selector) or
                 (!looksLikeSelector(raw) and !bare_selector and !comma_led and
-                    !pseudo_selector and !(pseudo_selector_context and declaration_like)) or
+                    !pseudo_selector and !class_selector and
+                    !(pseudo_selector_context and declaration_like)) or
                 self.findAssignment(candidate) != null or
                 startsDirective(raw, "@import") or startsDirective(raw, "@require") or
                 startsWord(raw, "return") or startsWord(raw, "if") or

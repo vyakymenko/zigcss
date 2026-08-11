@@ -720,6 +720,15 @@ const complex_selector_newline_group_input =
 const complex_selector_newline_group_css =
     "body form input.hide,body foo bar,body .hidden,body:hover,body:focus{display:none}";
 
+const conditional_descendant_class_selector_input =
+    \\if true
+    \\  tag .class
+    \\  bar
+    \\    foo bar
+;
+
+const conditional_descendant_class_selector_css = "tag .class,bar{foo:bar}";
+
 const forwarded_selector_arguments_terminal_input =
     \\modernize(features, support)
     \\  selector = support ? '' : ('.no-js ' + selector())
@@ -5639,6 +5648,53 @@ test "native Stylus trailing-comma newline selectors own the finite complex grou
     );
 }
 
+test "native Stylus conditional descendant-class selectors own the finite nested group contract" {
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = conditional_descendant_class_selector_input.len;
+    terminal_limits.max_selectors = 2;
+    var first = try compile(
+        std.testing.allocator,
+        conditional_descendant_class_selector_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        conditional_descendant_class_selector_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(conditional_descendant_class_selector_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_source = terminal_limits;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        conditional_descendant_class_selector_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+
+    var over_selectors = terminal_limits;
+    over_selectors.max_selectors = 1;
+    try expectSemanticRejectionWithLimits(
+        conditional_descendant_class_selector_input,
+        over_selectors,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, conditional_descendant_class_selector_input, "tag .class").?),
+    );
+}
+
 test "native Stylus newline keyframe selectors own the finite terminal contract" {
     const lower_input =
         \\vendors = o
@@ -9255,6 +9311,17 @@ fn exerciseComplexSelectorNewlineGroupAllocationFailures(allocator: std.mem.Allo
     try std.testing.expectEqualStrings(complex_selector_newline_group_css, result.css());
 }
 
+fn exerciseConditionalDescendantClassSelectorAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = conditional_descendant_class_selector_input.len;
+    limits.max_selectors = 2;
+    var result = try compile(allocator, conditional_descendant_class_selector_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(conditional_descendant_class_selector_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -9869,6 +9936,14 @@ test "native Stylus complex newline selector groups handle every allocation fail
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseComplexSelectorNewlineGroupAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus conditional descendant-class selector groups handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseConditionalDescendantClassSelectorAllocationFailures,
         .{},
     );
 }
