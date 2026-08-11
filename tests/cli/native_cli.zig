@@ -50,13 +50,21 @@ fn runCompilerNamed(
     return runInDir(tmp.dir, argv_tail);
 }
 
-fn runWithStdin(argv_tail: []const []const u8, input: []const u8) !Child.RunResult {
+fn runWithStdinInDir(
+    dir: ?std.fs.Dir,
+    argv_tail: []const []const u8,
+    input: []const u8,
+) !Child.RunResult {
     const argv = try allocator.alloc([]const u8, argv_tail.len + 1);
     defer allocator.free(argv);
     argv[0] = cli_options.compiler_path;
     @memcpy(argv[1..], argv_tail);
 
+    const cwd = if (dir) |value| try value.realpathAlloc(allocator, ".") else null;
+    defer if (cwd) |path| allocator.free(path);
+
     var child = Child.init(argv, allocator);
+    child.cwd = cwd;
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
@@ -84,6 +92,10 @@ fn runWithStdin(argv_tail: []const []const u8, input: []const u8) !Child.RunResu
         .stdout = owned_stdout,
         .stderr = owned_stderr,
     };
+}
+
+fn runWithStdin(argv_tail: []const []const u8, input: []const u8) !Child.RunResult {
+    return runWithStdinInDir(null, argv_tail, input);
 }
 
 fn deinitRun(result: *Child.RunResult) void {
@@ -174,18 +186,106 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
         try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
         try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unavailable for the pre-graduation native CLI") != null);
     }
+}
 
-    var stdin = try runWithStdin(&.{
+test "binary CLI routes the finite native syntax set from stdin" {
+    inline for (route_cases) |case| {
+        const argv = &.{
+            "-",
+            "--experimental-native",
+            "--syntax",
+            case.syntax,
+            "--minify",
+        };
+        var first = try runWithStdin(argv, case.input);
+        defer deinitRun(&first);
+        var second = try runWithStdin(argv, case.input);
+        defer deinitRun(&second);
+
+        try expectExitCode(first, 0);
+        try expectExitCode(second, 0);
+        try std.testing.expectEqualStrings(case.expected, first.stdout);
+        try std.testing.expectEqualStrings(first.stdout, second.stdout);
+        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") != null);
+    }
+}
+
+test "binary CLI native stdin confines imports and commits no partial output" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    try tmp.dir.writeFile(.{ .sub_path = "outside.scss", .data = "$color: blue;" });
+    var root = try tmp.dir.openDir("root", .{});
+    defer root.close();
+    try root.writeFile(.{ .sub_path = "_tokens.scss", .data = "$color: red;" });
+
+    var confined = try runWithStdinInDir(root, &.{
         "-",
         "--experimental-native",
         "--syntax",
         "scss",
         "--minify",
-    }, input);
-    defer deinitRun(&stdin);
-    try expectExitCode(stdin, 2);
-    try std.testing.expectEqual(@as(usize, 0), stdin.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, stdin.stderr, "requires exactly one file input") != null);
+    }, "@use \"tokens\"; .card { color: tokens.$color; }");
+    defer deinitRun(&confined);
+    try expectExitCode(confined, 0);
+    try std.testing.expectEqualStrings(".card{color:red}", confined.stdout);
+
+    try root.writeFile(.{ .sub_path = "output.css", .data = "sentinel" });
+    var escaped = try runWithStdinInDir(root, &.{
+        "-",
+        "-o",
+        "output.css",
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--minify",
+    }, "@use \"../outside\"; .card { color: outside.$color; }");
+    defer deinitRun(&escaped);
+    try expectExitCode(escaped, 1);
+    try std.testing.expectEqual(@as(usize, 0), escaped.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, escaped.stderr, "native SCSS compilation failed") != null);
+
+    const output = try root.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(output);
+    try std.testing.expectEqualStrings("sentinel", output);
+}
+
+test "binary CLI native stdin enforces the exact input byte terminal" {
+    const max_native_input_bytes = 10 * 1024 * 1024;
+    const terminal = try allocator.alloc(u8, max_native_input_bytes);
+    defer allocator.free(terminal);
+    @memset(terminal, 'x');
+    terminal[0] = '/';
+    terminal[1] = '*';
+    terminal[terminal.len - 2] = '*';
+    terminal[terminal.len - 1] = '/';
+
+    var admitted = try runWithStdin(&.{
+        "-",
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--minify",
+    }, terminal);
+    defer deinitRun(&admitted);
+    try expectExitCode(admitted, 0);
+    try std.testing.expectEqual(@as(usize, 0), admitted.stdout.len);
+
+    const over_limit = try allocator.alloc(u8, max_native_input_bytes + 1);
+    defer allocator.free(over_limit);
+    @memcpy(over_limit[0..terminal.len], terminal);
+    over_limit[over_limit.len - 1] = 'x';
+    var rejected = try runWithStdin(&.{
+        "-",
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--minify",
+    }, over_limit);
+    defer deinitRun(&rejected);
+    try expectExitCode(rejected, 1);
+    try std.testing.expectEqual(@as(usize, 0), rejected.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, rejected.stderr, "failed to read <stdin>: FileTooBig") != null);
 }
 
 test "binary CLI native failures commit no partial output" {

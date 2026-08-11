@@ -490,8 +490,13 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'files-and-stdin',
       releaseGapFamily: 'native-files-stdin-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'binary CLI routes the finite native syntax set through the pre-graduation bridge',
+        'binary CLI routes the finite native syntax set from stdin',
+        'binary CLI native stdin confines imports and commits no partial output',
+        'binary CLI native stdin enforces the exact input byte terminal',
+      ]),
     }),
     Object.freeze({
       id: 'batch',
@@ -1013,7 +1018,7 @@ const expectedImplementations = Object.freeze([
   }),
   Object.freeze({
     id: 'native-product-compiler',
-    current: 'native-javascript-wrapper',
+    current: 'native-files-and-stdin',
     ownerPackage: 'NATIVE-006',
     adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
     capabilities: Object.freeze([
@@ -1031,6 +1036,10 @@ const expectedImplementations = Object.freeze([
       'pre-graduation-javascript-wrapper',
       'explicit-native-wrapper-gate',
       'exact-wrapper-argument-forwarding',
+      'pre-graduation-files-and-stdin',
+      'cwd-confined-native-stdin',
+      'bounded-native-stdin',
+      'transactional-native-stdin-output',
     ]),
     nativeSources: Object.freeze([
       'src/preprocessor/compiler.zig',
@@ -1042,7 +1051,7 @@ const expectedImplementations = Object.freeze([
       'tests/cli/native_cli.zig',
       'scripts/verify-node-wrapper.test.mjs',
     ]),
-    testStep: 'test:node-wrapper',
+    testStep: 'test-native-cli',
     publicAvailable: false,
     productionReachable: true,
   }),
@@ -1240,7 +1249,9 @@ function validateProductRouting(
             ? cliTests
             : route.id === 'javascript-wrapper'
               ? nodeWrapperTests
-              : ''
+              : route.id === 'files-and-stdin'
+                ? cliTests
+                : ''
       for (const evidenceTest of route.evidenceTests) {
         const testDeclaration = route.id === 'javascript-wrapper'
           ? `test('${evidenceTest}'`
@@ -1796,8 +1807,18 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     binaryCli,
-    '"--experimental-native requires exactly one file input"',
-    'native binary CLI pending files/stdin boundary',
+    '"--experimental-native requires exactly one file or stdin input"',
+    'native binary CLI file/stdin cardinality boundary',
+  )
+  requireText(
+    binaryCli,
+    'const stdin_root = if (isStdioPath(input_file))',
+    'native binary CLI confined stdin root',
+  )
+  requireText(
+    binaryCli,
+    'nativeStdinEntryName(syntax)',
+    'native binary CLI synthetic stdin identity',
   )
   requireText(
     binaryCli,

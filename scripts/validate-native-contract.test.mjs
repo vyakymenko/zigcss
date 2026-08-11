@@ -117,8 +117,13 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'files-and-stdin',
       releaseGapFamily: 'native-files-stdin-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'binary CLI routes the finite native syntax set through the pre-graduation bridge',
+        'binary CLI routes the finite native syntax set from stdin',
+        'binary CLI native stdin confines imports and commits no partial output',
+        'binary CLI native stdin enforces the exact input byte terminal',
+      ],
     }, {
       id: 'batch',
       releaseGapFamily: 'native-batch-routing',
@@ -1259,7 +1264,7 @@ test('binds unavailable native rows and the pre-graduation product bridges', () 
   )
 })
 
-test('binds the finite native product routing inventory and verified first four routes', () => {
+test('binds the finite native product routing inventory and verified first five routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
@@ -1268,6 +1273,7 @@ test('binds the finite native product routing inventory and verified first four 
     routing => { routing.routes[1].state = 'pending' },
     routing => { routing.routes[2].state = 'pending' },
     routing => { routing.routes[3].state = 'pending' },
+    routing => { routing.routes[4].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1316,6 +1322,15 @@ test('binds the finite native product routing inventory and verified first four 
     }),
     /native product routing binary-cli evidence.*missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native stdin enforces the exact input byte terminal"',
+        'test "missing native stdin terminal evidence"',
+      ),
+    }),
+    /native product routing files-and-stdin evidence.*missing/,
+  )
 
   const nodeWrapperTests = fs.readFileSync(
     path.join(repositoryRoot, 'scripts/verify-node-wrapper.test.mjs'),
@@ -1340,6 +1355,21 @@ test('binds the finite native product routing inventory and verified first four 
       ),
     }),
     /JavaScript wrapper explicit gate.*missing/,
+  )
+
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/main.zig'
+          ? source.replace(
+            'const stdin_root = if (isStdioPath(input_file))',
+            'const stdin_root = null',
+          )
+          : source,
+      ]),
+    }),
+    /native binary CLI confined stdin root.*missing/,
   )
 })
 

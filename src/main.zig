@@ -292,25 +292,51 @@ fn nativeSyntaxLabel(syntax: native_api.Syntax) []const u8 {
     };
 }
 
-fn compileNativeFile(
+fn nativeStdinEntryName(syntax: native_api.Syntax) []const u8 {
+    return switch (syntax) {
+        .scss => ".zigcss-stdin.scss",
+        .sass => ".zigcss-stdin.sass",
+        .less => ".zigcss-stdin.less",
+        .stylus => ".zigcss-stdin.styl",
+    };
+}
+
+fn compileNativeInput(
     allocator: std.mem.Allocator,
     input_file: []const u8,
     output_file: ?[]const u8,
     syntax: native_api.Syntax,
     minify: bool,
 ) !void {
-    const entry_path = std.fs.cwd().realpathAlloc(allocator, input_file) catch |err| {
-        std.debug.print("Error: failed to resolve {s}: {s}\n", .{ input_file, @errorName(err) });
-        return err;
-    };
+    const stdin_root = if (isStdioPath(input_file))
+        std.fs.cwd().realpathAlloc(allocator, ".") catch |err| {
+            std.debug.print("Error: failed to resolve stdin root: {s}\n", .{@errorName(err)});
+            return err;
+        }
+    else
+        null;
+    defer if (stdin_root) |root| allocator.free(root);
+
+    const entry_path = if (stdin_root) |root|
+        try std.fs.path.join(allocator, &.{ root, nativeStdinEntryName(syntax) })
+    else
+        std.fs.cwd().realpathAlloc(allocator, input_file) catch |err| {
+            std.debug.print("Error: failed to resolve {s}: {s}\n", .{ input_file, @errorName(err) });
+            return err;
+        };
     defer allocator.free(entry_path);
-    const input = readInput(allocator, entry_path) catch |err| {
-        std.debug.print("Error: failed to read {s}: {s}\n", .{ input_file, @errorName(err) });
+
+    const read_path = if (stdin_root != null) input_file else entry_path;
+    const input = readInput(allocator, read_path) catch |err| {
+        std.debug.print("Error: failed to read {s}: {s}\n", .{ inputDisplayName(input_file), @errorName(err) });
         return err;
     };
     defer allocator.free(input);
 
-    const root_path = std.fs.path.dirname(entry_path) orelse return error.InvalidSourcePath;
+    const root_path = if (stdin_root) |root|
+        root
+    else
+        std.fs.path.dirname(entry_path) orelse return error.InvalidSourcePath;
     const root_paths = [_][]const u8{root_path};
 
     var result = native_api.compile(allocator, entry_path, input, .{
@@ -956,7 +982,7 @@ fn printUsage() !void {
             "  -o, --output <path|->    Output file/stdout, or directory with --output-dir\n" ++
             "  --output-dir             Require batch output under the -o directory\n" ++
             "  --syntax <syntax>        Select CSS (default), or a gated native syntax\n" ++
-            "  --experimental-native   Enable the pre-graduation single-file native route\n" ++
+            "  --experimental-native   Enable the pre-graduation file/stdin native route\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
             "  --watch                  Watch one input and its local CSS imports\n" ++
@@ -1244,8 +1270,8 @@ pub fn main() !void {
         if (!experimental_native_flag) {
             exitWithCliError("unsupported syntax: {s}; the native route requires --experimental-native", .{@tagName(selected)});
         }
-        if (input_files.items.len != 1 or stdin_inputs != 0 or output_dir_flag) {
-            exitWithCliError("--experimental-native requires exactly one file input", .{});
+        if (input_files.items.len != 1 or output_dir_flag) {
+            exitWithCliError("--experimental-native requires exactly one file or stdin input", .{});
         }
         if (watch_flag or optimize_flag or profile_flag) {
             exitWithCliError(
@@ -1306,7 +1332,7 @@ pub fn main() !void {
     }
 
     if (native_syntax) |selected| {
-        compileNativeFile(
+        compileNativeInput(
             allocator,
             input_files.items[0],
             output_file,

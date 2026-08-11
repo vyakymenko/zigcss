@@ -470,8 +470,13 @@
       {
         "id": "files-and-stdin",
         "releaseGapFamily": "native-files-stdin-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "binary CLI routes the finite native syntax set through the pre-graduation bridge",
+          "binary CLI routes the finite native syntax set from stdin",
+          "binary CLI native stdin confines imports and commits no partial output",
+          "binary CLI native stdin enforces the exact input byte terminal"
+        ]
       },
       {
         "id": "batch",
@@ -981,7 +986,7 @@
     },
     {
       "id": "native-product-compiler",
-      "current": "native-javascript-wrapper",
+      "current": "native-files-and-stdin",
       "ownerPackage": "NATIVE-006",
       "adapters": ["scss", "sass", "less", "stylus"],
       "capabilities": [
@@ -998,7 +1003,11 @@
         "no-partial-cli-output",
         "pre-graduation-javascript-wrapper",
         "explicit-native-wrapper-gate",
-        "exact-wrapper-argument-forwarding"
+        "exact-wrapper-argument-forwarding",
+        "pre-graduation-files-and-stdin",
+        "cwd-confined-native-stdin",
+        "bounded-native-stdin",
+        "transactional-native-stdin-output"
       ],
       "nativeSources": ["src/preprocessor/compiler.zig", "src/native_api.zig"],
       "testSources": [
@@ -1007,7 +1016,7 @@
         "tests/cli/native_cli.zig",
         "scripts/verify-node-wrapper.test.mjs"
       ],
-      "testStep": "test:node-wrapper",
+      "testStep": "test-native-cli",
       "publicAvailable": false,
       "productionReachable": true
     }
