@@ -538,8 +538,8 @@
   "packageMigration": {
     "ownerPackage": "NATIVE-007",
     "releaseGapFamily": "native-zero-dependency-package",
-    "state": "in-progress",
-    "packageState": "in-progress",
+    "state": "closed",
+    "packageState": "implemented",
     "terminalContract": {
       "surfaces": [
         "production-package-closure",
@@ -582,18 +582,28 @@
         "evidenceTests": [
           "native smoke policy covers every release target on one matching runner",
           "native smoke builds a canonical commit-bound five-target receipt",
-          "build matrix uploads one commit-bound native receipt from every matching runner"
+          "build matrix uploads one commit-bound native receipt from every matching runner",
+          "native smoke validates one closed commit-bound receipt set across every release target",
+          "build aggregates every matching runner receipt before package verification"
         ]
       },
       {
         "id": "release-sbom-provenance",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "release metadata is deterministic, bounded SPDX 2.3 with exact SHA-256 subjects",
+          "local Sigstore bundles bind exact subjects and predicates before cryptographic verification",
+          "release workflow generates, signs, verifies, and uploads the closed five-target inventory"
+        ]
       },
       {
         "id": "consumer-behavior",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "npm installer derives exactly the release workflow asset contract",
+          "npm installer independently validates all five executable target headers",
+          "npm package runs one installer lifecycle and CI gates it before dependency installation"
+        ]
       }
     ]
   },

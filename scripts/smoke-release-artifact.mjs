@@ -559,7 +559,7 @@ function validateSha256(value, label) {
   }
 }
 
-function validateNativeTargetEvidence(evidence) {
+export function validateNativeTargetEvidence(evidence) {
   exactRecordKeys(
     evidence,
     [

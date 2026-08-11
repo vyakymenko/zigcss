@@ -584,8 +584,8 @@ export function validatePreprocessorPackagingWorkflows(build, release, docs) {
   if (releaseSetup < 0 || releasePackage <= releaseSetup || releaseVersion <= releasePackage) {
     fail('release preflight native package gate is ordered incorrectly')
   }
-  if (literalCount(build, "node-version: '20.19.0'") !== 1) {
-    fail('native package matrix must use exact Node 20.19.0')
+  if (literalCount(build, "node-version: '20.19.0'") !== 2) {
+    fail('native package matrix and aggregate evidence must use exact Node 20.19.0')
   }
   if (literalCount(release, "node-version: '20.19.0'") !== 3) {
     fail('all release npm surfaces must use exact Node 20.19.0')

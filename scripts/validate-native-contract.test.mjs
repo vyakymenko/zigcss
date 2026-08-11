@@ -1634,8 +1634,8 @@ test('owns the finite native zero-dependency package migration contract', () => 
   assert.deepEqual(contract.packageMigration, {
     ownerPackage: 'NATIVE-007',
     releaseGapFamily: 'native-zero-dependency-package',
-    state: 'in-progress',
-    packageState: 'in-progress',
+    state: 'closed',
+    packageState: 'implemented',
     terminalContract: {
       surfaces: [
         'production-package-closure',
@@ -1679,23 +1679,41 @@ test('owns the finite native zero-dependency package migration contract', () => 
           'native smoke policy covers every release target on one matching runner',
           'native smoke builds a canonical commit-bound five-target receipt',
           'build matrix uploads one commit-bound native receipt from every matching runner',
+          'native smoke validates one closed commit-bound receipt set across every release target',
+          'build aggregates every matching runner receipt before package verification',
         ],
       },
-      ...[
-        'release-sbom-provenance',
-        'consumer-behavior',
-      ].map(id => ({ id, state: 'pending', evidenceTests: [] })),
+      {
+        id: 'release-sbom-provenance',
+        state: 'verified',
+        evidenceTests: [
+          'release metadata is deterministic, bounded SPDX 2.3 with exact SHA-256 subjects',
+          'local Sigstore bundles bind exact subjects and predicates before cryptographic verification',
+          'release workflow generates, signs, verifies, and uploads the closed five-target inventory',
+        ],
+      },
+      {
+        id: 'consumer-behavior',
+        state: 'verified',
+        evidenceTests: [
+          'npm installer derives exactly the release workflow asset contract',
+          'npm installer independently validates all five executable target headers',
+          'npm package runs one installer lifecycle and CI gates it before dependency installation',
+        ],
+      },
     ],
   })
 
   for (const mutate of [
-    migration => { migration.state = 'closed' },
-    migration => { migration.packageState = 'verified' },
+    migration => { migration.state = 'in-progress' },
+    migration => { migration.packageState = 'in-progress' },
     migration => migration.terminalContract.surfaces.reverse(),
     migration => { migration.gates[0].state = 'pending' },
     migration => { migration.gates[1].state = 'pending' },
     migration => { migration.gates[2].state = 'pending' },
-    migration => { migration.gates[3].state = 'verified' },
+    migration => { migration.gates[3].state = 'pending' },
+    migration => { migration.gates[4].state = 'pending' },
+    migration => { migration.gates[5].state = 'pending' },
     migration => migration.gates.push(clone(migration.gates[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1747,6 +1765,48 @@ test('owns the finite native zero-dependency package migration contract', () => 
       ),
     }),
     /native package migration five-native-targets evidence.*missing/,
+  )
+
+  const nativePackageEvidenceTests = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/validate-native-package-evidence.test.mjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nativePackageEvidenceTests: nativePackageEvidenceTests.replace(
+        "test('native smoke validates one closed commit-bound receipt set across every release target'",
+        "test('missing aggregate native target evidence'",
+      ),
+    }),
+    /native package migration five-native-targets evidence.*missing/,
+  )
+
+  const releaseMetadataTests = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/generate-release-metadata.test.mjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseMetadataTests: releaseMetadataTests.replace(
+        "test('release workflow generates, signs, verifies, and uploads the closed five-target inventory'",
+        "test('missing release provenance evidence'",
+      ),
+    }),
+    /native package migration release-sbom-provenance evidence.*missing/,
+  )
+
+  const releaseConsumerTests = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/verify-release-consumers.test.mjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseConsumerTests: releaseConsumerTests.replace(
+        "test('npm installer independently validates all five executable target headers'",
+        "test('missing native consumer target evidence'",
+      ),
+    }),
+    /native package migration consumer-behavior evidence.*missing/,
   )
 
   const releaseSmokeSource = fs.readFileSync(

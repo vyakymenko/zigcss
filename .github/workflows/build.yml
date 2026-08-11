@@ -149,6 +149,46 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  native-package-evidence:
+    name: Native Package Evidence
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19.0'
+
+      - name: Download Native Target Evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: zigcss-*
+          path: native-target-artifacts
+          merge-multiple: false
+
+      - name: Validate Native Package Evidence
+        shell: bash
+        run: |
+          version="$(cat VERSION)"
+          node scripts/validate-native-package-evidence.mjs \
+            --artifacts native-target-artifacts \
+            --commit "$GITHUB_SHA" \
+            --version "$version" \
+            --output native-package-evidence.json
+
+      - name: Upload Native Package Evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zigcss-native-package-evidence
+          path: native-package-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest
@@ -184,7 +224,7 @@ jobs:
         run: npm run test:release-metadata && npm run check:release-metadata && npm run test:npm-publication
 
       - name: Verify native zero-dependency migration contract
-        run: npm run test:native-contract && npm run check:native-contract
+        run: npm run test:native-contract && npm run test:native-package-evidence && npm run check:native-contract
 
       - name: Test release consumer paths
         run: npm run test:release-smoke && npm run test:release-consumers && npm run test:release-container && npm run test:release-homebrew

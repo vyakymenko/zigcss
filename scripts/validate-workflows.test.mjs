@@ -14,7 +14,7 @@ function cloneSources() {
 }
 
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
-  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 9, actions: 28 })
+  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 10, actions: 32 })
 })
 
 test('mutable, malformed, unknown, and stale action references fail closed', () => {
@@ -98,7 +98,7 @@ test('the workflow security gate runs before dependency installation', () => {
 
 test('the build workflow preserves one complete aggregate suite within a bounded queue', () => {
   const sources = cloneSources()
-  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 9, actions: 28 })
+  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 10, actions: 32 })
 
   const unconstrained = cloneSources()
   unconstrained.set('build.yml', unconstrained.get('build.yml').replace(

@@ -63,6 +63,15 @@ export const workflowPolicy = Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
       actions: Object.freeze(['actions/checkout', 'mlugg/setup-zig', 'actions/setup-node', 'actions/upload-artifact']),
     }),
+    'native-package-evidence': Object.freeze({
+      permissions: Object.freeze({ contents: 'read' }),
+      actions: Object.freeze([
+        'actions/checkout',
+        'actions/setup-node',
+        'actions/download-artifact',
+        'actions/upload-artifact',
+      ]),
+    }),
     test: Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
       actions: Object.freeze(['actions/checkout', 'mlugg/setup-zig', 'actions/setup-node']),

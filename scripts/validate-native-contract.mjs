@@ -559,8 +559,8 @@ const expectedProductRouting = Object.freeze({
 const expectedPackageMigration = Object.freeze({
   ownerPackage: 'NATIVE-007',
   releaseGapFamily: 'native-zero-dependency-package',
-  state: 'in-progress',
-  packageState: 'in-progress',
+  state: 'closed',
+  packageState: 'implemented',
   terminalContract: Object.freeze({
     surfaces: Object.freeze([
       'production-package-closure',
@@ -604,12 +604,28 @@ const expectedPackageMigration = Object.freeze({
         'native smoke policy covers every release target on one matching runner',
         'native smoke builds a canonical commit-bound five-target receipt',
         'build matrix uploads one commit-bound native receipt from every matching runner',
+        'native smoke validates one closed commit-bound receipt set across every release target',
+        'build aggregates every matching runner receipt before package verification',
       ]),
     }),
-    ...[
-      'release-sbom-provenance',
-      'consumer-behavior',
-    ].map(id => Object.freeze({ id, state: 'pending', evidenceTests: Object.freeze([]) })),
+    Object.freeze({
+      id: 'release-sbom-provenance',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'release metadata is deterministic, bounded SPDX 2.3 with exact SHA-256 subjects',
+        'local Sigstore bundles bind exact subjects and predicates before cryptographic verification',
+        'release workflow generates, signs, verifies, and uploads the closed five-target inventory',
+      ]),
+    }),
+    Object.freeze({
+      id: 'consumer-behavior',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'npm installer derives exactly the release workflow asset contract',
+        'npm installer independently validates all five executable target headers',
+        'npm package runs one installer lifecycle and CI gates it before dependency installation',
+      ]),
+    }),
   ]),
 })
 
@@ -1401,6 +1417,9 @@ function validatePackageMigration(
   nodeWrapperTests,
   releaseSmokeSource,
   releaseSmokeTests,
+  nativePackageEvidenceTests,
+  releaseMetadataTests,
+  releaseConsumerTests,
   releaseSmokePreloadSource,
   productionSources,
 ) {
@@ -1420,14 +1439,33 @@ function validatePackageMigration(
     if (gate.state === 'verified' || gate.state === 'implemented') {
       if (gate.evidenceTests.length === 0) fail('native package migration verified gate lacks evidence')
       for (const evidenceTest of gate.evidenceTests) {
-        const source = evidenceTest.startsWith('javascript wrapper ')
-          ? nodeWrapperTests
-          : evidenceTest.startsWith('direct native archive ') ||
-              evidenceTest.startsWith('offline installed native package ') ||
-              evidenceTest.startsWith('native smoke ') ||
-              evidenceTest.startsWith('build matrix ')
-            ? releaseSmokeTests
-            : packageTests
+        let source = packageTests
+        if (
+          evidenceTest.startsWith('native smoke validates ')
+          || evidenceTest.startsWith('build aggregates ')
+        ) {
+          source = nativePackageEvidenceTests
+        } else if (
+          evidenceTest.startsWith('release metadata ')
+          || evidenceTest.startsWith('local Sigstore ')
+          || evidenceTest.startsWith('release workflow generates, ')
+        ) {
+          source = releaseMetadataTests
+        } else if (
+          evidenceTest.startsWith('npm installer ')
+          || evidenceTest.startsWith('npm package ')
+        ) {
+          source = releaseConsumerTests
+        } else if (evidenceTest.startsWith('javascript wrapper ')) {
+          source = nodeWrapperTests
+        } else if (
+          evidenceTest.startsWith('direct native archive ')
+          || evidenceTest.startsWith('offline installed native package ')
+          || evidenceTest.startsWith('native smoke ')
+          || evidenceTest.startsWith('build matrix ')
+        ) {
+          source = releaseSmokeTests
+        }
         requireText(
           source,
           `test('${evidenceTest}'`,
@@ -2465,6 +2503,18 @@ export function validateContract(
       repositoryFile('scripts/smoke-release-artifact.test.mjs'),
       'utf8',
     ),
+    nativePackageEvidenceTests = fs.readFileSync(
+      repositoryFile('scripts/validate-native-package-evidence.test.mjs'),
+      'utf8',
+    ),
+    releaseMetadataTests = fs.readFileSync(
+      repositoryFile('scripts/generate-release-metadata.test.mjs'),
+      'utf8',
+    ),
+    releaseConsumerTests = fs.readFileSync(
+      repositoryFile('scripts/verify-release-consumers.test.mjs'),
+      'utf8',
+    ),
     releaseSmokePreloadSource = fs.readFileSync(
       repositoryFile('scripts/release-smoke-preload.cjs'),
       'utf8',
@@ -2576,6 +2626,9 @@ export function validateContract(
     nodeWrapperTests,
     releaseSmokeSource,
     releaseSmokeTests,
+    nativePackageEvidenceTests,
+    releaseMetadataTests,
+    releaseConsumerTests,
     releaseSmokePreloadSource,
     productionSources,
   )
@@ -2612,6 +2665,9 @@ export function validateContract(
   if (manifest.scripts?.['test:native-contract'] !== 'node --test scripts/validate-native-contract.test.mjs') {
     fail('package script test:native-contract is missing or changed')
   }
+  if (manifest.scripts?.['test:native-package-evidence'] !== 'node --test scripts/validate-native-package-evidence.test.mjs') {
+    fail('package script test:native-package-evidence is missing or changed')
+  }
 
   for (const [index, foundation] of contract.foundations.entries()) {
     validateFoundation(foundation, index, plan)
@@ -2637,7 +2693,7 @@ export function validateContract(
   requireText(decision, 'first fully graduated native candidate', 'ADR-013')
   requireText(readme, 'Native dependency-free migration', 'README.md')
 
-  const buildGate = 'npm run test:native-contract && npm run check:native-contract'
+  const buildGate = 'npm run test:native-contract && npm run test:native-package-evidence && npm run check:native-contract'
   requireText(buildWorkflow, buildGate, 'build workflow')
   requireText(buildWorkflow, 'npm run test:node-wrapper', 'native JavaScript wrapper workflow')
   requireText(buildWorkflow, 'zig build test --summary all', 'build workflow')
