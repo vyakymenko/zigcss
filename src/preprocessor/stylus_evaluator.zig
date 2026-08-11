@@ -7858,7 +7858,7 @@ const Engine = struct {
                 try self.reportInvalidArguments(span);
                 return error.InvalidArguments;
             }
-            if (try literalCallHasSingleDivisionArgument(
+            if (try literalCallHasOnlyNumericArguments(
                 self.allocator,
                 source_input,
                 call,
@@ -8389,7 +8389,7 @@ const Engine = struct {
                 return self.evaluateKeyframeRadialGradient(span, input, call);
             }
             if (!isLiteralCalcCallName(name) and
-                try literalCallHasSingleDivisionArgument(
+                try literalCallHasOnlyNumericArguments(
                     self.allocator,
                     input,
                     call,
@@ -16534,7 +16534,7 @@ fn callHasEmptyArgument(
     return false;
 }
 
-fn literalCallHasSingleDivisionArgument(
+fn literalCallHasOnlyNumericArguments(
     allocator: std.mem.Allocator,
     raw: []const u8,
     call: Call,
@@ -16545,16 +16545,20 @@ fn literalCallHasSingleDivisionArgument(
         ',',
     );
     defer arguments.deinit(allocator);
-    if (arguments.items.len != 1) return false;
-    const range = arguments.items[0];
-    const argument = std.mem.trim(
-        u8,
-        raw[call.arguments.start + range.start .. call.arguments.start + range.end],
-        " \t\r\n\x0c",
-    );
-    if (!looksNumeric(argument)) return false;
-    const binary = findGenericBinary(argument) orelse return false;
-    return binary.operator == '/';
+    if (arguments.items.len == 0) return false;
+    // The pinned Stylus evaluator visits every undefined CSS call argument
+    // before the compiler emits it. Native evaluation currently owns the
+    // complete numeric-expression subset; other literal argument shapes stay
+    // byte-preserving until their finite semantic contracts are admitted.
+    for (arguments.items) |range| {
+        const argument = std.mem.trim(
+            u8,
+            raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+            " \t\r\n\x0c",
+        );
+        if (!looksNumeric(argument)) return false;
+    }
+    return true;
 }
 
 fn boundedReplacementSize(

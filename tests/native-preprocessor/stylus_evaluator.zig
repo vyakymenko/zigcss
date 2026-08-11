@@ -694,6 +694,19 @@ const regression_499_complex_grouped_extension_css =
     "font-size:22px;color:#000}" ++
     "html body .huge-title{font-size:33px}";
 
+const regression_503_literal_numeric_call_input =
+    \\vendors = official
+    \\@keyframes pulse
+    \\  0%, 50%
+    \\    transform scale(.9) rotate(-3deg)
+    \\  from, to
+    \\    background scale(.5)
+;
+
+const regression_503_literal_numeric_call_css =
+    "@keyframes pulse{0%,50%{transform:scale(0.9) rotate(-3deg)}" ++
+    "from,to{background:scale(0.5)}}";
+
 const forwarded_selector_arguments_terminal_input =
     \\modernize(features, support)
     \\  selector = support ? '' : ('.no-js ' + selector())
@@ -5498,6 +5511,64 @@ test "native Stylus keyframe fabrication owns the provider default terminal cont
     );
 }
 
+test "native Stylus literal numeric calls own the finite regression 503 contract" {
+    const lower_input =
+        \\a
+        \\  transform scale(.5) rotate(-3deg) translate(.25px, -2px)
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "a{transform:scale(0.5) rotate(-3deg) translate(0.25px, -2px)}",
+        lower.css(),
+    );
+
+    var compressed = try compileWithOptions(
+        std.testing.allocator,
+        lower_input,
+        .{ .output_style = .compressed },
+        .{},
+    );
+    defer compressed.deinit();
+    try std.testing.expectEqualStrings(
+        "a{transform:scale(.5) rotate(-3deg) translate(.25px,-2px)}",
+        compressed.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = regression_503_literal_numeric_call_input.len;
+    var first = try compile(
+        std.testing.allocator,
+        regression_503_literal_numeric_call_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        regression_503_literal_numeric_call_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(regression_503_literal_numeric_call_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_source = terminal_limits;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        regression_503_literal_numeric_call_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus newline keyframe selectors own the finite terminal contract" {
     const lower_input =
         \\vendors = o
@@ -9097,6 +9168,14 @@ fn exerciseRegression499ComplexGroupedExtensionAllocationFailures(allocator: std
     try std.testing.expectEqualStrings(regression_499_complex_grouped_extension_css, result.css());
 }
 
+fn exerciseRegression503LiteralNumericCallAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = regression_503_literal_numeric_call_input.len;
+    var result = try compile(allocator, regression_503_literal_numeric_call_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(regression_503_literal_numeric_call_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -9695,6 +9774,14 @@ test "native Stylus regression 499 complex grouped extensions handle every alloc
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseRegression499ComplexGroupedExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus regression 503 literal numeric calls handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseRegression503LiteralNumericCallAllocationFailures,
         .{},
     );
 }
