@@ -424,6 +424,96 @@ const expectedStylusConformance = Object.freeze({
   }),
 })
 
+const expectedProductRouting = Object.freeze({
+  ownerPackage: 'NATIVE-006',
+  releaseGapFamily: 'native-product-routing',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  terminalContract: Object.freeze({
+    adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
+    surfaces: Object.freeze([
+      'shared-native-compiler',
+      'zig-api',
+      'binary-cli',
+      'javascript-wrapper',
+      'files-and-stdin',
+      'batch',
+      'watch',
+      'parallel',
+      'diagnostics-and-dependencies',
+      'source-maps',
+    ]),
+    providerProcesses: 0,
+  }),
+  routes: Object.freeze([
+    Object.freeze({
+      id: 'shared-native-compiler',
+      releaseGapFamily: 'native-shared-compiler-routing',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'native compiler routes every private frontend through one deterministic transaction',
+        'native compiler owns source terminal limits without partial results',
+        'native compiler rejects invalid roots and language failures without a result',
+        'native compiler route handles every allocation failure',
+      ]),
+    }),
+    Object.freeze({
+      id: 'zig-api',
+      releaseGapFamily: 'native-zig-api-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'binary-cli',
+      releaseGapFamily: 'native-binary-cli-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'javascript-wrapper',
+      releaseGapFamily: 'native-javascript-wrapper-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'files-and-stdin',
+      releaseGapFamily: 'native-files-stdin-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'batch',
+      releaseGapFamily: 'native-batch-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'watch',
+      releaseGapFamily: 'native-watch-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'parallel',
+      releaseGapFamily: 'native-parallel-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'diagnostics-and-dependencies',
+      releaseGapFamily: 'native-result-facts-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+    Object.freeze({
+      id: 'source-maps',
+      releaseGapFamily: 'native-source-map-routing',
+      state: 'pending',
+      evidenceTests: Object.freeze([]),
+    }),
+  ]),
+})
+
 const expectedCurrentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
@@ -909,6 +999,23 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-product-compiler',
+    current: 'native-internal',
+    ownerPackage: 'NATIVE-006',
+    adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
+    capabilities: Object.freeze([
+      'shared-native-compiler',
+      'owned-source-table',
+      'confined-entry-identity',
+      'transactional-result',
+    ]),
+    nativeSources: Object.freeze(['src/preprocessor/compiler.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/compiler.zig']),
+    testStep: 'test-native-compiler',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -1066,6 +1173,54 @@ function validateImplementation(implementation, index, contract, plan) {
   }
   for (const source of implementation.nativeSources) repositoryFile(source)
   for (const source of implementation.testSources) repositoryFile(source)
+}
+
+function validateProductRouting(
+  routing,
+  plan,
+  compilerTests,
+  sassConformanceTests,
+  lessConformanceTests,
+  stylusConformanceTests,
+) {
+  if (!same(routing, expectedProductRouting)) fail('product routing contract drifted')
+  requireText(
+    plan,
+    '`NATIVE-006` | Route individually graduated native syntaxes through the Zig API, binary CLI, JavaScript wrapper, files/stdin, batch, watch, parallel, diagnostics, dependencies, and source maps without a provider process',
+    'DEVELOPMENT_PLAN.md native product routing package',
+  )
+  if (!same(
+    routing.terminalContract.surfaces,
+    routing.routes.map(route => route.id),
+  )) {
+    fail('product routing terminal surface inventory drifted')
+  }
+  for (const route of routing.routes) {
+    if (route.state === 'verified') {
+      if (route.evidenceTests.length === 0) fail('product routing verified route lacks evidence')
+      for (const evidenceTest of route.evidenceTests) {
+        requireText(compilerTests, `test "${evidenceTest}"`, 'native product routing evidence')
+      }
+    } else if (route.state !== 'pending' || route.evidenceTests.length !== 0) {
+      fail('product routing pending route drifted')
+    }
+  }
+  for (const [label, tests] of [
+    ['Sass', sassConformanceTests],
+    ['Less', lessConformanceTests],
+    ['Stylus', stylusConformanceTests],
+  ]) {
+    requireText(
+      tests,
+      'const compiler = preprocessor.compiler;',
+      `native product routing ${label} conformance`,
+    )
+    requireText(
+      tests,
+      'return compiler.compile(',
+      `native product routing ${label} conformance`,
+    )
+  }
 }
 
 function validateSassEvaluatorClosure(
@@ -1619,6 +1774,10 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/stylus_conformance.zig'),
       'utf8',
     ),
+    compilerTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/compiler.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1639,13 +1798,14 @@ export function validateContract(
       'sassConformance',
       'lessConformance',
       'stylusConformance',
+      'productRouting',
       'foundations',
       'implementations',
       'adapters',
     ],
     'root',
   )
-  if (contract.schemaVersion !== 5) fail('schemaVersion must be 5')
+  if (contract.schemaVersion !== 6) fail('schemaVersion must be 6')
   if (contract.state !== 'native-foundation') fail('state must remain native-foundation during Milestone 10')
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
@@ -1701,6 +1861,14 @@ export function validateContract(
     plan,
     stylusSelection,
     stylusManifest,
+    stylusConformanceTests,
+  )
+  validateProductRouting(
+    contract.productRouting,
+    plan,
+    compilerTests,
+    sassConformanceTests,
+    lessConformanceTests,
     stylusConformanceTests,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {

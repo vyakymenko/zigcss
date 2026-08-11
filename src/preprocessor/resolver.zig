@@ -207,6 +207,19 @@ pub const Resolver = struct {
         return self.root_views.items;
     }
 
+    /// Validates an already-loaded entry source identity against the resolver's
+    /// explicit directory capabilities. The entry bytes remain caller-owned;
+    /// every filesystem load still passes through `Session.load`.
+    pub fn containsSourceUrl(
+        self: *const Resolver,
+        allocator: std.mem.Allocator,
+        source_url: []const u8,
+    ) Error!bool {
+        const source_path = try fileUrlToPath(allocator, source_url);
+        defer allocator.free(source_path);
+        return lexicalRoot(self, source_path) != null;
+    }
+
     pub fn createSession(
         self: *const Resolver,
         allocator: std.mem.Allocator,

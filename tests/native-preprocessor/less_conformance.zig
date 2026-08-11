@@ -1,6 +1,7 @@
 const std = @import("std");
 const preprocessor = @import("native_preprocessor");
 
+const compiler = preprocessor.compiler;
 const evaluator = preprocessor.evaluator;
 const less = preprocessor.less;
 const less_evaluator = preprocessor.less_evaluator;
@@ -47,7 +48,7 @@ fn compileNative(
     allocator: std.mem.Allocator,
     case: SelectionCase,
     input: []const u8,
-) !evaluator.ValidatedCss {
+) !compiler.Result {
     return compileNativeWithOptions(
         allocator,
         case,
@@ -63,7 +64,7 @@ fn compileNativeWithOptions(
     input: []const u8,
     less_options: less_evaluator.Options,
     output_options: evaluator.Options,
-) !evaluator.ValidatedCss {
+) !compiler.Result {
     const suite_path = try suitePath(allocator, case);
     defer allocator.free(suite_path);
     const suite_root = try std.fs.cwd().realpathAlloc(allocator, suite_path);
@@ -73,29 +74,13 @@ fn compileNativeWithOptions(
     const entry_url = try resolver.pathToFileUrl(allocator, entry_path);
     defer allocator.free(entry_url);
 
-    var authority = try resolver.Resolver.init(allocator, &.{suite_root}, .{});
-    defer authority.deinit();
-    var session = authority.createSession(allocator, .{});
-    defer session.deinit();
-    var sources = source.Table.init(allocator, .{});
-    defer sources.deinit();
-    const source_id = try sources.add(entry_url, input);
-
-    var parser = try less.Parser.init(allocator, &sources, source_id, .{}, .{});
-    defer parser.deinit();
-    var document = try parser.parse();
-    defer document.deinit();
-
-    var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
-    defer transaction.deinit();
-    try less_evaluator.evaluateWithOptions(
-        &sources,
-        &document,
-        &transaction,
-        less_options,
-        .{},
-    );
-    return transaction.finish(output_options);
+    return compiler.compile(allocator, entry_url, input, .{
+        .syntax = .less,
+        .root_paths = &.{suite_root},
+        .format = output_options.format,
+        .source_map = output_options.source_map,
+        .less = less_options,
+    });
 }
 
 fn compileExpectedCss(
@@ -213,8 +198,8 @@ fn nativeFailureName(
 }
 
 fn expectDependencyDeterminism(
-    first: *const evaluator.ValidatedCss,
-    second: *const evaluator.ValidatedCss,
+    first: anytype,
+    second: anytype,
 ) !void {
     try std.testing.expectEqual(first.dependencies().len, second.dependencies().len);
     for (first.dependencies(), second.dependencies()) |left, right| {

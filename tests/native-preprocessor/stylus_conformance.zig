@@ -1,6 +1,7 @@
 const std = @import("std");
 const preprocessor = @import("native_preprocessor");
 
+const compiler = preprocessor.compiler;
 const evaluator = preprocessor.evaluator;
 const resolver = preprocessor.resolver;
 const source = preprocessor.source;
@@ -55,7 +56,7 @@ fn compileNative(
     allocator: std.mem.Allocator,
     case: ManifestCase,
     input: []const u8,
-) !evaluator.ValidatedCss {
+) !compiler.Result {
     return compileNativeWithLimits(allocator, case, input, .{});
 }
 
@@ -64,7 +65,7 @@ fn compileNativeWithLimits(
     case: ManifestCase,
     input: []const u8,
     limits: stylus_evaluator.Limits,
-) !evaluator.ValidatedCss {
+) !compiler.Result {
     const corpus_root = try std.fs.cwd().realpathAlloc(allocator, corpus_files_root);
     defer allocator.free(corpus_root);
     const images_root = try std.fs.path.join(allocator, &.{ corpus_root, "upstream/images" });
@@ -74,20 +75,6 @@ fn compileNativeWithLimits(
     const entry_url = try resolver.pathToFileUrl(allocator, entry_path);
     defer allocator.free(entry_url);
 
-    var authority = try resolver.Resolver.init(allocator, &.{corpus_root}, .{});
-    defer authority.deinit();
-    var session = authority.createSession(allocator, .{});
-    defer session.deinit();
-    var sources = source.Table.init(allocator, .{});
-    defer sources.deinit();
-    const source_id = try sources.add(entry_url, input);
-
-    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
-    defer parser.deinit();
-    var document = try parser.parse();
-    defer document.deinit();
-    var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
-    defer transaction.deinit();
     const output_style: stylus_evaluator.OutputStyle = if (std.mem.eql(
         u8,
         case.style,
@@ -98,21 +85,21 @@ fn compileNativeWithLimits(
         .compressed
     else
         return error.InvalidConformanceCase;
-    try stylus_evaluator.evaluateWithOptions(
-        &sources,
-        &document,
-        &transaction,
-        .{
+    return compiler.compile(allocator, entry_url, input, .{
+        .syntax = .stylus,
+        .root_paths = &.{corpus_root},
+        .format = .pretty,
+        .source_map = true,
+        .stylus = .{
             .output_style = output_style,
             .include_css = case.providerOptions.includeCss,
         },
-        blk: {
+        .limits = .{ .stylus_evaluator = blk: {
             var configured = limits;
             configured.asset_load_paths = &.{images_root};
             break :blk configured;
-        },
-    );
-    return transaction.finish(.{ .format = .pretty, .source_map = true });
+        } },
+    });
 }
 
 fn compileExpectedCss(
@@ -145,8 +132,8 @@ fn nativeFailureName(
 }
 
 fn expectDependencyDeterminism(
-    first: *const evaluator.ValidatedCss,
-    second: *const evaluator.ValidatedCss,
+    first: anytype,
+    second: anytype,
 ) !void {
     try std.testing.expectEqual(first.dependencies().len, second.dependencies().len);
     for (first.dependencies(), second.dependencies()) |left, right| {

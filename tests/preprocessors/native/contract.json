@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "state": "native-foundation",
   "nativeReleaseReady": false,
   "nativeReleaseVersion": null,
@@ -403,6 +403,95 @@
       "fuzz": "verified",
       "allocationFailure": "verified"
     }
+  },
+  "productRouting": {
+    "ownerPackage": "NATIVE-006",
+    "releaseGapFamily": "native-product-routing",
+    "state": "in-progress",
+    "packageState": "in-progress",
+    "terminalContract": {
+      "adapters": ["scss", "sass", "less", "stylus"],
+      "surfaces": [
+        "shared-native-compiler",
+        "zig-api",
+        "binary-cli",
+        "javascript-wrapper",
+        "files-and-stdin",
+        "batch",
+        "watch",
+        "parallel",
+        "diagnostics-and-dependencies",
+        "source-maps"
+      ],
+      "providerProcesses": 0
+    },
+    "routes": [
+      {
+        "id": "shared-native-compiler",
+        "releaseGapFamily": "native-shared-compiler-routing",
+        "state": "verified",
+        "evidenceTests": [
+          "native compiler routes every private frontend through one deterministic transaction",
+          "native compiler owns source terminal limits without partial results",
+          "native compiler rejects invalid roots and language failures without a result",
+          "native compiler route handles every allocation failure"
+        ]
+      },
+      {
+        "id": "zig-api",
+        "releaseGapFamily": "native-zig-api-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "binary-cli",
+        "releaseGapFamily": "native-binary-cli-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "javascript-wrapper",
+        "releaseGapFamily": "native-javascript-wrapper-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "files-and-stdin",
+        "releaseGapFamily": "native-files-stdin-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "batch",
+        "releaseGapFamily": "native-batch-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "watch",
+        "releaseGapFamily": "native-watch-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "parallel",
+        "releaseGapFamily": "native-parallel-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "diagnostics-and-dependencies",
+        "releaseGapFamily": "native-result-facts-routing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "source-maps",
+        "releaseGapFamily": "native-source-map-routing",
+        "state": "pending",
+        "evidenceTests": []
+      }
+    ]
   },
   "foundations": [
     {
@@ -875,6 +964,23 @@
       "nativeSources": [],
       "testSources": ["tests/native-preprocessor/stylus_conformance.zig"],
       "testStep": "test-native-stylus-conformance",
+      "publicAvailable": false,
+      "productionReachable": false
+    },
+    {
+      "id": "native-product-compiler",
+      "current": "native-internal",
+      "ownerPackage": "NATIVE-006",
+      "adapters": ["scss", "sass", "less", "stylus"],
+      "capabilities": [
+        "shared-native-compiler",
+        "owned-source-table",
+        "confined-entry-identity",
+        "transactional-result"
+      ],
+      "nativeSources": ["src/preprocessor/compiler.zig"],
+      "testSources": ["tests/native-preprocessor/compiler.zig"],
+      "testStep": "test-native-compiler",
       "publicAvailable": false,
       "productionReachable": false
     }

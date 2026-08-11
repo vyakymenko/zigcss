@@ -20,7 +20,7 @@ function clone(value) {
 
 test('accepts the bounded native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 5)
+  assert.equal(contract.schemaVersion, 6)
   assert.equal(contract.state, 'native-foundation')
   assert.equal(contract.nativeReleaseReady, false)
   assert.deepEqual(contract.nativePublicationAuthority, {
@@ -54,7 +54,86 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     'native-stylus-parser',
     'native-stylus-semantic-core',
     'native-stylus-conformance',
+    'native-product-compiler',
   ])
+  assert.deepEqual(contract.productRouting, {
+    ownerPackage: 'NATIVE-006',
+    releaseGapFamily: 'native-product-routing',
+    state: 'in-progress',
+    packageState: 'in-progress',
+    terminalContract: {
+      adapters: ['scss', 'sass', 'less', 'stylus'],
+      surfaces: [
+        'shared-native-compiler',
+        'zig-api',
+        'binary-cli',
+        'javascript-wrapper',
+        'files-and-stdin',
+        'batch',
+        'watch',
+        'parallel',
+        'diagnostics-and-dependencies',
+        'source-maps',
+      ],
+      providerProcesses: 0,
+    },
+    routes: [{
+      id: 'shared-native-compiler',
+      releaseGapFamily: 'native-shared-compiler-routing',
+      state: 'verified',
+      evidenceTests: [
+        'native compiler routes every private frontend through one deterministic transaction',
+        'native compiler owns source terminal limits without partial results',
+        'native compiler rejects invalid roots and language failures without a result',
+        'native compiler route handles every allocation failure',
+      ],
+    }, {
+      id: 'zig-api',
+      releaseGapFamily: 'native-zig-api-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'binary-cli',
+      releaseGapFamily: 'native-binary-cli-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'javascript-wrapper',
+      releaseGapFamily: 'native-javascript-wrapper-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'files-and-stdin',
+      releaseGapFamily: 'native-files-stdin-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'batch',
+      releaseGapFamily: 'native-batch-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'watch',
+      releaseGapFamily: 'native-watch-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'parallel',
+      releaseGapFamily: 'native-parallel-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'diagnostics-and-dependencies',
+      releaseGapFamily: 'native-result-facts-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }, {
+      id: 'source-maps',
+      releaseGapFamily: 'native-source-map-routing',
+      state: 'pending',
+      evidenceTests: [],
+    }],
+  })
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
     releaseGapFamily: 'native-sass-conformance',
@@ -1105,7 +1184,7 @@ test('binds implemented native foundation sources and focused test inventories',
 })
 
 test('binds unavailable native frontend internals without admitting product reachability', () => {
-  for (const index of [0, 1, 2, 3, 4, 5, 6]) {
+  for (const index of loadContract().implementations.keys()) {
     for (const field of ['publicAvailable', 'productionReachable']) {
       const changed = clone(loadContract())
       changed.implementations[index][field] = true
@@ -1137,6 +1216,34 @@ test('binds unavailable native frontend internals without admitting product reac
       ]],
     }),
     /makes the unavailable native frontend production-reachable/,
+  )
+})
+
+test('binds the finite native product routing inventory and verified first route', () => {
+  for (const mutate of [
+    routing => routing.terminalContract.surfaces.reverse(),
+    routing => routing.terminalContract.adapters.pop(),
+    routing => { routing.terminalContract.providerProcesses = 1 },
+    routing => { routing.routes[0].state = 'pending' },
+    routing => routing.routes.push(clone(routing.routes[0])),
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed.productRouting)
+    assert.throws(() => validateContract(changed), /product routing.*drifted/)
+  }
+
+  const sassConformanceTests = fs.readFileSync(
+    path.join(repositoryRoot, 'tests/native-preprocessor/sass_conformance.zig'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      sassConformanceTests: sassConformanceTests.replace(
+        'return compiler.compile(',
+        'return missing_route.compile(',
+      ),
+    }),
+    /native product routing Sass conformance.*missing/,
   )
 })
 

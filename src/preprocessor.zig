@@ -13,6 +13,7 @@ pub const diagnostics = @import("preprocessor/diagnostics.zig");
 pub const sourcemap = @import("preprocessor/sourcemap.zig");
 pub const resolver = @import("preprocessor/resolver.zig");
 pub const evaluator = @import("preprocessor/evaluator.zig");
+pub const compiler = @import("preprocessor/compiler.zig");
 pub const sass = @import("preprocessor/sass.zig");
 pub const less = @import("preprocessor/less.zig");
 pub const stylus = @import("preprocessor/stylus.zig");
@@ -36,6 +37,7 @@ test {
     _ = sourcemap;
     _ = resolver;
     _ = evaluator;
+    _ = compiler;
     _ = sass;
     _ = less;
     _ = stylus;

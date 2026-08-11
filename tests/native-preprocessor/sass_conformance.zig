@@ -1,10 +1,10 @@
 const std = @import("std");
 const preprocessor = @import("native_preprocessor");
 
+const compiler = preprocessor.compiler;
 const evaluator = preprocessor.evaluator;
 const resolver = preprocessor.resolver;
 const sass = preprocessor.sass;
-const sass_evaluator = preprocessor.sass_evaluator;
 const source = preprocessor.source;
 
 const corpus_cases_root = "tests/preprocessors/sass/corpus/cases";
@@ -45,7 +45,7 @@ fn compileNative(
     allocator: std.mem.Allocator,
     case: ManifestCase,
     input: []const u8,
-) !evaluator.ValidatedCss {
+) !compiler.Result {
     return compileNativeWithOptions(
         allocator,
         case,
@@ -59,7 +59,7 @@ fn compileNativeWithOptions(
     case: ManifestCase,
     input: []const u8,
     options: evaluator.Options,
-) !evaluator.ValidatedCss {
+) !compiler.Result {
     const case_path = try std.fs.path.join(allocator, &.{ corpus_cases_root, case.id });
     defer allocator.free(case_path);
     const case_root = try std.fs.cwd().realpathAlloc(allocator, case_path);
@@ -69,30 +69,12 @@ fn compileNativeWithOptions(
     const entry_url = try resolver.pathToFileUrl(allocator, entry_path);
     defer allocator.free(entry_url);
 
-    var authority = try resolver.Resolver.init(allocator, &.{case_root}, .{});
-    defer authority.deinit();
-    var session = authority.createSession(allocator, .{});
-    defer session.deinit();
-    var sources = source.Table.init(allocator, .{});
-    defer sources.deinit();
-    const source_id = try sources.add(entry_url, input);
-
-    var parser = try sass.Parser.init(
-        allocator,
-        &sources,
-        source_id,
-        if (std.mem.eql(u8, case.syntax, "sass")) .sass else .scss,
-        .{},
-        .{},
-    );
-    defer parser.deinit();
-    var document = try parser.parse();
-    defer document.deinit();
-
-    var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
-    defer transaction.deinit();
-    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
-    return transaction.finish(options);
+    return compiler.compile(allocator, entry_url, input, .{
+        .syntax = if (std.mem.eql(u8, case.syntax, "sass")) .sass else .scss,
+        .root_paths = &.{case_root},
+        .format = options.format,
+        .source_map = options.source_map,
+    });
 }
 
 fn compileExpectedCss(

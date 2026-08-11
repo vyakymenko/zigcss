@@ -140,6 +140,22 @@ pub fn build(b: *std.Build) void {
         .root_module = native_evaluator_test_module,
     });
     const run_native_evaluator_tests = b.addRunArtifact(native_evaluator_tests);
+    const native_compiler_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/native-preprocessor/compiler.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_compiler_test_module.addImport("native_preprocessor", native_preprocessor_module);
+    const native_compiler_tests = b.addTest(.{
+        .root_module = native_compiler_test_module,
+    });
+    const run_native_compiler_tests = b.addRunArtifact(native_compiler_tests);
+    run_native_compiler_tests.setCwd(b.path("."));
+    const native_compiler_test_step = b.step(
+        "test-native-compiler",
+        "Test the private shared native stylesheet compiler route",
+    );
+    native_compiler_test_step.dependOn(&run_native_compiler_tests.step);
     const native_sass_parser_test_module = b.createModule(.{
         .root_source_file = b.path("tests/native-preprocessor/sass_parser.zig"),
         .target = target,
@@ -331,6 +347,7 @@ pub fn build(b: *std.Build) void {
     native_preprocessor_test_step.dependOn(&run_native_foundation_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_resolver_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_evaluator_tests.step);
+    native_preprocessor_test_step.dependOn(&run_native_compiler_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_parser_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_less_parser_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_stylus_parser_tests.step);
@@ -450,6 +467,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_native_foundation_tests.step);
     test_step.dependOn(&run_native_resolver_tests.step);
     test_step.dependOn(&run_native_evaluator_tests.step);
+    test_step.dependOn(&run_native_compiler_tests.step);
     test_step.dependOn(&run_native_sass_parser_tests.step);
     test_step.dependOn(&run_native_less_parser_tests.step);
     test_step.dependOn(&run_native_stylus_parser_tests.step);
