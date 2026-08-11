@@ -566,6 +566,28 @@ const regression_272_arguments_css =
     "body{foo:1 1 '+';foo:1 5 '+';foo:1 5 '-'}" ++
     "body{foo:1;foo:1 2;foo:1 2 3;foo:1 2 3 4 5 6}";
 
+const regression_274_color_input =
+    \\color = hsla(0,0,0,0)
+    \\body
+    \\  type color is a 'color'
+    \\  equal color == color
+    \\  unequal color != color
+    \\  greater-equal color >= color
+    \\  less-equal color <= color
+    \\  greater color > color
+    \\  less color < color
+    \\  conjunction color and 'ok'
+    \\  ternary color ? 'ok' : 'nope'
+    \\  truthy !! color
+    \\  membership-miss color in (foo bar baz)
+    \\  membership-hit color in (foo color baz)
+;
+
+const regression_274_color_css =
+    "body{type:true;equal:true;unequal:false;greater-equal:true;" ++
+    "less-equal:true;greater:false;less:false;conjunction:'ok';" ++
+    "ternary:'ok';truthy:true;membership-miss:false;membership-hit:true}";
+
 const forwarded_selector_arguments_terminal_input =
     \\modernize(features, support)
     \\  selector = support ? '' : ('.no-js ' + selector())
@@ -4669,6 +4691,60 @@ test "native Stylus membership owns the finite hash and expression contract" {
     );
 }
 
+test "native Stylus color nodes own the finite regression 274 comparison contract" {
+    const lower_input =
+        \\color = hsla(0,0,0,0)
+        \\body
+        \\  same color >= color
+        \\  red-over-blue red > blue
+        \\  blue-under-red blue < red
+        \\  red-under-blue red < blue
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{same:true;red-over-blue:true;blue-under-red:true;red-under-blue:false}",
+        lower.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = regression_274_color_input.len;
+    terminal_limits.max_selectors = 1;
+    var first = try compile(
+        std.testing.allocator,
+        regression_274_color_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        regression_274_color_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(regression_274_color_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_source = terminal_limits;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        regression_274_color_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus root conditional assignments own the finite alias and binding contract" {
     const lower_input =
         \\primary := 'first'
@@ -8540,6 +8616,15 @@ fn exerciseMembershipSemanticsAllocationFailures(allocator: std.mem.Allocator) !
     try std.testing.expectEqualStrings(membership_semantics_css, result.css());
 }
 
+fn exerciseRegression274ColorComparisonAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = regression_274_color_input.len;
+    limits.max_selectors = 1;
+    var result = try compile(allocator, regression_274_color_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(regression_274_color_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -9082,6 +9167,14 @@ test "native Stylus membership handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMembershipSemanticsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus regression 274 color comparisons handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseRegression274ColorComparisonAllocationFailures,
         .{},
     );
 }

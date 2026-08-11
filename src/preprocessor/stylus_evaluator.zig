@@ -12131,6 +12131,33 @@ const Engine = struct {
             const equal = stylusValueEqual(left.*, right.*);
             return if (operator == .equal) equal else !equal;
         }
+        if (left.* == .color and right.* == .color) {
+            // Stylus RGBA relational operators fall through to Node.operate(),
+            // which orders the two canonical color hashes lexically. HSLA
+            // delegates through its RGBA representation before that lookup.
+            const left_hash = try self.serializeValueForStyleOwned(
+                left,
+                .value,
+                span,
+                .expanded,
+            );
+            defer self.allocator.free(left_hash);
+            const right_hash = try self.serializeValueForStyleOwned(
+                right,
+                .value,
+                span,
+                .expanded,
+            );
+            defer self.allocator.free(right_hash);
+            const ordering = std.mem.order(u8, left_hash, right_hash);
+            return switch (operator) {
+                .greater => ordering == .gt,
+                .greater_equal => ordering != .lt,
+                .less => ordering == .lt,
+                .less_equal => ordering != .gt,
+                else => unreachable,
+            };
+        }
         if (left.* == .string) {
             if (right.* == .string) {
                 const ordering = std.mem.order(u8, left.string.bytes, right.string.bytes);
