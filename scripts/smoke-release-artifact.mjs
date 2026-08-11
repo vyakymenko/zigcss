@@ -32,6 +32,33 @@ export const nativeSmokeTargets = Object.freeze([
   Object.freeze({ target: 'x86_64-windows', runner: 'windows-latest', nodePlatform: 'win32', nodeArch: 'x64', binaryName: 'zigcss.exe' }),
 ])
 
+export const nativePreprocessorSmokeCases = Object.freeze([
+  Object.freeze({
+    extension: 'scss',
+    syntax: 'scss',
+    source: '$color: red;\n.scss { color: $color; }\n',
+    expected: '.scss {\n  color: red;\n}\n',
+  }),
+  Object.freeze({
+    extension: 'sass',
+    syntax: 'sass',
+    source: '$color: red\n.sass\n  color: $color\n',
+    expected: '.sass {\n  color: red;\n}\n',
+  }),
+  Object.freeze({
+    extension: 'less',
+    syntax: 'less',
+    source: '@color: red;\n.less { color: @color; }\n',
+    expected: '.less {\n  color: red;\n}\n',
+  }),
+  Object.freeze({
+    extension: 'styl',
+    syntax: 'stylus',
+    source: '.styl\n  color red\n',
+    expected: '.styl {\n  color: #f00;\n}\n',
+  }),
+])
+
 function fail(message) {
   throw new Error(`release smoke integrity: ${message}`)
 }
@@ -346,38 +373,15 @@ function validateInstalledPackageFiles(installedRoot, binaryName) {
   if (!same(rows, expectedPackedFiles)) fail('installed ZigCSS package file inventory changed')
 }
 
-function checkNativePreprocessors(wrapper, working, environment, version) {
-  const cases = [
-    {
-      extension: 'scss',
-      syntax: 'scss',
-      source: '$color: red;\n.scss { color: $color; }\n',
-      expected: '.scss {\n  color: red;\n}\n',
-    },
-    {
-      extension: 'sass',
-      syntax: 'sass',
-      source: '$color: red\n.sass\n  color: $color\n',
-      expected: '.sass {\n  color: red;\n}\n',
-    },
-    {
-      extension: 'less',
-      syntax: 'less',
-      source: '@color: red;\n.less { color: @color; }\n',
-      expected: '.less {\n  color: red;\n}\n',
-    },
-    {
-      extension: 'styl',
-      syntax: 'stylus',
-      source: '.styl\n  color red\n',
-      expected: '.styl {\n  color: #f00;\n}\n',
-    },
-  ]
-  for (const item of cases) {
-    const input = path.join(working, `native.${item.extension}`)
+function checkNativePreprocessors(command, argsPrefix, working, environment, version, label) {
+  for (const item of nativePreprocessorSmokeCases) {
+    const input = path.join(
+      working,
+      `${label.replace(/[^a-z]+/g, '-')}-native.${item.extension}`,
+    )
     fs.writeFileSync(input, item.source)
-    const result = child(process.execPath, [
-      wrapper,
+    const result = child(command, [
+      ...argsPrefix,
       input,
       '--experimental-native',
       '--syntax',
@@ -385,14 +389,14 @@ function checkNativePreprocessors(wrapper, working, environment, version) {
     ], {
       cwd: working,
       env: environment,
-      label: `${item.extension} offline native compile smoke`,
+      label: `${label} ${item.extension} native compile smoke`,
     })
     const warning = `Warning: ZigCSS ${version} is an experimental release candidate; do not use it for production CSS.\n`
     if (result.stdout !== item.expected || result.stderr !== warning) {
-      fail(`${item.extension} returned an unexpected offline native compiler contract`)
+      fail(`${label} ${item.extension} returned an unexpected native compiler contract`)
     }
   }
-  return cases.length
+  return nativePreprocessorSmokeCases.length
 }
 
 function nodeOptionsRequire(filename) {
@@ -456,6 +460,14 @@ export function smokeReleaseArtifact(options) {
     if (hashFile(directBinary) !== hashFile(binary)) fail('direct archive binary differs from the release binary')
     if (process.platform !== 'win32') fs.chmodSync(directBinary, 0o755)
     checkCompiler(directBinary, [], temporary, version, 'direct archive binary')
+    const directNativeSmokes = checkNativePreprocessors(
+      directBinary,
+      [],
+      temporary,
+      process.env,
+      version,
+      'direct archive binary',
+    )
 
     const packDirectory = path.join(temporary, 'pack')
     fs.mkdirSync(packDirectory)
@@ -520,7 +532,6 @@ export function smokeReleaseArtifact(options) {
     const shimName = process.platform === 'win32' ? 'zigcss.cmd' : 'zigcss'
     const wrapper = confinedRegularFile(installedRoot, 'index.js', 'npm wrapper', 64 * 1024)
     confinedExecutableShim(consumer, `node_modules/.bin/${shimName}`, wrapper)
-    checkCompiler(process.execPath, [wrapper], temporary, version, 'npm wrapper')
     validateInstalledPackageFiles(installedRoot, policy.binaryName)
 
     const installedEntries = fs.readdirSync(path.join(installedRoot, 'bin')).sort()
@@ -533,11 +544,14 @@ export function smokeReleaseArtifact(options) {
       npm_config_offline: 'true',
       ZIGCSS_RELEASE_SMOKE_RUNTIME: '1',
     }
-    const nativePreprocessorSmokes = checkNativePreprocessors(
-      wrapper,
+    checkCompiler(process.execPath, [wrapper], temporary, version, 'offline npm wrapper')
+    const offlineNativeSmokes = checkNativePreprocessors(
+      process.execPath,
+      [wrapper],
       temporary,
       offlineEnvironment,
       version,
+      'offline npm wrapper',
     )
     const installed = measureInstalledTree(path.join(consumer, 'node_modules'))
 
@@ -548,7 +562,8 @@ export function smokeReleaseArtifact(options) {
       installedBytes: installed.bytes,
       installedEntries: installed.entries,
       npmPackage: packageName,
-      nativePreprocessorSmokes,
+      directStylesheetSmokes: 1 + directNativeSmokes,
+      offlinePackageStylesheetSmokes: 1 + offlineNativeSmokes,
     }
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -560,7 +575,7 @@ function main() {
     const options = parseSmokeArguments(process.argv.slice(2))
     const result = smokeReleaseArtifact(options)
     process.stdout.write(
-      `Native release smoke passed for ${result.target}: direct archive, lifecycle-disabled clean install, offline postinstall, ${result.nativePreprocessorSmokes} native preprocessor compiles, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
+      `Native release smoke passed for ${result.target}: direct archive compiled ${result.directStylesheetSmokes} languages, lifecycle-disabled clean install, offline postinstall compiled ${result.offlinePackageStylesheetSmokes} languages, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
     )
   } catch (error) {
     process.stderr.write(`${error.message}\n`)

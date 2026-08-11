@@ -7,6 +7,7 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   archiveExecutable,
+  nativePreprocessorSmokeCases,
   nativeSmokeTargets,
   parseSmokeArguments,
   validateReleaseSmokeWorkflowSources,
@@ -165,10 +166,33 @@ test('development reference provider host installs a process-wide deny-network p
   assert.equal(result.stdout, 'denied')
 })
 
-test('release smoke routes all four preprocessors only through the explicit native binary gate', () => {
+test('direct native archive compiles the finite five-language syntax set', () => {
+  assert.deepEqual(
+    nativePreprocessorSmokeCases.map(({ extension, syntax }) => ({ extension, syntax })),
+    [
+      { extension: 'scss', syntax: 'scss' },
+      { extension: 'sass', syntax: 'sass' },
+      { extension: 'less', syntax: 'less' },
+      { extension: 'styl', syntax: 'stylus' },
+    ],
+  )
   const source = fs.readFileSync(path.join(repositoryRoot, 'scripts/smoke-release-artifact.mjs'), 'utf8')
   assert.match(source, /function checkNativePreprocessors\(/)
   assert.match(source, /'--experimental-native',[\s\S]*?'--syntax'/)
+  assert.match(
+    source,
+    /const directNativeSmokes = checkNativePreprocessors\(\s*directBinary,\s*\[\],/,
+  )
+  assert.match(source, /directStylesheetSmokes:\s*1 \+ directNativeSmokes/)
+})
+
+test('offline installed native package compiles the finite five-language syntax set', () => {
+  const source = fs.readFileSync(path.join(repositoryRoot, 'scripts/smoke-release-artifact.mjs'), 'utf8')
+  assert.match(
+    source,
+    /const offlineNativeSmokes = checkNativePreprocessors\(\s*process\.execPath,\s*\[wrapper\],/,
+  )
+  assert.match(source, /offlinePackageStylesheetSmokes:\s*1 \+ offlineNativeSmokes/)
   assert.doesNotMatch(source, /function checkCanonicalPreprocessors\(/)
   assert.doesNotMatch(source, /function checkCanonicalApi\(/)
   assert.doesNotMatch(source, /zigcss\/api/)

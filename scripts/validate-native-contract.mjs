@@ -581,8 +581,15 @@ const expectedPackageMigration = Object.freeze({
         'javascript wrapper cannot reach the provider host',
       ]),
     }),
+    Object.freeze({
+      id: 'direct-archive-offline-package',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'direct native archive compiles the finite five-language syntax set',
+        'offline installed native package compiles the finite five-language syntax set',
+      ]),
+    }),
     ...[
-      'direct-archive-offline-package',
       'runtime-process-network-tracing',
       'five-native-targets',
       'release-sbom-provenance',
@@ -1377,6 +1384,8 @@ function validatePackageMigration(
   packageTests,
   nodeWrapperSource,
   nodeWrapperTests,
+  releaseSmokeSource,
+  releaseSmokeTests,
 ) {
   if (!same(migration, expectedPackageMigration)) fail('native package migration contract drifted')
   requireText(
@@ -1396,7 +1405,10 @@ function validatePackageMigration(
       for (const evidenceTest of gate.evidenceTests) {
         const source = evidenceTest.startsWith('javascript wrapper ')
           ? nodeWrapperTests
-          : packageTests
+          : evidenceTest.startsWith('direct native archive ') ||
+              evidenceTest.startsWith('offline installed native package ')
+            ? releaseSmokeTests
+            : packageTests
         requireText(
           source,
           `test('${evidenceTest}'`,
@@ -1445,6 +1457,21 @@ function validatePackageMigration(
     nodeWrapperSource,
     'runNative(binaryPath, args);',
     'native package migration JavaScript wrapper binary dispatch',
+  )
+  requireText(
+    releaseSmokeSource,
+    'const directNativeSmokes = checkNativePreprocessors(',
+    'native package migration direct archive language smoke',
+  )
+  requireText(
+    releaseSmokeSource,
+    'const offlineNativeSmokes = checkNativePreprocessors(',
+    'native package migration offline package language smoke',
+  )
+  requireText(
+    releaseSmokeSource,
+    "npm_config_offline: 'true'",
+    'native package migration offline package mode',
   )
 }
 
@@ -2331,6 +2358,14 @@ export function validateContract(
       repositoryFile('scripts/validate-preprocessor-package.test.mjs'),
       'utf8',
     ),
+    releaseSmokeSource = fs.readFileSync(
+      repositoryFile('scripts/smoke-release-artifact.mjs'),
+      'utf8',
+    ),
+    releaseSmokeTests = fs.readFileSync(
+      repositoryFile('scripts/smoke-release-artifact.test.mjs'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -2436,6 +2471,8 @@ export function validateContract(
     packageTests,
     nodeWrapperSource,
     nodeWrapperTests,
+    releaseSmokeSource,
+    releaseSmokeTests,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

@@ -562,8 +562,11 @@
       },
       {
         "id": "direct-archive-offline-package",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "direct native archive compiles the finite five-language syntax set",
+          "offline installed native package compiles the finite five-language syntax set"
+        ]
       },
       {
         "id": "runtime-process-network-tracing",

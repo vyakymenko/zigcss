@@ -1656,8 +1656,15 @@ test('owns the finite native zero-dependency package migration contract', () => 
           'javascript wrapper cannot reach the provider host',
         ],
       },
+      {
+        id: 'direct-archive-offline-package',
+        state: 'verified',
+        evidenceTests: [
+          'direct native archive compiles the finite five-language syntax set',
+          'offline installed native package compiles the finite five-language syntax set',
+        ],
+      },
       ...[
-        'direct-archive-offline-package',
         'runtime-process-network-tracing',
         'five-native-targets',
         'release-sbom-provenance',
@@ -1671,7 +1678,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
     migration => { migration.packageState = 'verified' },
     migration => migration.terminalContract.surfaces.reverse(),
     migration => { migration.gates[0].state = 'pending' },
-    migration => { migration.gates[1].state = 'verified' },
+    migration => { migration.gates[1].state = 'pending' },
     migration => migration.gates.push(clone(migration.gates[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1691,6 +1698,20 @@ test('owns the finite native zero-dependency package migration contract', () => 
       ),
     }),
     /native package migration production-package-closure evidence.*missing/,
+  )
+
+  const releaseSmokeTests = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/smoke-release-artifact.test.mjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseSmokeTests: releaseSmokeTests.replace(
+        "test('direct native archive compiles the finite five-language syntax set'",
+        "test('missing direct archive evidence'",
+      ),
+    }),
+    /native package migration direct-archive-offline-package evidence.*missing/,
   )
 
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
