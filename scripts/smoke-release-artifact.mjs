@@ -22,7 +22,14 @@ const maximumBinaryBytes = 256 * 1024 * 1024
 const maximumOutputBytes = 1024 * 1024
 const maximumInstalledBytes = 128 * 1024 * 1024
 const maximumInstalledEntries = 20_000
+const maximumRuntimeTraceBytes = 64 * 1024
 const childTimeoutMs = 60 * 1000
+const runtimeTraceLauncher = [
+  "const { spawn } = require('node:child_process')",
+  "const child = spawn(process.argv[1], process.argv.slice(2), { stdio: 'inherit', cwd: process.cwd() })",
+  "child.on('error', error => { throw error })",
+  "child.on('exit', (code, signal) => { if (signal) process.kill(process.pid, signal); else process.exitCode = code ?? 1 })",
+].join('\n')
 
 export const nativeSmokeTargets = Object.freeze([
   Object.freeze({ target: 'x86_64-linux', runner: 'ubuntu-latest', nodePlatform: 'linux', nodeArch: 'x64', binaryName: 'zigcss' }),
@@ -309,13 +316,21 @@ function runNpm(args, options = {}) {
   return child(process.execPath, [npmCliPath(), ...args], { ...options, label: options.label ?? 'npm' })
 }
 
-function checkCompiler(command, argsPrefix, working, version, label) {
-  const versionResult = child(command, [...argsPrefix, '--version'], { cwd: working, label: `${label} version smoke` })
+function checkCompiler(command, argsPrefix, working, environment, version, label) {
+  const versionResult = child(command, [...argsPrefix, '--version'], {
+    cwd: working,
+    env: environment,
+    label: `${label} version smoke`,
+  })
   if (versionResult.stdout !== `zigcss ${version}\n` || versionResult.stderr !== '') fail(`${label} returned an unexpected version contract`)
 
   const input = path.join(working, `${label.replace(/[^a-z]+/g, '-')}.css`)
   fs.writeFileSync(input, '.smoke { color: red; }\n')
-  const compile = child(command, [...argsPrefix, input, '--minify'], { cwd: working, label: `${label} compile smoke` })
+  const compile = child(command, [...argsPrefix, input, '--minify'], {
+    cwd: working,
+    env: environment,
+    label: `${label} compile smoke`,
+  })
   const warning = `Warning: ZigCSS ${version} is an experimental release candidate; do not use it for production CSS.\n`
   if (compile.stdout !== '.smoke{color:red}' || compile.stderr !== warning) fail(`${label} returned an unexpected compiler contract`)
 }
@@ -404,6 +419,86 @@ function nodeOptionsRequire(filename) {
   return `--require="${filename.replaceAll('\\', '/')}"`
 }
 
+function createRuntimeTrace(root, label) {
+  if (typeof label !== 'string' || !/^[a-z][a-z-]*$/.test(label)) fail('runtime trace label is invalid')
+  const filename = path.join(root, `${label}.jsonl`)
+  fs.writeFileSync(filename, '', { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  return filename
+}
+
+function runtimeTraceEnvironment(environment, preload, traceRoot, trace, binary) {
+  return {
+    ...environment,
+    NODE_OPTIONS: nodeOptionsRequire(preload),
+    ZIGCSS_RELEASE_SMOKE_RUNTIME: '1',
+    ZIGCSS_RELEASE_SMOKE_RUNTIME_BINARY: binary,
+    ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE: trace,
+    ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE_ROOT: traceRoot,
+  }
+}
+
+function exactRecordKeys(record, expected, label) {
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) fail(`${label} is not an object`)
+  if (!same(Object.keys(record).sort(), [...expected].sort())) fail(`${label} fields changed`)
+}
+
+export function validateRuntimeTrace(filename, expectedInvocations, label = 'runtime trace') {
+  if (!Number.isSafeInteger(expectedInvocations) || expectedInvocations <= 0) fail(`${label} expected invocation count is invalid`)
+  let stat
+  try {
+    stat = fs.lstatSync(filename)
+  } catch (error) {
+    fail(`${label} is unavailable: ${error.message}`)
+  }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > maximumRuntimeTraceBytes) {
+    fail(`${label} must be a nonempty bounded regular file`)
+  }
+  const text = fs.readFileSync(filename, 'utf8')
+  if (text.includes('\0') || text.includes('\r') || !text.endsWith('\n')) fail(`${label} is not canonical JSONL`)
+  const lines = text.slice(0, -1).split('\n')
+  if (lines.length !== expectedInvocations * 3) fail(`${label} must contain exactly three records per invocation`)
+  const records = lines.map((line, index) => {
+    try {
+      return JSON.parse(line)
+    } catch (error) {
+      fail(`${label} record ${index + 1} is invalid JSON: ${error.message}`)
+    }
+  })
+
+  for (let index = 0; index < expectedInvocations; index += 1) {
+    const start = records[index * 3]
+    const spawn = records[index * 3 + 1]
+    const summary = records[index * 3 + 2]
+    exactRecordKeys(start, ['event', 'pid'], `${label} start record`)
+    exactRecordKeys(spawn, ['event', 'pid'], `${label} spawn record`)
+    exactRecordKeys(
+      summary,
+      ['event', 'pid', 'nativeSpawns', 'networkAttempts', 'deniedProcessAttempts'],
+      `${label} summary record`,
+    )
+    if (
+      start.event !== 'runtime-start'
+      || spawn.event !== 'native-spawn'
+      || summary.event !== 'runtime-summary'
+      || !Number.isSafeInteger(start.pid)
+      || start.pid <= 0
+      || spawn.pid !== start.pid
+      || summary.pid !== start.pid
+      || summary.nativeSpawns !== 1
+      || summary.networkAttempts !== 0
+      || summary.deniedProcessAttempts !== 0
+    ) {
+      fail(`${label} recorded an unexpected process or network boundary`)
+    }
+  }
+  return {
+    invocations: expectedInvocations,
+    nativeSpawns: expectedInvocations,
+    networkAttempts: 0,
+    deniedProcessAttempts: 0,
+  }
+}
+
 function confinedExecutableShim(root, relativePath, expectedTarget) {
   const candidate = path.resolve(root, relativePath)
   const relative = path.relative(root, candidate)
@@ -459,15 +554,34 @@ export function smokeReleaseArtifact(options) {
     const directBinary = confinedRegularFile(directDirectory, policy.binaryName, 'direct archive binary', maximumBinaryBytes)
     if (hashFile(directBinary) !== hashFile(binary)) fail('direct archive binary differs from the release binary')
     if (process.platform !== 'win32') fs.chmodSync(directBinary, 0o755)
-    checkCompiler(directBinary, [], temporary, version, 'direct archive binary')
-    const directNativeSmokes = checkNativePreprocessors(
-      directBinary,
-      [],
+    const preload = confinedRegularFile(root, 'scripts/release-smoke-preload.cjs', 'release smoke preload', 64 * 1024)
+    const releaseSmokeEnvironment = {
+      ...process.env,
+      ZIGCSS_RELEASE_SMOKE: '1',
+      ZIGCSS_RELEASE_SMOKE_ARCHIVE: assets.archive,
+      ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: assetRoot,
+      ZIGCSS_RELEASE_SMOKE_CHECKSUMS: assets.checksums,
+      ZIGCSS_RELEASE_SMOKE_VERSION: version,
+    }
+    const directRuntimeTrace = createRuntimeTrace(temporary, 'direct-runtime-trace')
+    const directEnvironment = runtimeTraceEnvironment(
+      releaseSmokeEnvironment,
+      preload,
       temporary,
-      process.env,
+      directRuntimeTrace,
+      directBinary,
+    )
+    const directArgs = ['-e', runtimeTraceLauncher, directBinary]
+    checkCompiler(process.execPath, directArgs, temporary, directEnvironment, version, 'direct archive binary')
+    const directNativeSmokes = checkNativePreprocessors(
+      process.execPath,
+      directArgs,
+      temporary,
+      directEnvironment,
       version,
       'direct archive binary',
     )
+    const directTrace = validateRuntimeTrace(directRuntimeTrace, 6, 'direct archive runtime trace')
 
     const packDirectory = path.join(temporary, 'pack')
     fs.mkdirSync(packDirectory)
@@ -508,15 +622,10 @@ export function smokeReleaseArtifact(options) {
     const consumer = path.join(temporary, 'consumer')
     fs.mkdirSync(consumer)
     fs.writeFileSync(path.join(consumer, 'package.json'), '{"name":"zigcss-release-smoke","private":true,"version":"1.0.0"}\n')
-    const preload = confinedRegularFile(root, 'scripts/release-smoke-preload.cjs', 'release smoke preload', 64 * 1024)
     const installEnvironment = {
+      ...releaseSmokeEnvironment,
       ...npmEnvironment,
       NODE_OPTIONS: nodeOptionsRequire(preload),
-      ZIGCSS_RELEASE_SMOKE: '1',
-      ZIGCSS_RELEASE_SMOKE_ARCHIVE: assets.archive,
-      ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: assetRoot,
-      ZIGCSS_RELEASE_SMOKE_CHECKSUMS: assets.checksums,
-      ZIGCSS_RELEASE_SMOKE_VERSION: version,
     }
     runNpm([
       'install', packageArchive,
@@ -539,12 +648,19 @@ export function smokeReleaseArtifact(options) {
     if (fs.readdirSync(path.join(installedRoot, 'bin')).some(name => name.startsWith('.install-'))) fail('npm installer left temporary files')
 
     fs.rmSync(npmEnvironment.npm_config_cache, { recursive: true, force: true })
-    const offlineEnvironment = {
+    const offlineRuntimeTrace = createRuntimeTrace(temporary, 'offline-runtime-trace')
+    const offlineEnvironment = runtimeTraceEnvironment({
       ...installEnvironment,
       npm_config_offline: 'true',
-      ZIGCSS_RELEASE_SMOKE_RUNTIME: '1',
-    }
-    checkCompiler(process.execPath, [wrapper], temporary, version, 'offline npm wrapper')
+    }, preload, temporary, offlineRuntimeTrace, installedBinary)
+    checkCompiler(
+      process.execPath,
+      [wrapper],
+      temporary,
+      offlineEnvironment,
+      version,
+      'offline npm wrapper',
+    )
     const offlineNativeSmokes = checkNativePreprocessors(
       process.execPath,
       [wrapper],
@@ -553,6 +669,7 @@ export function smokeReleaseArtifact(options) {
       version,
       'offline npm wrapper',
     )
+    const offlineTrace = validateRuntimeTrace(offlineRuntimeTrace, 6, 'offline package runtime trace')
     const installed = measureInstalledTree(path.join(consumer, 'node_modules'))
 
     return {
@@ -564,6 +681,8 @@ export function smokeReleaseArtifact(options) {
       npmPackage: packageName,
       directStylesheetSmokes: 1 + directNativeSmokes,
       offlinePackageStylesheetSmokes: 1 + offlineNativeSmokes,
+      directRuntimeTraces: directTrace.invocations,
+      offlinePackageRuntimeTraces: offlineTrace.invocations,
     }
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -575,7 +694,7 @@ function main() {
     const options = parseSmokeArguments(process.argv.slice(2))
     const result = smokeReleaseArtifact(options)
     process.stdout.write(
-      `Native release smoke passed for ${result.target}: direct archive compiled ${result.directStylesheetSmokes} languages, lifecycle-disabled clean install, offline postinstall compiled ${result.offlinePackageStylesheetSmokes} languages, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
+      `Native release smoke passed for ${result.target}: direct archive compiled ${result.directStylesheetSmokes} languages under ${result.directRuntimeTraces} process/network traces, lifecycle-disabled clean install, offline postinstall compiled ${result.offlinePackageStylesheetSmokes} languages under ${result.offlinePackageRuntimeTraces} process/network traces, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
     )
   } catch (error) {
     process.stderr.write(`${error.message}\n`)

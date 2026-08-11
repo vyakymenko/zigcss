@@ -570,8 +570,11 @@
       },
       {
         "id": "runtime-process-network-tracing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "direct native archive runtime trace admits one native child and zero network access",
+          "offline installed native package runtime trace admits one native child and zero network access"
+        ]
       },
       {
         "id": "five-native-targets",

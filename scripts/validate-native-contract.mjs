@@ -589,8 +589,15 @@ const expectedPackageMigration = Object.freeze({
         'offline installed native package compiles the finite five-language syntax set',
       ]),
     }),
+    Object.freeze({
+      id: 'runtime-process-network-tracing',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'direct native archive runtime trace admits one native child and zero network access',
+        'offline installed native package runtime trace admits one native child and zero network access',
+      ]),
+    }),
     ...[
-      'runtime-process-network-tracing',
       'five-native-targets',
       'release-sbom-provenance',
       'consumer-behavior',
@@ -1386,6 +1393,8 @@ function validatePackageMigration(
   nodeWrapperTests,
   releaseSmokeSource,
   releaseSmokeTests,
+  releaseSmokePreloadSource,
+  productionSources,
 ) {
   if (!same(migration, expectedPackageMigration)) fail('native package migration contract drifted')
   requireText(
@@ -1473,6 +1482,82 @@ function validatePackageMigration(
     "npm_config_offline: 'true'",
     'native package migration offline package mode',
   )
+  for (const [needle, label] of [
+    ['const directRuntimeTrace = createRuntimeTrace(', 'direct archive runtime trace creation'],
+    ['validateRuntimeTrace(directRuntimeTrace, 6,', 'direct archive runtime trace'],
+    ['const offlineRuntimeTrace = createRuntimeTrace(', 'offline package runtime trace creation'],
+    ['validateRuntimeTrace(offlineRuntimeTrace, 6,', 'offline package runtime trace'],
+    ['offlineEnvironment,', 'offline package traced environment'],
+  ]) {
+    requireText(
+      releaseSmokeSource,
+      needle,
+      `native package migration ${label}`,
+    )
+  }
+  for (const [needle, label] of [
+    ['childProcess.spawn = function tracedNativeSpawn', 'admitted native child trace'],
+    ['childProcess.ChildProcess.prototype.spawn = function guardedChildSpawn', 'direct ChildProcess denial'],
+    ['Reflect.ownKeys(options)', 'native child option inventory'],
+    ['optionKeys.length !== 2', 'native child exact option boundary'],
+    ["['spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork', '_forkChild']", 'alternate child denial'],
+    ["record('native-spawn')", 'native spawn event'],
+    ["record('network-denied')", 'network denial event'],
+    ['http.request =', 'HTTP denial'],
+    ['https.request =', 'HTTPS denial'],
+    ['net.connect =', 'TCP denial'],
+    ['net.Server.prototype.listen =', 'listener denial'],
+    ['net.createServer =', 'TCP server denial'],
+    ['http.createServer =', 'HTTP server denial'],
+    ['https.createServer =', 'HTTPS server denial'],
+    ['tls.connect =', 'TLS denial'],
+    ['tls.createServer =', 'TLS server denial'],
+    ['http2.connect =', 'HTTP2 denial'],
+    ['http2.createServer =', 'HTTP2 server denial'],
+    ['http2.createSecureServer =', 'secure HTTP2 server denial'],
+    ['dgram.createSocket =', 'datagram denial'],
+    ["dns.lookup = denyDnsCallback('dns.lookup')", 'DNS denial'],
+    ['dns.Resolver = class DisabledDnsResolver', 'callback DNS resolver denial'],
+    ['dnsPromises.Resolver = class DisabledDnsPromisesResolver', 'promise DNS resolver denial'],
+    ['globalThis.fetch =', 'fetch denial'],
+    ["event: 'runtime-summary'", 'runtime summary'],
+  ]) {
+    requireText(
+      releaseSmokePreloadSource,
+      needle,
+      `native package migration ${label}`,
+    )
+  }
+
+  const forbiddenRuntimePrimitives = [
+    ['process', 'std.process.Child'],
+    ['process', 'std.ChildProcess'],
+    ['process', 'std.posix.exec'],
+    ['process', 'std.posix.fork'],
+    ['process', 'std.posix.spawn'],
+    ['process', 'CreateProcessA'],
+    ['process', 'CreateProcessW'],
+    ['network', 'std.net'],
+    ['network', 'std.http'],
+    ['network', 'std.crypto.tls'],
+    ['network', 'std.posix.socket'],
+    ['network', 'std.posix.connect'],
+    ['network', 'ws2_32'],
+    ['foreign runtime', 'std.DynLib'],
+    ['foreign runtime', 'dlopen'],
+    ['foreign runtime', 'LoadLibraryA'],
+    ['foreign runtime', 'LoadLibraryW'],
+    ['foreign runtime', 'GetProcAddress'],
+    ['foreign runtime', '@cImport'],
+    ['foreign runtime', '@extern'],
+  ]
+  for (const [relativePath, source] of productionSources) {
+    for (const [kind, primitive] of forbiddenRuntimePrimitives) {
+      if (source.includes(primitive)) {
+        fail(`native package migration runtime closure contains forbidden ${kind} primitive ${primitive} in ${relativePath}`)
+      }
+    }
+  }
 }
 
 function validateSassEvaluatorClosure(
@@ -2366,6 +2451,10 @@ export function validateContract(
       repositoryFile('scripts/smoke-release-artifact.test.mjs'),
       'utf8',
     ),
+    releaseSmokePreloadSource = fs.readFileSync(
+      repositoryFile('scripts/release-smoke-preload.cjs'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -2473,6 +2562,8 @@ export function validateContract(
     nodeWrapperTests,
     releaseSmokeSource,
     releaseSmokeTests,
+    releaseSmokePreloadSource,
+    productionSources,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

@@ -1664,8 +1664,15 @@ test('owns the finite native zero-dependency package migration contract', () => 
           'offline installed native package compiles the finite five-language syntax set',
         ],
       },
+      {
+        id: 'runtime-process-network-tracing',
+        state: 'verified',
+        evidenceTests: [
+          'direct native archive runtime trace admits one native child and zero network access',
+          'offline installed native package runtime trace admits one native child and zero network access',
+        ],
+      },
       ...[
-        'runtime-process-network-tracing',
         'five-native-targets',
         'release-sbom-provenance',
         'consumer-behavior',
@@ -1679,6 +1686,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
     migration => migration.terminalContract.surfaces.reverse(),
     migration => { migration.gates[0].state = 'pending' },
     migration => { migration.gates[1].state = 'pending' },
+    migration => { migration.gates[2].state = 'pending' },
     migration => migration.gates.push(clone(migration.gates[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1713,6 +1721,61 @@ test('owns the finite native zero-dependency package migration contract', () => 
     }),
     /native package migration direct-archive-offline-package evidence.*missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseSmokeTests: releaseSmokeTests.replace(
+        "test('direct native archive runtime trace admits one native child and zero network access'",
+        "test('missing direct runtime trace evidence'",
+      ),
+    }),
+    /native package migration runtime-process-network-tracing evidence.*missing/,
+  )
+
+  const releaseSmokeSource = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/smoke-release-artifact.mjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseSmokeSource: releaseSmokeSource.replace(
+        'validateRuntimeTrace(directRuntimeTrace, 6,',
+        'missingDirectRuntimeTrace(directRuntimeTrace, 6,',
+      ),
+    }),
+    /native package migration direct archive runtime trace.*missing/,
+  )
+
+  const releaseSmokePreloadSource = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/release-smoke-preload.cjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseSmokePreloadSource: releaseSmokePreloadSource.replace(
+        'childProcess.spawn = function tracedNativeSpawn',
+        'childProcess.spawn = function missingNativeTrace',
+      ),
+    }),
+    /native package migration admitted native child trace.*missing/,
+  )
+
+  for (const [kind, primitive] of [
+    ['process', 'std.process.Child'],
+    ['network', 'std.net'],
+    ['foreign runtime', 'std.DynLib'],
+  ]) {
+    assert.throws(
+      () => validateContract(loadContract(), {
+        productionSources: loadProductionSources().map(([relativePath, source]) => [
+          relativePath,
+          relativePath === 'src/preprocessor/compiler.zig'
+            ? `${source}\nconst leaked_runtime = ${primitive};\n`
+            : source,
+        ]),
+      }),
+      new RegExp(`native package migration runtime closure contains forbidden ${kind} primitive ${primitive.replaceAll('.', '\\.')}`),
+    )
+  }
 
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   manifest.exports['./api'] = './api.mjs'
