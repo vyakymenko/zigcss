@@ -7871,6 +7871,7 @@ const Engine = struct {
             (parseGenericTernary(grouped_input) != null or
                 isDefinedExpression(grouped_input) or
                 findTopLevelSequence(grouped_input, " is a ") != null or
+                findMembership(grouped_input) != null or
                 parseCall(grouped_input) != null or
                 grouped_binary_owns_call))
         {
