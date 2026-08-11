@@ -48,8 +48,8 @@ describe('native artifact workflows', () => {
     expect(statusGuide).toContain('release build job receives attestation and OIDC write access')
   })
 
-  test('passes every build matrix target to Zig after native tests', () => {
-    const nativeTests = buildWorkflow.indexOf('zig build test --summary all')
+  test('passes every build matrix target to Zig after the ReleaseSafe suite', () => {
+    const nativeTests = buildWorkflow.indexOf('zig build test -Doptimize=ReleaseSafe --summary all')
     const targetBuild = buildWorkflow.indexOf('zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}')
     const inspection = buildWorkflow.indexOf('node scripts/verify-artifact-target.mjs')
     const upload = buildWorkflow.indexOf('uses: actions/upload-artifact@')

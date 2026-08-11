@@ -270,7 +270,21 @@ function validateBuildThroughput(buildWorkflow) {
   if (buildWorkflow.split(concurrency).length !== 2) {
     fail('build.yml must use one bounded non-cancelling concurrency group per workflow ref')
   }
-  const testJob = splitJobs(buildWorkflow, 'build.yml').get('test').join('\n')
+  const jobs = splitJobs(buildWorkflow, 'build.yml')
+  const artifactJob = jobs.get('build').join('\n')
+  const testJob = jobs.get('test').join('\n')
+  const debugAggregate = '      - name: Run Native Tests\n        run: zig build test --summary all'
+  const releaseSafeAggregate = '      - name: Run Native Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
+  if (artifactJob.includes(debugAggregate)) {
+    fail('build.yml artifact matrix must not run the complete Zig graph in Debug')
+  }
+  if (artifactJob.split(releaseSafeAggregate).length !== 2) {
+    fail('build.yml artifact matrix must run exactly one complete ReleaseSafe Zig graph')
+  }
+  const optimizedAggregate = '      - name: Run Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
+  if (testJob.includes(optimizedAggregate)) {
+    fail('build.yml Test Suite must leave the optimized complete graph to the artifact matrix')
+  }
   if (testJob.includes('zig build test-native-preprocessor')) {
     fail('build.yml Test Suite must not run the native suite twice')
   }

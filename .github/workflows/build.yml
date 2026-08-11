@@ -69,7 +69,7 @@ jobs:
           node-version: '20.19.0'
 
       - name: Run Native Tests
-        run: zig build test --summary all
+        run: zig build test -Doptimize=ReleaseSafe --summary all
 
       - name: Build Target Binary
         run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}

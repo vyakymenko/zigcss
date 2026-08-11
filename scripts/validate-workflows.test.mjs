@@ -113,6 +113,30 @@ test('the build workflow preserves one complete aggregate suite within a bounded
     '      - name: Verify native stylesheet frontend foundations\n        run: zig build test-native-preprocessor --summary all\n\n      - name: Run Tests\n        run: zig build test --summary all',
   ))
   assert.throws(() => validateWorkflowSources(duplicated), /must not run the native suite twice/)
+
+  const unoptimizedMatrix = cloneSources()
+  unoptimizedMatrix.set('build.yml', unoptimizedMatrix.get('build.yml').replace(
+    '      - name: Run Native Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all',
+    '      - name: Run Native Tests\n        run: zig build test --summary all',
+  ))
+  assert.throws(() => validateWorkflowSources(unoptimizedMatrix), /must not run the complete Zig graph in Debug/)
+})
+
+test('the artifact matrix uses the optimized complete suite while the test job owns Debug', () => {
+  const buildWorkflow = cloneSources().get('build.yml')
+  const artifactJob = buildWorkflow.slice(
+    buildWorkflow.indexOf('  build:'),
+    buildWorkflow.indexOf('  native-package-evidence:'),
+  )
+  const testJob = buildWorkflow.slice(buildWorkflow.indexOf('  test:'))
+  const debugArtifactSuite = '      - name: Run Native Tests\n        run: zig build test --summary all'
+  const optimizedArtifactSuite = '      - name: Run Native Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
+  const debugAggregate = '      - name: Run Tests\n        run: zig build test --summary all'
+  const optimizedAggregate = '      - name: Run Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
+  assert.equal(artifactJob.includes(debugArtifactSuite), false)
+  assert.equal(artifactJob.split(optimizedArtifactSuite).length, 2)
+  assert.equal(testJob.split(debugAggregate).length, 2)
+  assert.equal(testJob.includes(optimizedAggregate), false)
 })
 
 test('the complete Zig test graph owns every native frontend runner', () => {
