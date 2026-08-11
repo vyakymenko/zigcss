@@ -460,8 +460,13 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'zig-api',
       releaseGapFamily: 'native-zig-api-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'external Zig API routes the finite native syntax set through owned CSS results',
+        'external Zig API preserves exact input resource limits without partial results',
+        'external Zig API rejects invalid roots paths and language failures',
+        'external Zig API route handles every allocation failure',
+      ]),
     }),
     Object.freeze({
       id: 'binary-cli',
@@ -1001,7 +1006,7 @@ const expectedImplementations = Object.freeze([
   }),
   Object.freeze({
     id: 'native-product-compiler',
-    current: 'native-internal',
+    current: 'native-zig-api',
     ownerPackage: 'NATIVE-006',
     adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
     capabilities: Object.freeze([
@@ -1009,12 +1014,21 @@ const expectedImplementations = Object.freeze([
       'owned-source-table',
       'confined-entry-identity',
       'transactional-result',
+      'pre-graduation-zig-api',
+      'owned-css-result',
+      'bounded-entry-input',
     ]),
-    nativeSources: Object.freeze(['src/preprocessor/compiler.zig']),
-    testSources: Object.freeze(['tests/native-preprocessor/compiler.zig']),
-    testStep: 'test-native-compiler',
+    nativeSources: Object.freeze([
+      'src/preprocessor/compiler.zig',
+      'src/native_api.zig',
+    ]),
+    testSources: Object.freeze([
+      'tests/native-preprocessor/compiler.zig',
+      'tests/public-api/native_consumer.zig',
+    ]),
+    testStep: 'test-native-zig-api',
     publicAvailable: false,
-    productionReachable: false,
+    productionReachable: true,
   }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
@@ -1179,6 +1193,7 @@ function validateProductRouting(
   routing,
   plan,
   compilerTests,
+  zigApiTests,
   sassConformanceTests,
   lessConformanceTests,
   stylusConformanceTests,
@@ -1198,8 +1213,17 @@ function validateProductRouting(
   for (const route of routing.routes) {
     if (route.state === 'verified') {
       if (route.evidenceTests.length === 0) fail('product routing verified route lacks evidence')
+      const evidenceSource = route.id === 'shared-native-compiler'
+        ? compilerTests
+        : route.id === 'zig-api'
+          ? zigApiTests
+          : ''
       for (const evidenceTest of route.evidenceTests) {
-        requireText(compilerTests, `test "${evidenceTest}"`, 'native product routing evidence')
+        requireText(
+          evidenceSource,
+          `test "${evidenceTest}"`,
+          `native product routing ${route.id} evidence`,
+        )
       }
     } else if (route.state !== 'pending' || route.evidenceTests.length !== 0) {
       fail('product routing pending route drifted')
@@ -1654,6 +1678,59 @@ function validateInternalReachability(implementations, buildFile, productionSour
       )
     }
   }
+  requireText(
+    buildFile,
+    'root_source_file = b.path("tests/public-api/native_consumer.zig")',
+    'native Zig API test wiring',
+  )
+  requireText(
+    buildFile,
+    '"test-native-zig-api"',
+    'native Zig API focused test step',
+  )
+  requireText(
+    buildFile,
+    'test_step.dependOn(&run_native_zig_api_tests.step);',
+    'native Zig API aggregate test ownership',
+  )
+  const sourceByPath = new Map(productionSources)
+  const libraryRoot = sourceByPath.get('src/lib.zig') ?? ''
+  const nativeApi = sourceByPath.get('src/native_api.zig') ?? ''
+  requireText(
+    libraryRoot,
+    'pub const experimental_native = @import("native_api.zig");',
+    'public pre-graduation native Zig API namespace',
+  )
+  const bridgeImports = [...nativeApi.matchAll(/@import\s*\(\s*"(preprocessor\/[^"]+)"\s*\)/g)]
+    .map(match => match[1])
+  if (!same(bridgeImports, [
+    'preprocessor/compiler.zig',
+    'preprocessor/resolver.zig',
+  ])) {
+    fail('native Zig API bridge import inventory drifted')
+  }
+  requireText(
+    nativeApi,
+    'const css = try allocator.dupe(u8, compiled.css());',
+    'native Zig API owned CSS promotion',
+  )
+  requireText(
+    nativeApi,
+    '.source_map = false,',
+    'native Zig API pending source-map boundary',
+  )
+  for (const pendingResultSurface of [
+    'compiled.sourceMap(',
+    'compiled.frontendMap(',
+    'compiled.nativeDiagnostics(',
+    'compiled.coreDiagnostics(',
+    'compiled.dependencies(',
+    'compiled.edges(',
+  ]) {
+    if (nativeApi.includes(pendingResultSurface)) {
+      fail('native Zig API crossed a pending result-fact or source-map route')
+    }
+  }
   const forbiddenImports = [
     '@import("preprocessor.zig")',
     '@import("preprocessor/',
@@ -1663,6 +1740,7 @@ function validateInternalReachability(implementations, buildFile, productionSour
     if (relativePath === 'src/preprocessor.zig' || relativePath.startsWith('src/preprocessor/')) {
       continue
     }
+    if (relativePath === 'src/native_api.zig') continue
     for (const forbidden of forbiddenImports) {
       if (source.includes(forbidden)) {
         fail(`${relativePath} makes the unavailable native frontend production-reachable`)
@@ -1778,6 +1856,10 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/compiler.zig'),
       'utf8',
     ),
+    zigApiTests = fs.readFileSync(
+      repositoryFile('tests/public-api/native_consumer.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1867,6 +1949,7 @@ export function validateContract(
     contract.productRouting,
     plan,
     compilerTests,
+    zigApiTests,
     sassConformanceTests,
     lessConformanceTests,
     stylusConformanceTests,

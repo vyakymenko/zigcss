@@ -11,6 +11,9 @@ pub const css = @import("css.zig");
 pub const sourcemap = @import("sourcemap.zig");
 pub const transform = @import("transform.zig");
 pub const prefixing = @import("prefixing.zig");
+/// Explicit pre-graduation native stylesheet route. Its presence does not make
+/// any native preprocessor row a stable or publicly claimed capability.
+pub const experimental_native = @import("native_api.zig");
 
 pub const SourceId = source.SourceId;
 pub const Span = source.Span;
@@ -68,6 +71,7 @@ test "public foundation types compose through the library root" {
     _ = sourcemap;
     _ = transform;
     _ = prefixing;
+    _ = experimental_native;
     var context = try Compilation.init(std.testing.allocator);
     defer context.deinit();
 

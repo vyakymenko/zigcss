@@ -90,8 +90,13 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'zig-api',
       releaseGapFamily: 'native-zig-api-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'external Zig API routes the finite native syntax set through owned CSS results',
+        'external Zig API preserves exact input resource limits without partial results',
+        'external Zig API rejects invalid roots paths and language failures',
+        'external Zig API route handles every allocation failure',
+      ],
     }, {
       id: 'binary-cli',
       releaseGapFamily: 'native-binary-cli-routing',
@@ -1183,13 +1188,15 @@ test('binds implemented native foundation sources and focused test inventories',
   assert.throws(() => validateContract(ownerChanged), /foundation.*inventory drifted/)
 })
 
-test('binds unavailable native frontend internals without admitting product reachability', () => {
+test('binds unavailable native rows and the sole pre-graduation Zig API bridge', () => {
   for (const index of loadContract().implementations.keys()) {
-    for (const field of ['publicAvailable', 'productionReachable']) {
-      const changed = clone(loadContract())
-      changed.implementations[index][field] = true
-      assert.throws(() => validateContract(changed), /implementation.*inventory drifted/)
-    }
+    const publicChanged = clone(loadContract())
+    publicChanged.implementations[index].publicAvailable = true
+    assert.throws(() => validateContract(publicChanged), /implementation.*inventory drifted/)
+
+    const productionChanged = clone(loadContract())
+    productionChanged.implementations[index].productionReachable = index !== 9
+    assert.throws(() => validateContract(productionChanged), /implementation.*inventory drifted/)
   }
 
   const sourceChanged = clone(loadContract())
@@ -1210,21 +1217,48 @@ test('binds unavailable native frontend internals without admitting product reac
 
   assert.throws(
     () => validateContract(loadContract(), {
-      productionSources: [[
-        'src/lib.zig',
-        'const sass = @import("preprocessor/sass.zig");',
-      ]],
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/lib.zig'
+          ? `${source}\nconst sass = @import("preprocessor/sass.zig");\n`
+          : source,
+      ]),
     }),
     /makes the unavailable native frontend production-reachable/,
   )
+
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/native_api.zig'
+          ? `${source}\nconst sass = @import("preprocessor/sass.zig");\n`
+          : source,
+      ]),
+    }),
+    /native Zig API bridge import inventory drifted/,
+  )
+
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/native_api.zig'
+          ? source.replace('.source_map = false,', '.source_map = true,')
+          : source,
+      ]),
+    }),
+    /native Zig API pending source-map boundary.*missing/,
+  )
 })
 
-test('binds the finite native product routing inventory and verified first route', () => {
+test('binds the finite native product routing inventory and verified first two routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
     routing => { routing.terminalContract.providerProcesses = 1 },
     routing => { routing.routes[0].state = 'pending' },
+    routing => { routing.routes[1].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1244,6 +1278,20 @@ test('binds the finite native product routing inventory and verified first route
       ),
     }),
     /native product routing Sass conformance.*missing/,
+  )
+
+  const zigApiTests = fs.readFileSync(
+    path.join(repositoryRoot, 'tests/public-api/native_consumer.zig'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      zigApiTests: zigApiTests.replace(
+        'test "external Zig API route handles every allocation failure"',
+        'test "missing external allocation evidence"',
+      ),
+    }),
+    /native product routing zig-api evidence.*missing/,
   )
 })
 

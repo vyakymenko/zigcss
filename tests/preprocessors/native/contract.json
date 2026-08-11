@@ -440,8 +440,13 @@
       {
         "id": "zig-api",
         "releaseGapFamily": "native-zig-api-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "external Zig API routes the finite native syntax set through owned CSS results",
+          "external Zig API preserves exact input resource limits without partial results",
+          "external Zig API rejects invalid roots paths and language failures",
+          "external Zig API route handles every allocation failure"
+        ]
       },
       {
         "id": "binary-cli",
@@ -969,20 +974,26 @@
     },
     {
       "id": "native-product-compiler",
-      "current": "native-internal",
+      "current": "native-zig-api",
       "ownerPackage": "NATIVE-006",
       "adapters": ["scss", "sass", "less", "stylus"],
       "capabilities": [
         "shared-native-compiler",
         "owned-source-table",
         "confined-entry-identity",
-        "transactional-result"
+        "transactional-result",
+        "pre-graduation-zig-api",
+        "owned-css-result",
+        "bounded-entry-input"
       ],
-      "nativeSources": ["src/preprocessor/compiler.zig"],
-      "testSources": ["tests/native-preprocessor/compiler.zig"],
-      "testStep": "test-native-compiler",
+      "nativeSources": ["src/preprocessor/compiler.zig", "src/native_api.zig"],
+      "testSources": [
+        "tests/native-preprocessor/compiler.zig",
+        "tests/public-api/native_consumer.zig"
+      ],
+      "testStep": "test-native-zig-api",
       "publicAvailable": false,
-      "productionReachable": false
+      "productionReachable": true
     }
   ],
   "adapters": [

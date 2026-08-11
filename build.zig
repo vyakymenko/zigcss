@@ -373,6 +373,16 @@ pub fn build(b: *std.Build) void {
         .root_module = public_api_test_module,
     });
     const run_public_api_tests = b.addRunArtifact(public_api_tests);
+    const native_zig_api_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/public-api/native_consumer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_zig_api_test_module.addImport("zigcss", library_module);
+    const native_zig_api_tests = b.addTest(.{
+        .root_module = native_zig_api_test_module,
+    });
+    const run_native_zig_api_tests = b.addRunArtifact(native_zig_api_tests);
     const public_api_example_module = b.createModule(.{
         .root_source_file = b.path("examples/public_api.zig"),
         .target = target,
@@ -409,6 +419,11 @@ pub fn build(b: *std.Build) void {
     const public_api_step = b.step("test-public-api", "Test the external Zig library surface");
     public_api_step.dependOn(&run_public_api_tests.step);
     public_api_step.dependOn(documentation_examples_step);
+    const native_zig_api_step = b.step(
+        "test-native-zig-api",
+        "Test the pre-graduation native stylesheet Zig API route",
+    );
+    native_zig_api_step.dependOn(&run_native_zig_api_tests.step);
 
     const audit_test_module = b.addModule("zigcss-audit-regressions", .{
         .root_source_file = b.path("tests/regressions/audit.zig"),
@@ -483,6 +498,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_native_sass_evaluator_tests.step);
     test_step.dependOn(&run_native_sass_conformance_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
+    test_step.dependOn(&run_native_zig_api_tests.step);
     test_step.dependOn(documentation_examples_step);
     test_step.dependOn(&run_audit_tests.step);
     test_step.dependOn(&install_transform_driver.step);
