@@ -962,6 +962,8 @@ fn requiresSemanticEvaluation(
                 " \t\r\n\x0c;",
             );
             if (splitDeclaration(raw)) |parts| {
+                const value = raw[parts[1].start..parts[1].end];
+                if (hasTopLevelPropertySlash(value)) return true;
                 const separator = raw[parts[0].end..parts[1].start];
                 if (std.mem.indexOfScalar(u8, separator, ':')) |colon| {
                     if (colon + 1 == separator.len or
@@ -14374,6 +14376,62 @@ fn findTopLevelScalar(raw: []const u8, needle: u8) ?usize {
     return null;
 }
 
+fn hasTopLevelPropertySlash(raw: []const u8) bool {
+    var quote: u8 = 0;
+    var escaped = false;
+    var block_comment = false;
+    var depth: usize = 0;
+    var index: usize = 0;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (block_comment) {
+            if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len) {
+            if (raw[index + 1] == '*') {
+                block_comment = true;
+                index += 1;
+                continue;
+            }
+            // A Stylus line comment owns the remainder of the declaration.
+            if (raw[index + 1] == '/') return false;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (byte == '/' and depth == 0) return true;
+    }
+    return false;
+}
+
 fn parseDefinition(raw: []const u8) ?Definition {
     const call = parseCall(raw) orelse return null;
     return .{ .name = call.name, .parameters = call.arguments };
@@ -16573,6 +16631,24 @@ fn splitDeclaration(raw: []const u8) ?[2]ByteRange {
             var value_start = index;
             while (value_start < bounds.end and std.ascii.isWhitespace(raw[value_start])) {
                 value_start += 1;
+            }
+            if (value_start < bounds.end and raw[value_start] == ':') {
+                var colon_value_start = value_start + 1;
+                while (colon_value_start < bounds.end and
+                    std.ascii.isWhitespace(raw[colon_value_start]))
+                {
+                    colon_value_start += 1;
+                }
+                const property = trimRange(
+                    raw,
+                    .{ .start = bounds.start, .end = index },
+                );
+                const value = trimRange(
+                    raw,
+                    .{ .start = colon_value_start, .end = bounds.end },
+                );
+                if (property.start == property.end or value.start == value.end) return null;
+                return .{ property, value };
             }
             const property = trimRange(raw, .{ .start = bounds.start, .end = index });
             const value = trimRange(raw, .{ .start = value_start, .end = bounds.end });

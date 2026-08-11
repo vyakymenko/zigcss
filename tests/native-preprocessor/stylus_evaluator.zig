@@ -3152,6 +3152,62 @@ test "native Stylus treats top-level property slashes as CSS separators" {
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
+test "native Stylus explicit property slashes own finite semantic boundaries" {
+    var nested_only = try compile(
+        std.testing.allocator,
+        "body { path: url(a/b); content: \"a / b\"; }\n",
+        .{},
+    );
+    defer nested_only.deinit();
+    try std.testing.expectEqualStrings(
+        "body{path:url(a/b);content:\"a / b\"}",
+        nested_only.css(),
+    );
+
+    const lower_input = "body { font: 13px / 1.231; }\n";
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_nodes = 6;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{font:13px/1.231}", lower.css());
+
+    const terminal_input =
+        \\
+        \\body { font: 13px / 1.231; }
+        \\body {font: 13px / 1.231;}
+        \\body {font: 13px / 1.231}
+        \\body {  font : 13px / 1.231  }
+        \\body {  font : 13px / 1.231; background: white }
+    ;
+    const terminal_css =
+        "body{font:13px/1.231}" ** 4 ++
+        "body{font:13px/1.231;background:#fff}";
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_nodes = 28;
+    var first = try compile(std.testing.allocator, terminal_input, terminal_limits);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, terminal_input, terminal_limits);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(terminal_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.max_nodes = 27;
+    try expectSemanticRejectionWithLimits(
+        terminal_input,
+        over_limit,
+        error.NodeLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator node limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus preserves finite declaration comment boundaries" {
     const input =
         \\/*
@@ -7267,12 +7323,12 @@ fn exerciseKeyframeConformanceAllocationFailures(allocator: std.mem.Allocator) !
 fn exercisePropertySlashAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
-        "size = 14px\nheight = 1.4\nbody { font: size / height \"Helvetica Neue\", Arial; }\n",
+        "body { font : 13px / 1.231; background: white; }\n",
         .{},
     );
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        "body{font:14px/1.4 \"Helvetica Neue\", Arial}",
+        "body{font:13px/1.231;background:#fff}",
         result.css(),
     );
 }
