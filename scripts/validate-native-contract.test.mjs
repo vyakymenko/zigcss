@@ -127,8 +127,11 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'batch',
       releaseGapFamily: 'native-batch-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'binary CLI routes the finite native syntax set through deterministic batches',
+        'binary CLI native batch failures commit no partial output',
+      ],
     }, {
       id: 'watch',
       releaseGapFamily: 'native-watch-routing',
@@ -1264,7 +1267,7 @@ test('binds unavailable native rows and the pre-graduation product bridges', () 
   )
 })
 
-test('binds the finite native product routing inventory and verified first five routes', () => {
+test('binds the finite native product routing inventory and verified first six routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
@@ -1274,6 +1277,7 @@ test('binds the finite native product routing inventory and verified first five 
     routing => { routing.routes[2].state = 'pending' },
     routing => { routing.routes[3].state = 'pending' },
     routing => { routing.routes[4].state = 'pending' },
+    routing => { routing.routes[5].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1331,6 +1335,15 @@ test('binds the finite native product routing inventory and verified first five 
     }),
     /native product routing files-and-stdin evidence.*missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native batch failures commit no partial output"',
+        'test "missing native batch rollback evidence"',
+      ),
+    }),
+    /native product routing batch evidence.*missing/,
+  )
 
   const nodeWrapperTests = fs.readFileSync(
     path.join(repositoryRoot, 'scripts/verify-node-wrapper.test.mjs'),
@@ -1370,6 +1383,17 @@ test('binds the finite native product routing inventory and verified first five 
       ]),
     }),
     /native binary CLI confined stdin root.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/main.zig'
+          ? source.replace('fn compileNativeBatch(', 'fn compileNativeBatch(/* std.Thread */')
+          : source,
+      ]),
+    }),
+    /native binary CLI batch route crossed the pending parallel boundary/,
   )
 })
 

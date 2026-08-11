@@ -66,6 +66,17 @@ const CompileTask = struct {
     }
 };
 
+const NativeBatchTask = struct {
+    input_file: []const u8,
+    output_file: []const u8,
+    result: ?native_api.CompileResult = null,
+
+    fn deinit(self: *NativeBatchTask, allocator: std.mem.Allocator) void {
+        if (self.result) |*result| result.deinit();
+        allocator.free(self.output_file);
+    }
+};
+
 fn setTaskError(
     task: *CompileTask,
     comptime format: []const u8,
@@ -301,13 +312,12 @@ fn nativeStdinEntryName(syntax: native_api.Syntax) []const u8 {
     };
 }
 
-fn compileNativeInput(
+fn compileNativeSource(
     allocator: std.mem.Allocator,
     input_file: []const u8,
-    output_file: ?[]const u8,
     syntax: native_api.Syntax,
     minify: bool,
-) !void {
+) !native_api.CompileResult {
     const stdin_root = if (isStdioPath(input_file))
         std.fs.cwd().realpathAlloc(allocator, ".") catch |err| {
             std.debug.print("Error: failed to resolve stdin root: {s}\n", .{@errorName(err)});
@@ -339,7 +349,7 @@ fn compileNativeInput(
         std.fs.path.dirname(entry_path) orelse return error.InvalidSourcePath;
     const root_paths = [_][]const u8{root_path};
 
-    var result = native_api.compile(allocator, entry_path, input, .{
+    return native_api.compile(allocator, entry_path, input, .{
         .syntax = syntax,
         .root_paths = &root_paths,
         .format = if (minify) .minified else .pretty,
@@ -350,6 +360,16 @@ fn compileNativeInput(
         );
         return err;
     };
+}
+
+fn compileNativeInput(
+    allocator: std.mem.Allocator,
+    input_file: []const u8,
+    output_file: ?[]const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+) !void {
+    var result = try compileNativeSource(allocator, input_file, syntax, minify);
     defer result.deinit();
 
     if (output_file) |out| {
@@ -982,7 +1002,7 @@ fn printUsage() !void {
             "  -o, --output <path|->    Output file/stdout, or directory with --output-dir\n" ++
             "  --output-dir             Require batch output under the -o directory\n" ++
             "  --syntax <syntax>        Select CSS (default), or a gated native syntax\n" ++
-            "  --experimental-native   Enable the pre-graduation file/stdin native route\n" ++
+            "  --experimental-native   Enable the pre-graduation file/stdin/batch native route\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
             "  --watch                  Watch one input and its local CSS imports\n" ++
@@ -1114,6 +1134,62 @@ fn compileBatch(
     }
 
     try compileFilesParallel(allocator, tasks.items);
+}
+
+fn compileNativeBatch(
+    allocator: std.mem.Allocator,
+    input_files: []const []const u8,
+    output_dir: []const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+) !void {
+    var tasks = try std.ArrayList(NativeBatchTask).initCapacity(allocator, input_files.len);
+    defer {
+        for (tasks.items) |*task| task.deinit(allocator);
+        tasks.deinit(allocator);
+    }
+
+    for (input_files, 0..) |input_file, input_index| {
+        const output_file = try determineBatchOutputFile(
+            allocator,
+            input_files,
+            input_index,
+            output_dir,
+        );
+        tasks.append(allocator, .{
+            .input_file = input_file,
+            .output_file = output_file,
+        }) catch |err| {
+            allocator.free(output_file);
+            return err;
+        };
+    }
+
+    const planned_outputs = try allocator.alloc([]const u8, tasks.items.len);
+    defer allocator.free(planned_outputs);
+    for (tasks.items, 0..) |task, task_index| {
+        planned_outputs[task_index] = task.output_file;
+    }
+    if (try findOutputCollision(allocator, input_files, planned_outputs)) |collision| {
+        printOutputCollision(collision);
+        return error.BatchUsageError;
+    }
+
+    for (tasks.items) |*task| {
+        task.result = compileNativeSource(
+            allocator,
+            task.input_file,
+            syntax,
+            minify,
+        ) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return error.CompileError;
+        };
+    }
+    for (tasks.items) |*task| {
+        try writeOutputFile(task.output_file, task.result.?.css);
+        std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
+    }
 }
 
 fn experimentalFormatName(filename: []const u8) ?[]const u8 {
@@ -1270,9 +1346,6 @@ pub fn main() !void {
         if (!experimental_native_flag) {
             exitWithCliError("unsupported syntax: {s}; the native route requires --experimental-native", .{@tagName(selected)});
         }
-        if (input_files.items.len != 1 or output_dir_flag) {
-            exitWithCliError("--experimental-native requires exactly one file or stdin input", .{});
-        }
         if (watch_flag or optimize_flag or profile_flag) {
             exitWithCliError(
                 "watch, optimize, and profile are unavailable for the pre-graduation native CLI",
@@ -1332,15 +1405,30 @@ pub fn main() !void {
     }
 
     if (native_syntax) |selected| {
-        compileNativeInput(
-            allocator,
-            input_files.items[0],
-            output_file,
-            selected,
-            minify_flag,
-        ) catch {
-            std.process.exit(exit_compile_failure);
-        };
+        if (input_files.items.len == 1) {
+            compileNativeInput(
+                allocator,
+                input_files.items[0],
+                output_file,
+                selected,
+                minify_flag,
+            ) catch {
+                std.process.exit(exit_compile_failure);
+            };
+        } else {
+            compileNativeBatch(
+                allocator,
+                input_files.items,
+                output_file.?,
+                selected,
+                minify_flag,
+            ) catch |err| {
+                if (err != error.CompileError and err != error.BatchUsageError) {
+                    std.debug.print("Error: native batch compilation failed: {s}\n", .{@errorName(err)});
+                }
+                std.process.exit(if (err == error.BatchUsageError) exit_usage else exit_compile_failure);
+            };
+        }
         return;
     }
 

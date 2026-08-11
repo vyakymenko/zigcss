@@ -501,8 +501,11 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'batch',
       releaseGapFamily: 'native-batch-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'binary CLI routes the finite native syntax set through deterministic batches',
+        'binary CLI native batch failures commit no partial output',
+      ]),
     }),
     Object.freeze({
       id: 'watch',
@@ -1018,7 +1021,7 @@ const expectedImplementations = Object.freeze([
   }),
   Object.freeze({
     id: 'native-product-compiler',
-    current: 'native-files-and-stdin',
+    current: 'native-batch',
     ownerPackage: 'NATIVE-006',
     adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
     capabilities: Object.freeze([
@@ -1040,6 +1043,9 @@ const expectedImplementations = Object.freeze([
       'cwd-confined-native-stdin',
       'bounded-native-stdin',
       'transactional-native-stdin-output',
+      'pre-graduation-native-batch',
+      'deterministic-native-batch',
+      'compile-before-write-native-batch',
     ]),
     nativeSources: Object.freeze([
       'src/preprocessor/compiler.zig',
@@ -1249,7 +1255,7 @@ function validateProductRouting(
             ? cliTests
             : route.id === 'javascript-wrapper'
               ? nodeWrapperTests
-              : route.id === 'files-and-stdin'
+              : route.id === 'files-and-stdin' || route.id === 'batch'
                 ? cliTests
                 : ''
       for (const evidenceTest of route.evidenceTests) {
@@ -1802,13 +1808,13 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     binaryCli,
-    'var result = native_api.compile(',
+    'return native_api.compile(',
     'native binary CLI shared API dispatch',
   )
   requireText(
     binaryCli,
-    '"--experimental-native requires exactly one file or stdin input"',
-    'native binary CLI file/stdin cardinality boundary',
+    '"multiple inputs require --output-dir"',
+    'native binary CLI explicit batch admission boundary',
   )
   requireText(
     binaryCli,
@@ -1825,6 +1831,33 @@ function validateInternalReachability(implementations, buildFile, productionSour
     '"watch, optimize, and profile are unavailable for the pre-graduation native CLI"',
     'native binary CLI pending execution-mode boundary',
   )
+  const nativeBatch = binaryCli.match(
+    /fn compileNativeBatch\([\s\S]*?\n}\n\nfn experimentalFormatName/,
+  )
+  if (!nativeBatch) fail('native binary CLI batch route is missing')
+  requireText(
+    nativeBatch[0],
+    'task.result = compileNativeSource(',
+    'native binary CLI batch native dispatch',
+  )
+  requireText(
+    nativeBatch[0],
+    'try findOutputCollision(allocator, input_files, planned_outputs)',
+    'native binary CLI batch collision planning',
+  )
+  requireText(
+    nativeBatch[0],
+    'try writeOutputFile(task.output_file, task.result.?.css);',
+    'native binary CLI batch ordered commit',
+  )
+  if (nativeBatch[0].indexOf('task.result = compileNativeSource(') >
+      nativeBatch[0].indexOf('try writeOutputFile(task.output_file, task.result.?.css);')) {
+    fail('native binary CLI batch writes before every input compiles')
+  }
+  if (nativeBatch[0].includes('std.Thread') ||
+      nativeBatch[0].includes('compileFilesParallel(')) {
+    fail('native binary CLI batch route crossed the pending parallel boundary')
+  }
   if (binaryCli.includes('std.process.Child')) {
     fail('native binary CLI introduced a provider child-process path')
   }

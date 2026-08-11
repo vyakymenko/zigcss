@@ -9,13 +9,48 @@ const RouteCase = struct {
     filename: []const u8,
     input: []const u8,
     expected: []const u8,
+    second_filename: []const u8,
+    second_input: []const u8,
+    second_expected: []const u8,
 };
 
 const route_cases = [_]RouteCase{
-    .{ .syntax = "scss", .filename = "input.scss", .input = ".a { color: red; }", .expected = ".a{color:red}" },
-    .{ .syntax = "sass", .filename = "input.sass", .input = ".a\n  color: red\n", .expected = ".a{color:red}" },
-    .{ .syntax = "less", .filename = "input.less", .input = ".a { color: red; }", .expected = ".a{color:red}" },
-    .{ .syntax = "stylus", .filename = "input.styl", .input = ".a\n  color red\n", .expected = ".a{color:#f00}" },
+    .{
+        .syntax = "scss",
+        .filename = "input.scss",
+        .input = ".a { color: red; }",
+        .expected = ".a{color:red}",
+        .second_filename = "second.scss",
+        .second_input = ".b { color: red; }",
+        .second_expected = ".b{color:red}",
+    },
+    .{
+        .syntax = "sass",
+        .filename = "input.sass",
+        .input = ".a\n  color: red\n",
+        .expected = ".a{color:red}",
+        .second_filename = "second.sass",
+        .second_input = ".b\n  color: red\n",
+        .second_expected = ".b{color:red}",
+    },
+    .{
+        .syntax = "less",
+        .filename = "input.less",
+        .input = ".a { color: red; }",
+        .expected = ".a{color:red}",
+        .second_filename = "second.less",
+        .second_input = ".b { color: red; }",
+        .second_expected = ".b{color:red}",
+    },
+    .{
+        .syntax = "stylus",
+        .filename = "input.styl",
+        .input = ".a\n  color red\n",
+        .expected = ".a{color:#f00}",
+        .second_filename = "second.styl",
+        .second_input = ".b\n  color red\n",
+        .second_expected = ".b{color:#f00}",
+    },
 };
 
 fn runInDir(dir: std.fs.Dir, argv_tail: []const []const u8) !Child.RunResult {
@@ -286,6 +321,96 @@ test "binary CLI native stdin enforces the exact input byte terminal" {
     try expectExitCode(rejected, 1);
     try std.testing.expectEqual(@as(usize, 0), rejected.stdout.len);
     try std.testing.expect(std.mem.indexOf(u8, rejected.stderr, "failed to read <stdin>: FileTooBig") != null);
+}
+
+test "binary CLI routes the finite native syntax set through deterministic batches" {
+    inline for (route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.input });
+        try tmp.dir.writeFile(.{ .sub_path = case.second_filename, .data = case.second_input });
+
+        const argv = &.{
+            case.filename,
+            case.second_filename,
+            "-o",
+            "out",
+            "--output-dir",
+            "--experimental-native",
+            "--syntax",
+            case.syntax,
+            "--minify",
+        };
+        var first = try runInDir(tmp.dir, argv);
+        defer deinitRun(&first);
+        var second = try runInDir(tmp.dir, argv);
+        defer deinitRun(&second);
+
+        try expectExitCode(first, 0);
+        try expectExitCode(second, 0);
+        try std.testing.expectEqual(@as(usize, 0), first.stdout.len);
+        try std.testing.expectEqualStrings(first.stdout, second.stdout);
+        try std.testing.expectEqualStrings(first.stderr, second.stderr);
+
+        const first_output_path = try std.fmt.allocPrint(
+            allocator,
+            "out/{s}.css",
+            .{std.fs.path.stem(case.filename)},
+        );
+        defer allocator.free(first_output_path);
+        const second_output_path = try std.fmt.allocPrint(
+            allocator,
+            "out/{s}.css",
+            .{std.fs.path.stem(case.second_filename)},
+        );
+        defer allocator.free(second_output_path);
+        const first_output = try tmp.dir.readFileAlloc(allocator, first_output_path, 1024);
+        defer allocator.free(first_output);
+        const second_output = try tmp.dir.readFileAlloc(allocator, second_output_path, 1024);
+        defer allocator.free(second_output);
+        try std.testing.expectEqualStrings(case.expected, first_output);
+        try std.testing.expectEqualStrings(case.second_expected, second_output);
+
+        const first_status = std.mem.indexOf(u8, first.stderr, "Compiled: " ++ case.filename) orelse
+            return error.MissingFirstBatchStatus;
+        const second_status = std.mem.indexOf(u8, first.stderr, "Compiled: " ++ case.second_filename) orelse
+            return error.MissingSecondBatchStatus;
+        try std.testing.expect(first_status < second_status);
+    }
+}
+
+test "binary CLI native batch failures commit no partial output" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "good.scss", .data = ".good { color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "bad.scss", .data = ".bad { color: $missing; }" });
+    try tmp.dir.makeDir("out");
+    try tmp.dir.writeFile(.{ .sub_path = "out/good.css", .data = "good-sentinel" });
+    try tmp.dir.writeFile(.{ .sub_path = "out/bad.css", .data = "bad-sentinel" });
+
+    var result = try runInDir(tmp.dir, &.{
+        "good.scss",
+        "bad.scss",
+        "-o",
+        "out",
+        "--output-dir",
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--minify",
+    });
+    defer deinitRun(&result);
+    try expectExitCode(result, 1);
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "native SCSS compilation failed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Compiled:") == null);
+
+    const good_output = try tmp.dir.readFileAlloc(allocator, "out/good.css", 1024);
+    defer allocator.free(good_output);
+    const bad_output = try tmp.dir.readFileAlloc(allocator, "out/bad.css", 1024);
+    defer allocator.free(bad_output);
+    try std.testing.expectEqualStrings("good-sentinel", good_output);
+    try std.testing.expectEqualStrings("bad-sentinel", bad_output);
 }
 
 test "binary CLI native failures commit no partial output" {

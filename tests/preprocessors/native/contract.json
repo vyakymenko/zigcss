@@ -481,8 +481,11 @@
       {
         "id": "batch",
         "releaseGapFamily": "native-batch-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "binary CLI routes the finite native syntax set through deterministic batches",
+          "binary CLI native batch failures commit no partial output"
+        ]
       },
       {
         "id": "watch",
@@ -986,7 +989,7 @@
     },
     {
       "id": "native-product-compiler",
-      "current": "native-files-and-stdin",
+      "current": "native-batch",
       "ownerPackage": "NATIVE-006",
       "adapters": ["scss", "sass", "less", "stylus"],
       "capabilities": [
@@ -1007,7 +1010,10 @@
         "pre-graduation-files-and-stdin",
         "cwd-confined-native-stdin",
         "bounded-native-stdin",
-        "transactional-native-stdin-output"
+        "transactional-native-stdin-output",
+        "pre-graduation-native-batch",
+        "deterministic-native-batch",
+        "compile-before-write-native-batch"
       ],
       "nativeSources": ["src/preprocessor/compiler.zig", "src/native_api.zig"],
       "testSources": [
