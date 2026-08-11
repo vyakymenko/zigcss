@@ -602,6 +602,39 @@ const color_identifier_boundary_input =
 const color_identifier_boundary_css =
     "#fea-ca{padding:5px}#ffffff{padding:5px;foo:#fea -ca}";
 
+const pseudo_selector_group_input =
+    \\body
+    \\  :nth-child(2)
+    \\  foo bar
+    \\  bar
+    \\  baz
+    \\    display none
+    \\
+    \\body
+    \\  foo bar
+    \\  bar
+    \\  baz
+    \\    display none
+    \\
+    \\body
+    \\  foo
+    \\  bar
+    \\  baz
+    \\    display none
+    \\
+    \\body
+    \\  foo
+    \\  :nth-child(2)
+    \\  bar
+    \\    display none
+;
+
+const pseudo_selector_group_css =
+    "body :nth-child(2),body foo bar,body bar,body baz{display:none}" ++
+    "body{foo:bar}body bar,body baz{display:none}" ++
+    "body foo,body bar,body baz{display:none}" ++
+    "body foo,body :nth-child(2),body bar{display:none}";
+
 const media_bubble_input =
     \\@media (max-width: 640px), (max-height: 320px)
     \\  .logo
@@ -6363,6 +6396,69 @@ test "native Stylus color tokens keep finite selector and expression boundaries"
     );
 }
 
+test "native Stylus pseudo selectors own finite newline-group disambiguation" {
+    const lower_input =
+        \\body
+        \\  :nth-child(2)
+        \\    display none
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body :nth-child(2){display:none}", lower.css());
+
+    const preceding_declaration_input =
+        \\body
+        \\  color red
+        \\  :hover
+        \\    display none
+    ;
+    var preceding_declaration = try compile(
+        std.testing.allocator,
+        preceding_declaration_input,
+        lower_limits,
+    );
+    defer preceding_declaration.deinit();
+    try std.testing.expectEqualStrings(
+        "body{color:#f00}body :hover{display:none}",
+        preceding_declaration.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_selectors = 16;
+    var first = try compile(
+        std.testing.allocator,
+        pseudo_selector_group_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        pseudo_selector_group_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(pseudo_selector_group_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.max_selectors = 15;
+    try expectSemanticRejectionWithLimits(
+        pseudo_selector_group_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, pseudo_selector_group_input, "foo\n  :nth-child").?),
+    );
+}
+
 test "native Stylus media bubbling owns the finite query product contract" {
     const lower_input =
         \\@media (min-width: 1px)
@@ -7667,6 +7763,14 @@ fn exerciseColorIdentifierBoundaryAllocationFailures(allocator: std.mem.Allocato
     try std.testing.expectEqualStrings(color_identifier_boundary_css, result.css());
 }
 
+fn exercisePseudoSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_selectors = 16;
+    var result = try compile(allocator, pseudo_selector_group_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(pseudo_selector_group_css, result.css());
+}
+
 fn exerciseMediaBubbleAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_selectors = 2;
@@ -8284,6 +8388,14 @@ test "native Stylus color identifier boundaries handle every allocation failure"
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseColorIdentifierBoundaryAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus pseudo selector groups handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePseudoSelectorGroupAllocationFailures,
         .{},
     );
 }

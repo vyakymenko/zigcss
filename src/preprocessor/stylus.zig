@@ -1103,13 +1103,28 @@ pub const Parser = struct {
             }
             break :blk true;
         };
-        for (candidates) |candidate| {
+        var first_pseudo_selector: ?usize = null;
+        for (candidates, 0..) |candidate, index| {
+            if (startsPseudoSelector(self.lineBytes(candidate))) {
+                first_pseudo_selector = index;
+                break;
+            }
+        }
+        for (candidates, 0..) |candidate, index| {
             const raw = self.lineBytes(candidate);
             const bare_selector = std.mem.indexOfAny(u8, raw, " \t(){}=;") == null;
             const ancestry_selector = std.mem.startsWith(u8, raw, "^[");
+            const pseudo_selector = startsPseudoSelector(raw);
+            const declaration_like = looksLikeDeclaration(raw, false);
+            const pseudo_selector_context = if (first_pseudo_selector) |first|
+                index >= first
+            else
+                false;
             if (isComment(raw) or raw[0] == '@' or
-                (looksLikeDeclaration(raw, false) and !ancestry_selector and !comma_led) or
-                (!looksLikeSelector(raw) and !bare_selector and !comma_led) or
+                (declaration_like and !ancestry_selector and !comma_led and
+                    !pseudo_selector_context) or
+                (!looksLikeSelector(raw) and !bare_selector and !comma_led and
+                    !pseudo_selector and !(pseudo_selector_context and declaration_like)) or
                 self.findAssignment(candidate) != null or
                 startsDirective(raw, "@import") or startsDirective(raw, "@require") or
                 startsWord(raw, "return") or startsWord(raw, "if") or
@@ -1634,6 +1649,10 @@ fn startsSelectorPunctuation(raw: []const u8) bool {
         '.', '#', '&', '[', '/', '>', '+', '~' => true,
         else => false,
     };
+}
+
+fn startsPseudoSelector(raw: []const u8) bool {
+    return raw.len > 1 and raw[0] == ':' and !isHorizontalWhitespace(raw[1]);
 }
 
 fn containsUnquotedAny(raw: []const u8, needles: []const u8) bool {

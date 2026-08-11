@@ -1282,6 +1282,53 @@ test "native Stylus parser preserves comma-led multiline descendant selector gro
     );
 }
 
+test "native Stylus parser lets a pseudo selector disambiguate a newline group" {
+    const input =
+        \\body
+        \\  :nth-child(2)
+        \\  foo bar
+        \\  bar
+        \\  baz
+        \\    display none
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("pseudo-selector-group.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const body_children = try document.children(root_children[0]);
+    const body_block = body_children[body_children.len - 1];
+    const body_statements = try document.children(body_block);
+    try std.testing.expectEqual(@as(usize, 1), body_statements.len);
+    try std.testing.expectEqual(
+        syntax.Kind.rule,
+        (try document.get(body_statements[0])).kind,
+    );
+    const nested_children = try document.children(body_statements[0]);
+    try std.testing.expectEqualStrings(
+        ":nth-child(2)\n  foo bar\n  bar\n  baz",
+        try sources.slice((try document.get(nested_children[0])).text.?),
+    );
+    const nested_block = nested_children[nested_children.len - 1];
+    const declarations = try document.children(nested_block);
+    try std.testing.expectEqual(@as(usize, 1), declarations.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(declarations[0])).kind,
+    );
+}
+
 test "native Stylus parser preserves the pinned explicit CSS selector tree" {
     const input = try std.fs.cwd().readFileAlloc(
         std.testing.allocator,
