@@ -100,8 +100,12 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'binary-cli',
       releaseGapFamily: 'native-binary-cli-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'binary CLI routes the finite native syntax set through the pre-graduation bridge',
+        'binary CLI keeps native routing explicit and pending execution modes fail closed',
+        'binary CLI native failures commit no partial output',
+      ],
     }, {
       id: 'javascript-wrapper',
       releaseGapFamily: 'native-javascript-wrapper-routing',
@@ -1188,7 +1192,7 @@ test('binds implemented native foundation sources and focused test inventories',
   assert.throws(() => validateContract(ownerChanged), /foundation.*inventory drifted/)
 })
 
-test('binds unavailable native rows and the sole pre-graduation Zig API bridge', () => {
+test('binds unavailable native rows and the pre-graduation product bridges', () => {
   for (const index of loadContract().implementations.keys()) {
     const publicChanged = clone(loadContract())
     publicChanged.implementations[index].publicAvailable = true
@@ -1252,13 +1256,14 @@ test('binds unavailable native rows and the sole pre-graduation Zig API bridge',
   )
 })
 
-test('binds the finite native product routing inventory and verified first two routes', () => {
+test('binds the finite native product routing inventory and verified first three routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
     routing => { routing.terminalContract.providerProcesses = 1 },
     routing => { routing.routes[0].state = 'pending' },
     routing => { routing.routes[1].state = 'pending' },
+    routing => { routing.routes[2].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1292,6 +1297,20 @@ test('binds the finite native product routing inventory and verified first two r
       ),
     }),
     /native product routing zig-api evidence.*missing/,
+  )
+
+  const cliTests = fs.readFileSync(
+    path.join(repositoryRoot, 'tests/cli/native_cli.zig'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native failures commit no partial output"',
+        'test "missing binary CLI rollback evidence"',
+      ),
+    }),
+    /native product routing binary-cli evidence.*missing/,
   )
 })
 

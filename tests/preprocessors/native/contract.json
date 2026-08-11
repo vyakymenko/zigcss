@@ -451,8 +451,12 @@
       {
         "id": "binary-cli",
         "releaseGapFamily": "native-binary-cli-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "binary CLI routes the finite native syntax set through the pre-graduation bridge",
+          "binary CLI keeps native routing explicit and pending execution modes fail closed",
+          "binary CLI native failures commit no partial output"
+        ]
       },
       {
         "id": "javascript-wrapper",
@@ -974,7 +978,7 @@
     },
     {
       "id": "native-product-compiler",
-      "current": "native-zig-api",
+      "current": "native-binary-cli",
       "ownerPackage": "NATIVE-006",
       "adapters": ["scss", "sass", "less", "stylus"],
       "capabilities": [
@@ -984,14 +988,19 @@
         "transactional-result",
         "pre-graduation-zig-api",
         "owned-css-result",
-        "bounded-entry-input"
+        "bounded-entry-input",
+        "pre-graduation-binary-cli",
+        "explicit-native-cli-gate",
+        "single-file-native-cli",
+        "no-partial-cli-output"
       ],
       "nativeSources": ["src/preprocessor/compiler.zig", "src/native_api.zig"],
       "testSources": [
         "tests/native-preprocessor/compiler.zig",
-        "tests/public-api/native_consumer.zig"
+        "tests/public-api/native_consumer.zig",
+        "tests/cli/native_cli.zig"
       ],
-      "testStep": "test-native-zig-api",
+      "testStep": "test-native-cli",
       "publicAvailable": false,
       "productionReachable": true
     }

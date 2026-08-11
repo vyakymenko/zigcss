@@ -5,6 +5,8 @@ const zigcss = @import("zigcss");
 const lsp = @import("lsp.zig");
 const lsp_transport = @import("lsp_transport.zig");
 
+const native_api = zigcss.experimental_native;
+
 const version = "0.5.0-rc.1";
 const experimental_notice = std.fmt.comptimePrint(
     "Warning: ZigCSS {s} is an experimental release candidate; do not use it for production CSS.\n",
@@ -271,6 +273,75 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
 
     var result = try compileLoadedFile(allocator, config, input);
     defer result.deinit();
+}
+
+fn parseNativeSyntax(value: []const u8) ?native_api.Syntax {
+    if (std.mem.eql(u8, value, "scss")) return .scss;
+    if (std.mem.eql(u8, value, "sass")) return .sass;
+    if (std.mem.eql(u8, value, "less")) return .less;
+    if (std.mem.eql(u8, value, "stylus")) return .stylus;
+    return null;
+}
+
+fn nativeSyntaxLabel(syntax: native_api.Syntax) []const u8 {
+    return switch (syntax) {
+        .scss => "SCSS",
+        .sass => "Sass",
+        .less => "Less",
+        .stylus => "Stylus",
+    };
+}
+
+fn compileNativeFile(
+    allocator: std.mem.Allocator,
+    input_file: []const u8,
+    output_file: ?[]const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+) !void {
+    const entry_path = std.fs.cwd().realpathAlloc(allocator, input_file) catch |err| {
+        std.debug.print("Error: failed to resolve {s}: {s}\n", .{ input_file, @errorName(err) });
+        return err;
+    };
+    defer allocator.free(entry_path);
+    const input = readInput(allocator, entry_path) catch |err| {
+        std.debug.print("Error: failed to read {s}: {s}\n", .{ input_file, @errorName(err) });
+        return err;
+    };
+    defer allocator.free(input);
+
+    const root_path = std.fs.path.dirname(entry_path) orelse return error.InvalidSourcePath;
+    const root_paths = [_][]const u8{root_path};
+
+    var result = native_api.compile(allocator, entry_path, input, .{
+        .syntax = syntax,
+        .root_paths = &root_paths,
+        .format = if (minify) .minified else .pretty,
+    }) catch |err| {
+        std.debug.print(
+            "Error: native {s} compilation failed: {s}\n",
+            .{ nativeSyntaxLabel(syntax), @errorName(err) },
+        );
+        return err;
+    };
+    defer result.deinit();
+
+    if (output_file) |out| {
+        if (isStdioPath(out)) {
+            writeStdout(result.css) catch |err| {
+                std.debug.print("Error: failed to write stdout: {s}\n", .{@errorName(err)});
+                return err;
+            };
+        } else {
+            try writeOutputFile(out, result.css);
+            std.debug.print("Compiled: {s} -> {s}\n", .{ input_file, out });
+        }
+    } else {
+        writeStdout(result.css) catch |err| {
+            std.debug.print("Error: failed to write stdout: {s}\n", .{@errorName(err)});
+            return err;
+        };
+    }
 }
 
 fn computeFileHash(content: []const u8) u64 {
@@ -884,7 +955,8 @@ fn printUsage() !void {
             "\nAvailable options:\n" ++
             "  -o, --output <path|->    Output file/stdout, or directory with --output-dir\n" ++
             "  --output-dir             Require batch output under the -o directory\n" ++
-            "  --syntax <css>           Select CSS input syntax (default: css)\n" ++
+            "  --syntax <syntax>        Select CSS (default), or a gated native syntax\n" ++
+            "  --experimental-native   Enable the pre-graduation single-file native route\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
             "  --watch                  Watch one input and its local CSS imports\n" ++
@@ -1075,7 +1147,9 @@ pub fn main() !void {
     var output_file: ?[]const u8 = null;
     var output_dir_flag = false;
     var syntax: zigcss.Syntax = .css;
+    var native_syntax: ?native_api.Syntax = null;
     var syntax_flag_set = false;
+    var experimental_native_flag = false;
     var optimize_flag = false;
     var minify_flag = false;
     var watch_flag = false;
@@ -1093,10 +1167,20 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, args[i], "--syntax")) {
             if (syntax_flag_set) exitWithCliError("--syntax may only be specified once", .{});
             const value = requireOptionValue(args, i, args[i]);
-            if (!std.mem.eql(u8, value, "css")) exitWithCliError("unsupported syntax: {s}", .{value});
-            syntax = .css;
+            if (std.mem.eql(u8, value, "css")) {
+                syntax = .css;
+            } else if (parseNativeSyntax(value)) |parsed| {
+                native_syntax = parsed;
+            } else {
+                exitWithCliError("unsupported syntax: {s}", .{value});
+            }
             syntax_flag_set = true;
             i += 1;
+        } else if (std.mem.eql(u8, args[i], "--experimental-native")) {
+            if (experimental_native_flag) {
+                exitWithCliError("--experimental-native may only be specified once", .{});
+            }
+            experimental_native_flag = true;
         } else if (std.mem.eql(u8, args[i], "--optimize")) {
             if (optimize_flag) exitWithCliError("--optimize may only be specified once", .{});
             optimize_flag = true;
@@ -1155,6 +1239,24 @@ pub fn main() !void {
         if (isStdioPath(input_file)) stdin_inputs += 1;
     }
     if (stdin_inputs > 1) exitWithCliError("stdin may only be specified once", .{});
+
+    if (native_syntax) |selected| {
+        if (!experimental_native_flag) {
+            exitWithCliError("unsupported syntax: {s}; the native route requires --experimental-native", .{@tagName(selected)});
+        }
+        if (input_files.items.len != 1 or stdin_inputs != 0 or output_dir_flag) {
+            exitWithCliError("--experimental-native requires exactly one file input", .{});
+        }
+        if (watch_flag or optimize_flag or profile_flag) {
+            exitWithCliError(
+                "watch, optimize, and profile are unavailable for the pre-graduation native CLI",
+                .{},
+            );
+        }
+    } else if (experimental_native_flag) {
+        exitWithCliError("--experimental-native requires --syntax <scss|sass|less|stylus>", .{});
+    }
+
     if (stdin_inputs == 1 and input_files.items.len != 1) {
         exitWithCliError("stdin cannot be combined with file or batch inputs", .{});
     }
@@ -1181,6 +1283,7 @@ pub fn main() !void {
 
     for (input_files.items) |input_file| {
         if (isStdioPath(input_file)) continue;
+        if (native_syntax != null) continue;
         if (experimentalFormatName(input_file)) |format_name| {
             exitWithCliError(
                 "{s} format adapter is experimental and unavailable in the recovery CLI",
@@ -1200,6 +1303,19 @@ pub fn main() !void {
                 }
             }
         }
+    }
+
+    if (native_syntax) |selected| {
+        compileNativeFile(
+            allocator,
+            input_files.items[0],
+            output_file,
+            selected,
+            minify_flag,
+        ) catch {
+            std.process.exit(exit_compile_failure);
+        };
+        return;
     }
 
     if (watch_flag) {

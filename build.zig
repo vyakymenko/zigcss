@@ -425,6 +425,25 @@ pub fn build(b: *std.Build) void {
     );
     native_zig_api_step.dependOn(&run_native_zig_api_tests.step);
 
+    const native_cli_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/cli/native_cli.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const native_cli_options = b.addOptions();
+    native_cli_options.addOption([]const u8, "compiler_path", b.getInstallPath(.bin, "zigcss"));
+    native_cli_test_module.addOptions("cli_options", native_cli_options);
+    const native_cli_tests = b.addTest(.{
+        .root_module = native_cli_test_module,
+    });
+    const run_native_cli_tests = b.addRunArtifact(native_cli_tests);
+    run_native_cli_tests.step.dependOn(b.getInstallStep());
+    const native_cli_step = b.step(
+        "test-native-cli",
+        "Test the pre-graduation native stylesheet binary CLI route",
+    );
+    native_cli_step.dependOn(&run_native_cli_tests.step);
+
     const audit_test_module = b.addModule("zigcss-audit-regressions", .{
         .root_source_file = b.path("tests/regressions/audit.zig"),
         .target = target,
@@ -499,6 +518,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_native_sass_conformance_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
     test_step.dependOn(&run_native_zig_api_tests.step);
+    test_step.dependOn(&run_native_cli_tests.step);
     test_step.dependOn(documentation_examples_step);
     test_step.dependOn(&run_audit_tests.step);
     test_step.dependOn(&install_transform_driver.step);

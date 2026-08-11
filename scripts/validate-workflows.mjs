@@ -128,6 +128,7 @@ export const nativeTestRunners = Object.freeze([
   'run_native_sass_selector_tests',
   'run_native_sass_evaluator_tests',
   'run_native_sass_conformance_tests',
+  'run_native_cli_tests',
 ])
 
 function fail(message) {

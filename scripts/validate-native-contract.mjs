@@ -471,8 +471,12 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'binary-cli',
       releaseGapFamily: 'native-binary-cli-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'binary CLI routes the finite native syntax set through the pre-graduation bridge',
+        'binary CLI keeps native routing explicit and pending execution modes fail closed',
+        'binary CLI native failures commit no partial output',
+      ]),
     }),
     Object.freeze({
       id: 'javascript-wrapper',
@@ -1006,7 +1010,7 @@ const expectedImplementations = Object.freeze([
   }),
   Object.freeze({
     id: 'native-product-compiler',
-    current: 'native-zig-api',
+    current: 'native-binary-cli',
     ownerPackage: 'NATIVE-006',
     adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
     capabilities: Object.freeze([
@@ -1017,6 +1021,10 @@ const expectedImplementations = Object.freeze([
       'pre-graduation-zig-api',
       'owned-css-result',
       'bounded-entry-input',
+      'pre-graduation-binary-cli',
+      'explicit-native-cli-gate',
+      'single-file-native-cli',
+      'no-partial-cli-output',
     ]),
     nativeSources: Object.freeze([
       'src/preprocessor/compiler.zig',
@@ -1025,8 +1033,9 @@ const expectedImplementations = Object.freeze([
     testSources: Object.freeze([
       'tests/native-preprocessor/compiler.zig',
       'tests/public-api/native_consumer.zig',
+      'tests/cli/native_cli.zig',
     ]),
-    testStep: 'test-native-zig-api',
+    testStep: 'test-native-cli',
     publicAvailable: false,
     productionReachable: true,
   }),
@@ -1194,6 +1203,7 @@ function validateProductRouting(
   plan,
   compilerTests,
   zigApiTests,
+  cliTests,
   sassConformanceTests,
   lessConformanceTests,
   stylusConformanceTests,
@@ -1217,7 +1227,9 @@ function validateProductRouting(
         ? compilerTests
         : route.id === 'zig-api'
           ? zigApiTests
-          : ''
+          : route.id === 'binary-cli'
+            ? cliTests
+            : ''
       for (const evidenceTest of route.evidenceTests) {
         requireText(
           evidenceSource,
@@ -1693,9 +1705,25 @@ function validateInternalReachability(implementations, buildFile, productionSour
     'test_step.dependOn(&run_native_zig_api_tests.step);',
     'native Zig API aggregate test ownership',
   )
+  requireText(
+    buildFile,
+    'root_source_file = b.path("tests/cli/native_cli.zig")',
+    'native binary CLI test wiring',
+  )
+  requireText(
+    buildFile,
+    '"test-native-cli"',
+    'native binary CLI focused test step',
+  )
+  requireText(
+    buildFile,
+    'test_step.dependOn(&run_native_cli_tests.step);',
+    'native binary CLI aggregate test ownership',
+  )
   const sourceByPath = new Map(productionSources)
   const libraryRoot = sourceByPath.get('src/lib.zig') ?? ''
   const nativeApi = sourceByPath.get('src/native_api.zig') ?? ''
+  const binaryCli = sourceByPath.get('src/main.zig') ?? ''
   requireText(
     libraryRoot,
     'pub const experimental_native = @import("native_api.zig");',
@@ -1730,6 +1758,29 @@ function validateInternalReachability(implementations, buildFile, productionSour
     if (nativeApi.includes(pendingResultSurface)) {
       fail('native Zig API crossed a pending result-fact or source-map route')
     }
+  }
+  requireText(
+    binaryCli,
+    'const native_api = zigcss.experimental_native;',
+    'native binary CLI pre-graduation bridge',
+  )
+  requireText(
+    binaryCli,
+    'var result = native_api.compile(',
+    'native binary CLI shared API dispatch',
+  )
+  requireText(
+    binaryCli,
+    '"--experimental-native requires exactly one file input"',
+    'native binary CLI pending files/stdin boundary',
+  )
+  requireText(
+    binaryCli,
+    '"watch, optimize, and profile are unavailable for the pre-graduation native CLI"',
+    'native binary CLI pending execution-mode boundary',
+  )
+  if (binaryCli.includes('std.process.Child')) {
+    fail('native binary CLI introduced a provider child-process path')
   }
   const forbiddenImports = [
     '@import("preprocessor.zig")',
@@ -1856,6 +1907,10 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/compiler.zig'),
       'utf8',
     ),
+    cliTests = fs.readFileSync(
+      repositoryFile('tests/cli/native_cli.zig'),
+      'utf8',
+    ),
     zigApiTests = fs.readFileSync(
       repositoryFile('tests/public-api/native_consumer.zig'),
       'utf8',
@@ -1950,6 +2005,7 @@ export function validateContract(
     plan,
     compilerTests,
     zigApiTests,
+    cliTests,
     sassConformanceTests,
     lessConformanceTests,
     stylusConformanceTests,
