@@ -6832,13 +6832,22 @@ const Engine = struct {
             all_arguments.items[0] == .list)
             try self.ownValue(span, all_arguments.items[0])
         else
-            try self.ownValue(span, .{ .list = .{
-                .items = all_arguments.items,
-                .separator = if (arguments.items.len > 1 and call.parenthesized)
-                    .comma
-                else
-                    .space,
-            } });
+            try self.ownValue(span, .{
+                .list = .{
+                    .items = all_arguments.items,
+                    // Explicit call commas separate argument nodes, but do not
+                    // make Stylus' implicit `arguments` expression a comma list.
+                    // Property-function input inherits a declaration's authored
+                    // top-level comma-list bit instead.
+                    .separator = if (call.property_syntax and findTopLevelScalar(
+                        raw[call.arguments.start..call.arguments.end],
+                        ',',
+                    ) != null)
+                        .comma
+                    else
+                        .space,
+                },
+            });
         call_scope = try self.setBinding(call_scope, "arguments", arguments_value, span);
         if (!resolved_callable.anonymous) {
             const current_property = (try self.currentPropertyValue(span, caller_scope)) orelse
@@ -10277,7 +10286,14 @@ const Engine = struct {
             .bytes = property.property,
             .quoted = true,
         } });
-        const expression_value = try self.evaluateDeclarationValue(
+        const expression_value = if (try self.renderCommentedDeclarationValueOwned(
+            span,
+            normalized.items,
+            property.scope,
+        )) |commented| blk: {
+            self.allocator.free(commented.bytes);
+            break :blk commented.semantic;
+        } else try self.evaluateDeclarationValue(
             span,
             normalized.items,
             property.scope,

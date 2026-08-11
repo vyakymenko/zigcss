@@ -546,6 +546,26 @@ const function_arguments_css = "body{padding:15;padding:1 2}" ++
     ".defaults{p0:4px;p1:5px}.opaque{color:#000}" ++
     ".translucent{color:rgba(0,0,0,0.5)}img{width:auto!important}";
 
+const regression_272_arguments_input =
+    \\op(a, b=a, operator='+')
+    \\  arguments
+    \\body
+    \\  foo: op(1) // 1 1 +
+    \\  foo: op(1, 5) // 1 5 +
+    \\  foo: op(1, 5, '-') // 1 5 -
+    \\op(a, rest...)
+    \\  arguments
+    \\body
+    \\  foo: op(1) // 1
+    \\  foo: op(1, 2) // 1 2
+    \\  foo: op(1, 2, 3) // 1 2 3
+    \\  foo: op(1, 2, 3, 4 5 6) // 1 2 3 4 5 6
+;
+
+const regression_272_arguments_css =
+    "body{foo:1 1 '+';foo:1 5 '+';foo:1 5 '-'}" ++
+    "body{foo:1;foo:1 2;foo:1 2 3;foo:1 2 3 4 5 6}";
+
 const forwarded_selector_arguments_terminal_input =
     \\modernize(features, support)
     \\  selector = support ? '' : ('.no-js ' + selector())
@@ -6346,6 +6366,82 @@ test "native Stylus function arguments preserve defaults forwarding and property
     );
 }
 
+test "native Stylus arguments preserve finite default and rest sequences" {
+    const lower_input =
+        \\op(a, b=a, operator='+')
+        \\  arguments
+        \\body
+        \\  foo op(1) // provider oracle
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{foo:1 1 '+'}", lower.css());
+
+    const comma_property_input =
+        \\joined()
+        \\  {current-property[0]}: arguments
+        \\body
+        \\  joined: 1px, 2px
+    ;
+    var comma_property = try compile(
+        std.testing.allocator,
+        comma_property_input,
+        .{},
+    );
+    defer comma_property.deinit();
+    try std.testing.expectEqualStrings(
+        "body{joined:1px, 2px}",
+        comma_property.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = regression_272_arguments_input.len;
+    terminal_limits.max_selectors = 2;
+    var first = try compile(
+        std.testing.allocator,
+        regression_272_arguments_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        regression_272_arguments_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(regression_272_arguments_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_selectors = terminal_limits;
+    over_selectors.max_selectors = 1;
+    try expectSemanticRejectionWithLimits(
+        regression_272_arguments_input,
+        over_selectors,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, regression_272_arguments_input, "body").?),
+    );
+
+    var over_source = terminal_limits;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        regression_272_arguments_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus keyword arguments bind builtins and user callables deterministically" {
     const lower_input =
         \\body
@@ -8103,6 +8199,15 @@ fn exerciseFunctionArgumentsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(function_arguments_css, result.css());
 }
 
+fn exerciseRegression272ArgumentsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = regression_272_arguments_input.len;
+    limits.max_selectors = 2;
+    var result = try compile(allocator, regression_272_arguments_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(regression_272_arguments_css, result.css());
+}
+
 fn exerciseForwardedSelectorArgumentsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 2;
@@ -8769,6 +8874,14 @@ test "native Stylus function arguments handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseFunctionArgumentsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus regression 272 arguments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseRegression272ArgumentsAllocationFailures,
         .{},
     );
 }
