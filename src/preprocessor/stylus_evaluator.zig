@@ -3738,14 +3738,12 @@ const Engine = struct {
                     const placeholder_target = selectorBranchContainsPlaceholder(
                         plural_target,
                     );
-                    if (current_selector_nested and !placeholder_target) continue;
                     var extenders = try splitTopLevel(self.allocator, extender, ',');
                     defer extenders.deinit(self.allocator);
-                    if (extenders.items.len != 1 and !placeholder_target and
-                        selectorHasTopLevelCombinator(plural_target)) continue;
-                    // Stylus registers every branch in a root selector group on
-                    // one simple target. That edge must not recursively rewrite
-                    // selectors it just generated from the same group.
+                    // Stylus registers every branch in a selector group on one
+                    // target, including complex and nested targets. That edge
+                    // must not recursively rewrite selectors it just generated
+                    // from the same group.
                     original_targets_only = extenders.items.len != 1 and
                         !placeholder_target;
                 }
