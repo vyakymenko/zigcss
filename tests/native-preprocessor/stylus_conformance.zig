@@ -52,6 +52,12 @@ fn fixturePath(
     return std.fs.path.join(allocator, &.{ corpus_files_root, relative });
 }
 
+fn corpusRoot(allocator: std.mem.Allocator) ![]u8 {
+    const repository_root = try std.process.getCwdAlloc(allocator);
+    defer allocator.free(repository_root);
+    return std.fs.path.join(allocator, &.{ repository_root, corpus_files_root });
+}
+
 fn compileNative(
     allocator: std.mem.Allocator,
     case: ManifestCase,
@@ -66,7 +72,7 @@ fn compileNativeWithLimits(
     input: []const u8,
     limits: stylus_evaluator.Limits,
 ) !compiler.Result {
-    const corpus_root = try std.fs.cwd().realpathAlloc(allocator, corpus_files_root);
+    const corpus_root = try corpusRoot(allocator);
     defer allocator.free(corpus_root);
     const images_root = try std.fs.path.join(allocator, &.{ corpus_root, "upstream/images" });
     defer allocator.free(images_root);
@@ -106,7 +112,7 @@ fn compileExpectedCss(
     allocator: std.mem.Allocator,
     expected: []const u8,
 ) !evaluator.ValidatedCss {
-    const corpus_root = try std.fs.cwd().realpathAlloc(allocator, corpus_files_root);
+    const corpus_root = try corpusRoot(allocator);
     defer allocator.free(corpus_root);
 
     var authority = try resolver.Resolver.init(allocator, &.{corpus_root}, .{});

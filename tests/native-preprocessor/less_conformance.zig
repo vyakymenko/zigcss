@@ -32,8 +32,10 @@ fn findCase(cases: []const SelectionCase, id: []const u8) !SelectionCase {
     return error.MissingConformanceCase;
 }
 
-fn suitePath(allocator: std.mem.Allocator, case: SelectionCase) ![]u8 {
-    return std.fs.path.join(allocator, &.{ corpus_files_root, case.suite });
+fn suiteRoot(allocator: std.mem.Allocator, case: SelectionCase) ![]u8 {
+    const repository_root = try std.process.getCwdAlloc(allocator);
+    defer allocator.free(repository_root);
+    return std.fs.path.join(allocator, &.{ repository_root, corpus_files_root, case.suite });
 }
 
 fn fixturePath(
@@ -65,9 +67,7 @@ fn compileNativeWithOptions(
     less_options: less_evaluator.Options,
     output_options: evaluator.Options,
 ) !compiler.Result {
-    const suite_path = try suitePath(allocator, case);
-    defer allocator.free(suite_path);
-    const suite_root = try std.fs.cwd().realpathAlloc(allocator, suite_path);
+    const suite_root = try suiteRoot(allocator, case);
     defer allocator.free(suite_root);
     const entry_path = try std.fs.path.join(allocator, &.{ suite_root, case.entry });
     defer allocator.free(entry_path);
@@ -88,9 +88,7 @@ fn compileExpectedCss(
     case: SelectionCase,
     expected: []const u8,
 ) !evaluator.ValidatedCss {
-    const suite_path = try suitePath(allocator, case);
-    defer allocator.free(suite_path);
-    const suite_root = try std.fs.cwd().realpathAlloc(allocator, suite_path);
+    const suite_root = try suiteRoot(allocator, case);
     defer allocator.free(suite_root);
 
     var authority = try resolver.Resolver.init(allocator, &.{suite_root}, .{});

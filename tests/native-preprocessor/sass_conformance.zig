@@ -41,6 +41,12 @@ fn fixturePath(
     return std.fs.path.join(allocator, &.{ corpus_cases_root, case.id, relative });
 }
 
+fn caseRoot(allocator: std.mem.Allocator, case: ManifestCase) ![]u8 {
+    const repository_root = try std.process.getCwdAlloc(allocator);
+    defer allocator.free(repository_root);
+    return std.fs.path.join(allocator, &.{ repository_root, corpus_cases_root, case.id });
+}
+
 fn compileNative(
     allocator: std.mem.Allocator,
     case: ManifestCase,
@@ -60,9 +66,7 @@ fn compileNativeWithOptions(
     input: []const u8,
     options: evaluator.Options,
 ) !compiler.Result {
-    const case_path = try std.fs.path.join(allocator, &.{ corpus_cases_root, case.id });
-    defer allocator.free(case_path);
-    const case_root = try std.fs.cwd().realpathAlloc(allocator, case_path);
+    const case_root = try caseRoot(allocator, case);
     defer allocator.free(case_root);
     const entry_path = try std.fs.path.join(allocator, &.{ case_root, case.entry });
     defer allocator.free(entry_path);
@@ -82,9 +86,7 @@ fn compileExpectedCss(
     case: ManifestCase,
     expected: []const u8,
 ) !evaluator.ValidatedCss {
-    const case_path = try std.fs.path.join(allocator, &.{ corpus_cases_root, case.id });
-    defer allocator.free(case_path);
-    const case_root = try std.fs.cwd().realpathAlloc(allocator, case_path);
+    const case_root = try caseRoot(allocator, case);
     defer allocator.free(case_root);
 
     var authority = try resolver.Resolver.init(allocator, &.{case_root}, .{});
