@@ -1177,6 +1177,12 @@ const property_access_css =
     ".target{border:1px solid #ff0505;unknown:true;empty:;" ++
     "position:absolute;z-index:1}";
 
+const silent_comment_input =
+    "body { font-weight: normal; } /* foo */\n" ++
+    "body { color: #fff; }   // foo";
+
+const silent_comment_css = "body{font-weight:normal}body{color:#fff}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3240,6 +3246,48 @@ test "native Stylus preserves finite declaration comment boundaries" {
     try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
+test "native Stylus silent comments own finite semantic admission" {
+    const lower_input = "body { color: #fff; } // dropped";
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{color:#fff}", lower.css());
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = silent_comment_input.len;
+    var first = try compile(
+        std.testing.allocator,
+        silent_comment_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        silent_comment_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(silent_comment_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.max_source_bytes = silent_comment_input.len - 1;
+    try expectSemanticRejectionWithLimits(
+        silent_comment_input,
+        over_limit,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
 }
 
 test "native Stylus evaluates the finite contrast result object and CSS fallback" {
@@ -7333,6 +7381,12 @@ fn exercisePropertySlashAllocationFailures(allocator: std.mem.Allocator) !void {
     );
 }
 
+fn exerciseSilentCommentAdmissionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, silent_comment_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(silent_comment_css, result.css());
+}
+
 fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
@@ -7957,6 +8011,14 @@ test "native Stylus property slash transaction handles every allocation failure"
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exercisePropertySlashAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus silent comment admission handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseSilentCommentAdmissionAllocationFailures,
         .{},
     );
 }

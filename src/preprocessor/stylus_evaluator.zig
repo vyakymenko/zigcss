@@ -943,6 +943,17 @@ fn requiresSemanticEvaluation(
     if (inputContainsBuiltinCall(input)) return true;
     if (std.mem.indexOf(u8, input, "@extend") != null) return true;
     for (document.nodes(), 0..) |node, index| {
+        if (node.kind == .comment and node.text != null) {
+            const comment = std.mem.trimLeft(
+                u8,
+                try sources.slice(node.text.?),
+                " \t\r\n\x0c",
+            );
+            // Silent Stylus comments are not CSS and therefore cannot enter
+            // the byte-preserving passthrough path. Parser-owned comment
+            // spans distinguish them from quoted and unquoted URL slashes.
+            if (std.mem.startsWith(u8, comment, "//")) return true;
+        }
         if (node.kind == .at_rule and node.text != null) {
             const header = std.mem.trim(
                 u8,
