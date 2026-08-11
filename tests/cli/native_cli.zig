@@ -139,6 +139,88 @@ fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
     return count;
 }
 
+const inline_source_map_prefix =
+    "/*# sourceMappingURL=data:application/json;charset=utf-8;base64,";
+
+fn decodeInlineSourceMap(output: []const u8, expected_css: []const u8) ![]u8 {
+    if (!std.mem.startsWith(u8, output, expected_css)) return error.InvalidSourceMap;
+    const marker = std.mem.indexOf(u8, output, inline_source_map_prefix) orelse
+        return error.MissingSourceMap;
+    if (marker != expected_css.len + 1 or output[expected_css.len] != '\n' or
+        !std.mem.endsWith(u8, output, " */"))
+    {
+        return error.InvalidSourceMap;
+    }
+    const encoded_start = marker + inline_source_map_prefix.len;
+    const encoded_end = output.len - " */".len;
+    const encoded = output[encoded_start..encoded_end];
+    const decoded_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded);
+    const decoded = try allocator.alloc(u8, decoded_len);
+    errdefer allocator.free(decoded);
+    try std.base64.standard.Decoder.decode(decoded, encoded);
+    return decoded;
+}
+
+fn expectInlineSourceMap(
+    output: []const u8,
+    expected_css: []const u8,
+    source_suffix: []const u8,
+    source_content: []const u8,
+) !void {
+    const source_map = try decodeInlineSourceMap(output, expected_css);
+    defer allocator.free(source_map);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        source_map,
+        "zigcss-native:///intermediate.css",
+    ) == null);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, source_map, .{});
+    defer parsed.deinit();
+    const object = parsed.value.object;
+    try std.testing.expectEqual(@as(i64, 3), object.get("version").?.integer);
+    const sources = object.get("sources").?.array.items;
+    const contents = object.get("sourcesContent").?.array.items;
+    try std.testing.expectEqual(sources.len, contents.len);
+    try std.testing.expect(sources.len > 0);
+    try std.testing.expect(std.mem.endsWith(u8, sources[0].string, source_suffix));
+    try std.testing.expectEqualStrings(source_content, contents[0].string);
+    try std.testing.expect(object.get("mappings").?.string.len > 0);
+}
+
+fn waitForMappedOutputContents(
+    dir: std.fs.Dir,
+    path: []const u8,
+    expected_css: []const u8,
+    expected_dependency_content: []const u8,
+) !OutputStamp {
+    for (0..100) |_| {
+        const contents = dir.readFileAlloc(allocator, path, 1024 * 1024) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.Thread.sleep(50 * std.time.ns_per_ms);
+                continue;
+            },
+            else => return err,
+        };
+        defer allocator.free(contents);
+        if (!std.mem.startsWith(u8, contents, expected_css)) {
+            std.Thread.sleep(50 * std.time.ns_per_ms);
+            continue;
+        }
+        const source_map = try decodeInlineSourceMap(contents, expected_css);
+        defer allocator.free(source_map);
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, source_map, .{});
+        defer parsed.deinit();
+        const source_contents = parsed.value.object.get("sourcesContent").?.array.items;
+        for (source_contents) |item| {
+            if (std.mem.eql(u8, item.string, expected_dependency_content)) {
+                return outputStamp(dir, path);
+            }
+        }
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
+    return error.WatchTimeout;
+}
+
 fn runInDir(dir: std.fs.Dir, argv_tail: []const []const u8) !Child.RunResult {
     const argv = try allocator.alloc([]const u8, argv_tail.len + 1);
     defer allocator.free(argv);
@@ -256,6 +338,140 @@ test "binary CLI routes the finite native syntax set through the pre-graduation 
     }
 }
 
+test "binary CLI routes composed native source maps through files stdin and parallel batches" {
+    inline for (route_cases) |case| {
+        var file_result = try runCompilerNamed(case.filename, case.input, &.{
+            "--experimental-native",
+            "--syntax",
+            case.syntax,
+            "--minify",
+            "--source-map",
+        });
+        defer deinitRun(&file_result);
+        try expectExitCode(file_result, 0);
+        try expectInlineSourceMap(
+            file_result.stdout,
+            case.expected,
+            case.filename,
+            case.input,
+        );
+
+        var stdin_result = try runWithStdin(&.{
+            "-",
+            "--experimental-native",
+            "--syntax",
+            case.syntax,
+            "--minify",
+            "--source-map",
+        }, case.input);
+        defer deinitRun(&stdin_result);
+        try expectExitCode(stdin_result, 0);
+        const stdin_name = if (std.mem.eql(u8, case.syntax, "stylus"))
+            ".zigcss-stdin.styl"
+        else
+            try std.fmt.allocPrint(allocator, ".zigcss-stdin.{s}", .{case.syntax});
+        defer if (!std.mem.eql(u8, case.syntax, "stylus")) allocator.free(stdin_name);
+        try expectInlineSourceMap(
+            stdin_result.stdout,
+            case.expected,
+            stdin_name,
+            case.input,
+        );
+    }
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "first.scss", .data = ".first { color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "second.scss", .data = ".second { color: blue; }" });
+    try tmp.dir.makeDir("out");
+    var batch = try runInDir(tmp.dir, &.{
+        "first.scss",
+        "second.scss",
+        "-o",
+        "out",
+        "--output-dir",
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--minify",
+        "--source-map",
+    });
+    defer deinitRun(&batch);
+    try expectExitCode(batch, 0);
+    const first_output = try tmp.dir.readFileAlloc(allocator, "out/first.css", 1024 * 1024);
+    defer allocator.free(first_output);
+    const second_output = try tmp.dir.readFileAlloc(allocator, "out/second.css", 1024 * 1024);
+    defer allocator.free(second_output);
+    try expectInlineSourceMap(
+        first_output,
+        ".first{color:red}",
+        "first.scss",
+        ".first { color: red; }",
+    );
+    try expectInlineSourceMap(
+        second_output,
+        ".second{color:blue}",
+        "second.scss",
+        ".second { color: blue; }",
+    );
+}
+
+test "binary CLI native watch atomically replaces CSS and its composed source map" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const case = route_cases[0];
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.watch_input });
+    try tmp.dir.writeFile(.{
+        .sub_path = case.watch_dependency,
+        .data = case.watch_dependency_before,
+    });
+    const argv = [_][]const u8{
+        cli_options.compiler_path,
+        case.filename,
+        "-o",
+        "output.css",
+        "--experimental-native",
+        "--syntax",
+        case.syntax,
+        "--watch",
+        "--minify",
+        "--source-map",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer {
+        if (running) _ = child.kill() catch {};
+    }
+
+    _ = try waitForMappedOutputContents(
+        tmp.dir,
+        "output.css",
+        case.watch_expected_before,
+        case.watch_dependency_before,
+    );
+    try replaceFileAtomically(
+        tmp.dir,
+        case.watch_dependency,
+        case.watch_dependency_after,
+    );
+    const changed = try waitForMappedOutputContents(
+        tmp.dir,
+        "output.css",
+        case.watch_expected_after,
+        case.watch_dependency_after,
+    );
+    std.Thread.sleep(1200 * std.time.ns_per_ms);
+    try std.testing.expect(changed.eql(try outputStamp(tmp.dir, "output.css")));
+    _ = try child.kill();
+    running = false;
+}
+
 test "binary CLI keeps native routing explicit and pending execution modes fail closed" {
     const input = route_cases[0].input;
     var css = try runCompilerNamed("input.css", ".a { color: red; }", &.{ "--syntax", "css", "--minify" });
@@ -307,6 +523,22 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
         try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
         try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unavailable for the pre-graduation native CLI") != null);
     }
+
+    var duplicate_map = try runCompilerNamed("input.scss", input, &.{
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--source-map",
+        "--source-map",
+    });
+    defer deinitRun(&duplicate_map);
+    try expectExitCode(duplicate_map, 2);
+    try std.testing.expectEqual(@as(usize, 0), duplicate_map.stdout.len);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        duplicate_map.stderr,
+        "--source-map may only be specified once",
+    ) != null);
 }
 
 test "binary CLI native watch invalidates the finite syntax dependency set" {
@@ -857,6 +1089,7 @@ test "binary CLI native failures commit no partial output" {
         "--syntax",
         "scss",
         "--minify",
+        "--source-map",
     });
     defer deinitRun(&result);
     try expectExitCode(result, 1);

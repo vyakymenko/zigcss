@@ -427,8 +427,8 @@ const expectedStylusConformance = Object.freeze({
 const expectedProductRouting = Object.freeze({
   ownerPackage: 'NATIVE-006',
   releaseGapFamily: 'native-product-routing',
-  state: 'in-progress',
-  packageState: 'in-progress',
+  state: 'closed',
+  packageState: 'verified',
   terminalContract: Object.freeze({
     adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
     surfaces: Object.freeze([
@@ -541,8 +541,14 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'source-maps',
       releaseGapFamily: 'native-source-map-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'external Zig API composes deterministic source maps for the finite native syntax set',
+        'external Zig API composes imported Unicode source positions without intermediate leaks',
+        'binary CLI routes composed native source maps through files stdin and parallel batches',
+        'binary CLI native watch atomically replaces CSS and its composed source map',
+        'javascript wrapper routes the finite native syntax set through the installed binary',
+      ]),
     }),
   ]),
 })
@@ -1274,10 +1280,12 @@ function validateProductRouting(
                   ? `${zigApiTests}\n${cliTests}`
                   : route.id === 'diagnostics-and-dependencies'
                     ? `${zigApiTests}\n${cliTests}\n${nodeWrapperTests}`
-                  : ''
+                    : route.id === 'source-maps'
+                      ? `${zigApiTests}\n${cliTests}\n${nodeWrapperTests}`
+                      : ''
       for (const evidenceTest of route.evidenceTests) {
         const testDeclaration = route.id === 'javascript-wrapper' ||
-          (route.id === 'diagnostics-and-dependencies' &&
+          ((route.id === 'diagnostics-and-dependencies' || route.id === 'source-maps') &&
             evidenceTest.startsWith('javascript wrapper '))
           ? `test('${evidenceTest}'`
           : `test "${evidenceTest}"`
@@ -1749,7 +1757,7 @@ function validateLessEvaluator(source, tests, plan) {
   )
 }
 
-function validateInternalReachability(implementations, buildFile, productionSources) {
+function validateInternalReachability(implementations, buildFile, productionSources, nodeWrapperTests) {
   requireText(buildFile, 'root_source_file = b.path("src/preprocessor.zig")', 'build.zig')
   for (const implementation of implementations) {
     for (const testSource of implementation.testSources) {
@@ -1794,6 +1802,8 @@ function validateInternalReachability(implementations, buildFile, productionSour
   const sourceByPath = new Map(productionSources)
   const libraryRoot = sourceByPath.get('src/lib.zig') ?? ''
   const nativeApi = sourceByPath.get('src/native_api.zig') ?? ''
+  const nativeCompiler = sourceByPath.get('src/preprocessor/compiler.zig') ?? ''
+  const nativeSourceMap = sourceByPath.get('src/preprocessor/sourcemap.zig') ?? ''
   const binaryCli = sourceByPath.get('src/main.zig') ?? ''
   const sassEvaluator = sourceByPath.get('src/preprocessor/sass_evaluator.zig') ?? ''
   requireText(
@@ -1816,16 +1826,60 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     nativeApi,
-    '.source_map = false,',
-    'native Zig API pending source-map boundary',
+    '.source_map = options.source_map,',
+    'native Zig API source-map request promotion',
+  )
+  requireText(
+    nativeApi,
+    'compiled.composeSourceMap(allocator)',
+    'native Zig API composed source-map promotion',
+  )
+  requireText(
+    nativeApi,
+    'source_map: ?[]const u8,',
+    'native Zig API owned source-map result',
+  )
+  requireText(
+    nativeApi,
+    'if (self.source_map) |bytes| allocator.free(bytes);',
+    'native Zig API source-map teardown',
+  )
+  requireText(
+    nativeCompiler,
+    'pub fn composeSourceMap(',
+    'native compiler source-map composition route',
+  )
+  requireText(
+    nativeCompiler,
+    'native_sourcemap.composeCoreMap(',
+    'native compiler two-stage source-map composition',
+  )
+  for (const [needle, label] of [
+    ['pub fn composeCoreMap(', 'native source-map bounded composition'],
+    ['core_sourcemap.decodeMappings(', 'native source-map strict core decoding'],
+    ['const inner = frontend.lookup(', 'native source-map greatest-lower-bound tracing'],
+    ['max_composed_source_map_bytes', 'native source-map output terminal'],
+  ]) {
+    requireText(nativeSourceMap, needle, label)
+  }
+  for (const [needle, label] of [
+    ['fn renderNativeCss(', 'native binary CLI source-map renderer'],
+    ['std.base64.standard.Encoder.encode(', 'native binary CLI inline source-map encoding'],
+    ['task.rendered_css = renderNativeCss(', 'native binary CLI parallel map preparation'],
+    ['--source-map             Embed a composed map for a gated native syntax', 'native binary CLI source-map help'],
+  ]) {
+    requireText(binaryCli, needle, label)
+  }
+  requireText(
+    nodeWrapperTests,
+    "'--source-map',",
+    'native JavaScript wrapper source-map forwarding',
   )
   for (const pendingResultSurface of [
-    'compiled.sourceMap(',
-    'compiled.frontendMap(',
     'compiled.edges(',
   ]) {
     if (nativeApi.includes(pendingResultSurface)) {
-      fail('native Zig API crossed a pending result-fact or source-map route')
+      fail('native Zig API crossed the pending edge-fact route')
     }
   }
   const nativeWatchState = nativeApi.match(
@@ -1888,10 +1942,9 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   for (const pendingPublicResultSurface of [
     'pub fn edges(',
-    'pub fn sourceMap(',
   ]) {
     if (nativeApi.includes(pendingPublicResultSurface)) {
-      fail('native Zig API exposed a pending result-fact or source-map route')
+      fail('native Zig API exposed the pending edge-fact route')
     }
   }
   requireText(
@@ -1960,8 +2013,13 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     nativeWatch[0],
-    'try commitNativeResult(input_file, output_file, &next_result);',
+    'try commitNativeResult(',
     'native binary CLI watch atomic result commit',
+  )
+  requireText(
+    nativeWatch[0],
+    '&next_result,\n                source_map,',
+    'native binary CLI watch composed map commit',
   )
   if (nativeWatch[0].includes('compileNativeSource(') ||
       nativeWatch[0].includes('std.Thread.spawn') ||
@@ -2008,12 +2066,12 @@ function validateInternalReachability(implementations, buildFile, productionSour
     ['for (threads[0..spawned]) |thread| thread.join();', 'thread join'],
     ['queue.markPendingCancelled();', 'pending cancellation'],
     ['if (queue.failed)', 'transaction failure'],
-    ['try writeOutputFile(task.output_file, task.result.?.css);', 'ordered commit'],
+    ['task.rendered_css orelse task.result.?.css,', 'ordered composed-map commit'],
   ]) {
     requireText(binaryCli, needle, `native binary CLI parallel ${label}`)
   }
   const joinIndex = nativeParallel[0].indexOf('for (threads[0..spawned]) |thread| thread.join();')
-  const writeIndex = nativeParallel[0].indexOf('try writeOutputFile(task.output_file, task.result.?.css);')
+  const writeIndex = nativeParallel[0].indexOf('task.rendered_css orelse task.result.?.css,')
   if (joinIndex < 0 || writeIndex < 0 || joinIndex > writeIndex) {
     fail('native binary CLI parallel route writes before every worker joins')
   }
@@ -2287,7 +2345,12 @@ export function validateContract(
   for (const [index, implementation] of contract.implementations.entries()) {
     validateImplementation(implementation, index, contract, plan)
   }
-  validateInternalReachability(contract.implementations, buildFile, productionSources)
+  validateInternalReachability(
+    contract.implementations,
+    buildFile,
+    productionSources,
+    nodeWrapperTests,
+  )
   validateNativeImportClosure(contract, productionSources)
 
   requireText(plan, 'Plan version: 1.5', 'DEVELOPMENT_PLAN.md')

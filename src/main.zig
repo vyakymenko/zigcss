@@ -14,6 +14,7 @@ const experimental_notice = std.fmt.comptimePrint(
 );
 const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
 const max_input_bytes = 10 * 1024 * 1024;
+const max_native_rendered_output_bytes = 96 * 1024 * 1024;
 const max_batch_output_basename_bytes = 128;
 const max_batch_workers = 8;
 const stdin_source_name = "<stdin>";
@@ -72,7 +73,9 @@ const NativeBatchTask = struct {
     output_file: []const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    source_map: bool,
     result: ?native_api.CompileResult = null,
+    rendered_css: ?[]u8 = null,
     err: ?anyerror = null,
     state: CompileTaskState = .pending,
     allocator_state: NativeBatchTaskAllocator = .{},
@@ -82,7 +85,9 @@ const NativeBatchTask = struct {
     }
 
     fn deinit(self: *NativeBatchTask, planning_allocator: std.mem.Allocator) void {
+        const task_allocator = self.allocator();
         if (self.result) |*result| result.deinit();
+        if (self.rendered_css) |bytes| task_allocator.free(bytes);
         const allocator_check = self.allocator_state.deinit();
         std.debug.assert(allocator_check == .ok);
         planning_allocator.free(self.output_file);
@@ -374,6 +379,7 @@ fn compileNativeLoadedSource(
     syntax: native_api.Syntax,
     minify: bool,
     watch: bool,
+    source_map: bool,
     report_errors: bool,
 ) !native_api.CompileResult {
     const root_paths = [_][]const u8{root_path};
@@ -382,6 +388,7 @@ fn compileNativeLoadedSource(
         .root_paths = &root_paths,
         .format = if (minify) .minified else .pretty,
         .watch = watch,
+        .source_map = source_map,
     }) catch |err| {
         if (report_errors) {
             std.debug.print(
@@ -401,6 +408,7 @@ fn compileNativeSourceWithReporting(
     input_file: []const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    source_map: bool,
     report_errors: bool,
 ) !native_api.CompileResult {
     const stdin_root = if (isStdioPath(input_file))
@@ -440,6 +448,7 @@ fn compileNativeSourceWithReporting(
         syntax,
         minify,
         false,
+        source_map,
         report_errors,
     );
 }
@@ -449,8 +458,16 @@ fn compileNativeSource(
     input_file: []const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    source_map: bool,
 ) !native_api.CompileResult {
-    return compileNativeSourceWithReporting(allocator, input_file, syntax, minify, true);
+    return compileNativeSourceWithReporting(
+        allocator,
+        input_file,
+        syntax,
+        minify,
+        source_map,
+        true,
+    );
 }
 
 fn compileNativeSourceQuiet(
@@ -458,27 +475,76 @@ fn compileNativeSourceQuiet(
     input_file: []const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    source_map: bool,
 ) !native_api.CompileResult {
-    return compileNativeSourceWithReporting(allocator, input_file, syntax, minify, false);
+    return compileNativeSourceWithReporting(
+        allocator,
+        input_file,
+        syntax,
+        minify,
+        source_map,
+        false,
+    );
+}
+
+fn renderNativeCss(
+    allocator: std.mem.Allocator,
+    result: *const native_api.CompileResult,
+) ![]u8 {
+    const source_map = result.source_map orelse return error.CompilationFailed;
+    const marker = "/*# sourceMappingURL=data:application/json;charset=utf-8;base64,";
+    const encoded_len = std.base64.standard.Encoder.calcSize(source_map.len);
+    const newline_len: usize = @intFromBool(!std.mem.endsWith(u8, result.css, "\n"));
+    var total = std.math.add(usize, result.css.len, newline_len) catch
+        return error.ResourceLimitExceeded;
+    total = std.math.add(usize, total, marker.len) catch
+        return error.ResourceLimitExceeded;
+    total = std.math.add(usize, total, encoded_len) catch
+        return error.ResourceLimitExceeded;
+    total = std.math.add(usize, total, " */".len) catch
+        return error.ResourceLimitExceeded;
+    if (total > max_native_rendered_output_bytes) return error.ResourceLimitExceeded;
+
+    const rendered = try allocator.alloc(u8, total);
+    var cursor: usize = 0;
+    @memcpy(rendered[cursor..][0..result.css.len], result.css);
+    cursor += result.css.len;
+    if (newline_len != 0) {
+        rendered[cursor] = '\n';
+        cursor += 1;
+    }
+    @memcpy(rendered[cursor..][0..marker.len], marker);
+    cursor += marker.len;
+    _ = std.base64.standard.Encoder.encode(rendered[cursor..][0..encoded_len], source_map);
+    cursor += encoded_len;
+    @memcpy(rendered[cursor..][0.." */".len], " */");
+    cursor += " */".len;
+    std.debug.assert(cursor == rendered.len);
+    return rendered;
 }
 
 fn commitNativeResult(
+    allocator: std.mem.Allocator,
     input_file: []const u8,
     output_file: ?[]const u8,
     result: *const native_api.CompileResult,
+    source_map: bool,
 ) !void {
+    const rendered = if (source_map) try renderNativeCss(allocator, result) else null;
+    defer if (rendered) |bytes| allocator.free(bytes);
+    const output = if (rendered) |bytes| bytes else result.css;
     if (output_file) |out| {
         if (isStdioPath(out)) {
-            writeStdout(result.css) catch |err| {
+            writeStdout(output) catch |err| {
                 std.debug.print("Error: failed to write stdout: {s}\n", .{@errorName(err)});
                 return err;
             };
         } else {
-            try writeOutputFile(out, result.css);
+            try writeOutputFile(out, output);
             std.debug.print("Compiled: {s} -> {s}\n", .{ input_file, out });
         }
     } else {
-        writeStdout(result.css) catch |err| {
+        writeStdout(output) catch |err| {
             std.debug.print("Error: failed to write stdout: {s}\n", .{@errorName(err)});
             return err;
         };
@@ -491,11 +557,12 @@ fn compileNativeInput(
     output_file: ?[]const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    source_map: bool,
 ) !void {
-    var result = try compileNativeSource(allocator, input_file, syntax, minify);
+    var result = try compileNativeSource(allocator, input_file, syntax, minify, source_map);
     defer result.deinit();
     if (hasNativeErrorDiagnostics(result.diagnostics)) return error.CompileError;
-    try commitNativeResult(input_file, output_file, &result);
+    try commitNativeResult(allocator, input_file, output_file, &result, source_map);
 }
 
 fn computeFileHash(content: []const u8) u64 {
@@ -767,6 +834,7 @@ fn watchNativeFile(
     output_file: ?[]const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    source_map: bool,
 ) !void {
     const entry_path = std.fs.cwd().realpathAlloc(allocator, input_file) catch |err| {
         std.debug.print("Error: failed to resolve {s}: {s}\n", .{ input_file, @errorName(err) });
@@ -815,6 +883,7 @@ fn watchNativeFile(
                 syntax,
                 minify,
                 true,
+                source_map,
                 true,
             ) catch |err| {
                 if (err == error.OutOfMemory) return err;
@@ -827,7 +896,13 @@ fn watchNativeFile(
                 std.Thread.sleep(500 * std.time.ns_per_ms);
                 continue;
             }
-            try commitNativeResult(input_file, output_file, &next_result);
+            try commitNativeResult(
+                allocator,
+                input_file,
+                output_file,
+                &next_result,
+                source_map,
+            );
 
             if (watched_result) |*result| result.deinit();
             watched_result = next_result.take();
@@ -974,12 +1049,24 @@ fn compileNativeTask(task: *NativeBatchTask) bool {
         task.input_file,
         task.syntax,
         task.minify,
+        task.source_map,
     ) catch |err| {
         task.err = err;
         task.state = .failed;
         return false;
     };
-    task.state = if (hasNativeErrorDiagnostics(task.result.?.diagnostics)) .failed else .succeeded;
+    if (hasNativeErrorDiagnostics(task.result.?.diagnostics)) {
+        task.state = .failed;
+        return false;
+    }
+    if (task.source_map) {
+        task.rendered_css = renderNativeCss(allocator, &task.result.?) catch |err| {
+            task.err = err;
+            task.state = .failed;
+            return false;
+        };
+    }
+    task.state = .succeeded;
     return task.state == .succeeded;
 }
 
@@ -1087,7 +1174,10 @@ fn compileNativeFilesParallel(allocator: std.mem.Allocator, tasks: []NativeBatch
     for (tasks) |*task| {
         if (task.state != .succeeded) return error.CompileError;
         printNativeDiagnostics(task.result.?.diagnostics);
-        try writeOutputFile(task.output_file, task.result.?.css);
+        try writeOutputFile(
+            task.output_file,
+            task.rendered_css orelse task.result.?.css,
+        );
         std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
     }
 }
@@ -1314,6 +1404,7 @@ fn printUsage() !void {
             "  --syntax <syntax>        Select CSS (default), or a gated native syntax\n" ++
             "  --experimental-native   Enable the pre-graduation file/stdin/parallel-batch/watch native route\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
+            "  --source-map             Embed a composed map for a gated native syntax\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
             "  --watch                  Watch one input and its confined local imports\n" ++
             "  --profile                Report API stages and requested memory bytes\n" ++
@@ -1322,7 +1413,7 @@ fn printUsage() !void {
             "  -h, --help               Show this help\n" ++
             "\nExit status: 0 success/info, 1 compilation or I/O failure, 2 usage error.\n" ++
             "\nUnavailable and rejected during recovery:\n" ++
-            "  --source-map, --autoprefix, --browsers, --critical-*\n",
+            "  --autoprefix, --browsers, --critical-*\n",
     );
 }
 
@@ -1452,6 +1543,7 @@ fn compileNativeBatch(
     output_dir: []const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    source_map: bool,
 ) !void {
     var tasks = try std.ArrayList(NativeBatchTask).initCapacity(allocator, input_files.len);
     defer {
@@ -1471,6 +1563,7 @@ fn compileNativeBatch(
             .output_file = output_file,
             .syntax = syntax,
             .minify = minify,
+            .source_map = source_map,
         }) catch |err| {
             allocator.free(output_file);
             return err;
@@ -1552,6 +1645,7 @@ pub fn main() !void {
     var experimental_native_flag = false;
     var optimize_flag = false;
     var minify_flag = false;
+    var source_map_flag = false;
     var watch_flag = false;
     var profile_flag = false;
 
@@ -1588,7 +1682,8 @@ pub fn main() !void {
             if (minify_flag) exitWithCliError("--minify may only be specified once", .{});
             minify_flag = true;
         } else if (std.mem.eql(u8, args[i], "--source-map")) {
-            exitWithCliError("--source-map is unavailable until the CLI output policy is defined", .{});
+            if (source_map_flag) exitWithCliError("--source-map may only be specified once", .{});
+            source_map_flag = true;
         } else if (std.mem.eql(u8, args[i], "--watch")) {
             if (watch_flag) exitWithCliError("--watch may only be specified once", .{});
             watch_flag = true;
@@ -1653,6 +1748,9 @@ pub fn main() !void {
     } else if (experimental_native_flag) {
         exitWithCliError("--experimental-native requires --syntax <scss|sass|less|stylus>", .{});
     }
+    if (source_map_flag and native_syntax == null) {
+        exitWithCliError("--source-map is unavailable until the CLI output policy is defined", .{});
+    }
 
     if (stdin_inputs == 1 and input_files.items.len != 1) {
         exitWithCliError("stdin cannot be combined with file or batch inputs", .{});
@@ -1710,6 +1808,7 @@ pub fn main() !void {
                 output_file,
                 selected,
                 minify_flag,
+                source_map_flag,
             ) catch {
                 std.process.exit(exit_compile_failure);
             };
@@ -1720,6 +1819,7 @@ pub fn main() !void {
                 output_file,
                 selected,
                 minify_flag,
+                source_map_flag,
             ) catch {
                 std.process.exit(exit_compile_failure);
             };
@@ -1730,6 +1830,7 @@ pub fn main() !void {
                 output_file.?,
                 selected,
                 minify_flag,
+                source_map_flag,
             ) catch |err| {
                 if (err != error.CompileError and err != error.BatchUsageError) {
                     std.debug.print("Error: native batch compilation failed: {s}\n", .{@errorName(err)});

@@ -84,7 +84,14 @@ test('javascript wrapper routes the finite native syntax set through the install
 
   withWrapperFixture(wrapper => {
     for (const [input, syntax] of routeCases) {
-      const argv = [input, '--experimental-native', '--syntax', syntax, '--minify']
+      const argv = [
+        input,
+        '--experimental-native',
+        '--syntax',
+        syntax,
+        '--minify',
+        '--source-map',
+      ]
       const first = spawnSync(process.execPath, [wrapper, ...argv], { encoding: 'utf8' })
       const second = spawnSync(process.execPath, [wrapper, ...argv], { encoding: 'utf8' })
 

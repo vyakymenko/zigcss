@@ -87,6 +87,23 @@ pub const Result = struct {
         return self.validated.sourceMap();
     }
 
+    /// Produces one final Source Map v3 document by tracing the core-emitter
+    /// mappings through the native frontend segments to original sources.
+    pub fn composeSourceMap(
+        self: *const Result,
+        allocator: std.mem.Allocator,
+    ) Error![]u8 {
+        const core_map = self.sourceMap() orelse return error.InvalidCoreMap;
+        const frontend_map = self.frontendMap() orelse return error.InvalidCoreMap;
+        return native_sourcemap.composeCoreMap(
+            allocator,
+            core_map,
+            frontend_map,
+            &self.sources,
+            .{ .intermediate_source = native_evaluator.intermediate_source_name },
+        );
+    }
+
     pub fn frontendMap(self: *const Result) ?*const native_sourcemap.Map {
         return self.validated.map();
     }

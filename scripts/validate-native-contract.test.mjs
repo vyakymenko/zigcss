@@ -59,8 +59,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
   assert.deepEqual(contract.productRouting, {
     ownerPackage: 'NATIVE-006',
     releaseGapFamily: 'native-product-routing',
-    state: 'in-progress',
-    packageState: 'in-progress',
+    state: 'closed',
+    packageState: 'verified',
     terminalContract: {
       adapters: ['scss', 'sass', 'less', 'stylus'],
       surfaces: [
@@ -163,8 +163,14 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'source-maps',
       releaseGapFamily: 'native-source-map-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'external Zig API composes deterministic source maps for the finite native syntax set',
+        'external Zig API composes imported Unicode source positions without intermediate leaks',
+        'binary CLI routes composed native source maps through files stdin and parallel batches',
+        'binary CLI native watch atomically replaces CSS and its composed source map',
+        'javascript wrapper routes the finite native syntax set through the installed binary',
+      ],
     }],
   })
   assert.deepEqual(contract.sassConformance, {
@@ -1272,16 +1278,29 @@ test('binds unavailable native rows and the pre-graduation product bridges', () 
       productionSources: loadProductionSources().map(([relativePath, source]) => [
         relativePath,
         relativePath === 'src/native_api.zig'
-          ? source.replace('.source_map = false,', '.source_map = true,')
+          ? source.replace('.source_map = options.source_map,', '.source_map = false,')
           : source,
       ]),
     }),
-    /native Zig API pending source-map boundary.*missing/,
+    /native Zig API source-map request promotion.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/native_api.zig'
+          ? source.replace('compiled.composeSourceMap(allocator)', 'missingSourceMap(allocator)')
+          : source,
+      ]),
+    }),
+    /native Zig API composed source-map promotion.*missing/,
   )
 })
 
-test('binds the finite native product routing inventory and verified first nine routes', () => {
+test('binds the finite native product routing inventory and verified closed package', () => {
   for (const mutate of [
+    routing => { routing.state = 'in-progress' },
+    routing => { routing.packageState = 'in-progress' },
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
     routing => { routing.terminalContract.providerProcesses = 1 },
@@ -1294,6 +1313,7 @@ test('binds the finite native product routing inventory and verified first nine 
     routing => { routing.routes[6].state = 'pending' },
     routing => { routing.routes[7].state = 'pending' },
     routing => { routing.routes[8].state = 'pending' },
+    routing => { routing.routes[9].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1429,6 +1449,24 @@ test('binds the finite native product routing inventory and verified first nine 
   )
   assert.throws(
     () => validateContract(loadContract(), {
+      zigApiTests: zigApiTests.replace(
+        'test "external Zig API composes imported Unicode source positions without intermediate leaks"',
+        'test "missing composed Unicode map evidence"',
+      ),
+    }),
+    /native product routing source-maps evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native watch atomically replaces CSS and its composed source map"',
+        'test "missing native mapped watch evidence"',
+      ),
+    }),
+    /native product routing source-maps evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
       cliTests: cliTests.replace(
         'const native_parallel_worker_cap = 8;',
         'const native_parallel_worker_cap = 9;',
@@ -1460,6 +1498,24 @@ test('binds the finite native product routing inventory and verified first nine 
       ),
     }),
     /JavaScript wrapper explicit gate.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeWrapperTests: nodeWrapperTests.replace("'--source-map',", "'--source-map-missing',"),
+    }),
+    /JavaScript wrapper source-map forwarding.*missing/,
+  )
+
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/preprocessor/sourcemap.zig'
+          ? source.replace('const inner = frontend.lookup(', 'const inner = missingLookup(')
+          : source,
+      ]),
+    }),
+    /native source-map greatest-lower-bound tracing.*missing/,
   )
 
   assert.throws(

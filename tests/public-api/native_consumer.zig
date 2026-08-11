@@ -84,6 +84,117 @@ const result_fact_cases = [_]ResultFactCase{
     },
 };
 
+const DecodedMapping = struct {
+    generated_line: u32,
+    generated_column: u32,
+    source: ?u32,
+    original_line: ?u32,
+    original_column: ?u32,
+};
+
+fn base64Value(byte: u8) ?u8 {
+    if (byte >= 'A' and byte <= 'Z') return byte - 'A';
+    if (byte >= 'a' and byte <= 'z') return byte - 'a' + 26;
+    if (byte >= '0' and byte <= '9') return byte - '0' + 52;
+    if (byte == '+') return 62;
+    if (byte == '/') return 63;
+    return null;
+}
+
+fn decodeVlq(encoded: []const u8, cursor: *usize, end: usize) !i64 {
+    var value: u64 = 0;
+    var shift: u6 = 0;
+    while (cursor.* < end) {
+        const digit = base64Value(encoded[cursor.*]) orelse return error.InvalidSourceMap;
+        cursor.* += 1;
+        const payload: u64 = digit & 0x1f;
+        if (shift >= 32 and payload != 0) return error.InvalidSourceMap;
+        value |= payload << shift;
+        if ((digit & 0x20) == 0) {
+            const magnitude = value >> 1;
+            if (magnitude > std.math.maxInt(i32)) return error.InvalidSourceMap;
+            const signed: i64 = @intCast(magnitude);
+            return if ((value & 1) != 0) -signed else signed;
+        }
+        if (shift > 26) return error.InvalidSourceMap;
+        shift += 5;
+    }
+    return error.InvalidSourceMap;
+}
+
+fn decodeMappings(allocator: std.mem.Allocator, encoded: []const u8) ![]DecodedMapping {
+    var decoded: std.ArrayList(DecodedMapping) = .empty;
+    errdefer decoded.deinit(allocator);
+    var generated_line: i64 = 0;
+    var previous_source: i64 = 0;
+    var previous_original_line: i64 = 0;
+    var previous_original_column: i64 = 0;
+    var line_start: usize = 0;
+    while (line_start <= encoded.len) {
+        const line_end = std.mem.indexOfScalarPos(u8, encoded, line_start, ';') orelse encoded.len;
+        var generated_column: i64 = 0;
+        if (line_start < line_end) {
+            var segment_start = line_start;
+            while (segment_start <= line_end) {
+                const segment_end = if (std.mem.indexOfScalar(
+                    u8,
+                    encoded[segment_start..line_end],
+                    ',',
+                )) |relative| segment_start + relative else line_end;
+                if (segment_start == segment_end) return error.InvalidSourceMap;
+                var cursor = segment_start;
+                var fields: [5]i64 = undefined;
+                var field_count: usize = 0;
+                while (cursor < segment_end) {
+                    if (field_count == fields.len) return error.InvalidSourceMap;
+                    fields[field_count] = try decodeVlq(encoded, &cursor, segment_end);
+                    field_count += 1;
+                }
+                if (field_count != 1 and field_count != 4 and field_count != 5) {
+                    return error.InvalidSourceMap;
+                }
+                generated_column += fields[0];
+                if (generated_line < 0 or generated_column < 0 or
+                    generated_line > std.math.maxInt(u32) or
+                    generated_column > std.math.maxInt(u32))
+                {
+                    return error.InvalidSourceMap;
+                }
+                var mapping = DecodedMapping{
+                    .generated_line = @intCast(generated_line),
+                    .generated_column = @intCast(generated_column),
+                    .source = null,
+                    .original_line = null,
+                    .original_column = null,
+                };
+                if (field_count >= 4) {
+                    previous_source += fields[1];
+                    previous_original_line += fields[2];
+                    previous_original_column += fields[3];
+                    if (previous_source < 0 or previous_original_line < 0 or
+                        previous_original_column < 0 or
+                        previous_source > std.math.maxInt(u32) or
+                        previous_original_line > std.math.maxInt(u32) or
+                        previous_original_column > std.math.maxInt(u32))
+                    {
+                        return error.InvalidSourceMap;
+                    }
+                    mapping.source = @intCast(previous_source);
+                    mapping.original_line = @intCast(previous_original_line);
+                    mapping.original_column = @intCast(previous_original_column);
+                }
+                try decoded.append(allocator, mapping);
+                if (segment_end == line_end) break;
+                segment_start = segment_end + 1;
+            }
+        }
+        if (line_end == encoded.len) break;
+        generated_line += 1;
+        line_start = line_end + 1;
+    }
+    return decoded.toOwnedSlice(allocator);
+}
+
 const Fixture = struct {
     allocator: std.mem.Allocator,
     root: []u8,
@@ -127,12 +238,134 @@ test "external Zig API routes the finite native syntax set through owned CSS res
 
         try std.testing.expectEqualStrings(case.expected, first.css);
         try std.testing.expectEqualStrings(first.css, second.css);
+        try std.testing.expect(first.source_map == null);
         var moved = first.take();
         defer moved.deinit();
         try std.testing.expectEqualStrings(case.expected, moved.css);
         try std.testing.expectEqual(@as(usize, 0), first.css.len);
         first.deinit();
     }
+}
+
+test "external Zig API composes deterministic source maps for the finite native syntax set" {
+    var fixture = try Fixture.init(std.testing.allocator);
+    defer fixture.deinit();
+
+    inline for (route_cases) |case| {
+        const entry_path = try fixture.entryPath(std.testing.allocator, case.filename);
+        defer std.testing.allocator.free(entry_path);
+        var first = try native.compile(std.testing.allocator, entry_path, case.input, .{
+            .syntax = case.syntax,
+            .root_paths = &.{fixture.root},
+            .format = .minified,
+            .source_map = true,
+        });
+        defer first.deinit();
+        var second = try native.compile(std.testing.allocator, entry_path, case.input, .{
+            .syntax = case.syntax,
+            .root_paths = &.{fixture.root},
+            .format = .minified,
+            .source_map = true,
+        });
+        defer second.deinit();
+
+        const first_map = first.source_map orelse return error.MissingSourceMap;
+        const second_map = second.source_map orelse return error.MissingSourceMap;
+        try std.testing.expectEqualStrings(first_map, second_map);
+        try std.testing.expect(std.mem.indexOf(u8, first_map, "zigcss-native:///intermediate.css") == null);
+        var parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            std.testing.allocator,
+            first_map,
+            .{},
+        );
+        defer parsed.deinit();
+        const object = parsed.value.object;
+        try std.testing.expectEqual(@as(i64, 3), object.get("version").?.integer);
+        const sources = object.get("sources").?.array.items;
+        const contents = object.get("sourcesContent").?.array.items;
+        try std.testing.expectEqual(@as(usize, 1), sources.len);
+        try std.testing.expectEqual(sources.len, contents.len);
+        try std.testing.expect(std.mem.endsWith(u8, sources[0].string, case.filename));
+        try std.testing.expectEqualStrings(case.input, contents[0].string);
+        const mappings = object.get("mappings").?.string;
+        const decoded = try decodeMappings(std.testing.allocator, mappings);
+        defer std.testing.allocator.free(decoded);
+        try std.testing.expect(decoded.len > 0);
+        for (decoded) |mapping| {
+            if (mapping.source) |source_index| {
+                try std.testing.expect(source_index < sources.len);
+            }
+        }
+
+        var moved = first.take();
+        defer moved.deinit();
+        try std.testing.expect(first.source_map == null);
+        try std.testing.expectEqualStrings(first_map, moved.source_map.?);
+        first.deinit();
+    }
+}
+
+test "external Zig API composes imported Unicode source positions without intermediate leaks" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dependency_input = ".😀{color:red}.b{color:blue}";
+    try tmp.dir.writeFile(.{ .sub_path = "_mapped.scss", .data = dependency_input });
+    const root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root);
+    const entry_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root, "mapped.scss" },
+    );
+    defer std.testing.allocator.free(entry_path);
+    const entry_input = "@use \"mapped\"; .entry { color: green; }";
+
+    var result = try native.compile(std.testing.allocator, entry_path, entry_input, .{
+        .syntax = .scss,
+        .root_paths = &.{root},
+        .format = .minified,
+        .source_map = true,
+    });
+    defer result.deinit();
+    const source_map = result.source_map orelse return error.MissingSourceMap;
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        source_map,
+        .{},
+    );
+    defer parsed.deinit();
+    const object = parsed.value.object;
+    const sources = object.get("sources").?.array.items;
+    const contents = object.get("sourcesContent").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), sources.len);
+    try std.testing.expectEqual(sources.len, contents.len);
+    try std.testing.expect(std.mem.endsWith(u8, sources[0].string, "/mapped.scss"));
+    try std.testing.expect(std.mem.endsWith(u8, sources[1].string, "/_mapped.scss"));
+    try std.testing.expectEqualStrings(entry_input, contents[0].string);
+    try std.testing.expectEqualStrings(dependency_input, contents[1].string);
+    const decoded = try decodeMappings(
+        std.testing.allocator,
+        object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(decoded);
+    var saw_entry = false;
+    var saw_import = false;
+    var saw_utf16_terminal = false;
+    for (decoded) |mapping| {
+        const source_index = mapping.source orelse continue;
+        try std.testing.expect(source_index < sources.len);
+        if (source_index == 0) saw_entry = true;
+        if (source_index == 1) {
+            saw_import = true;
+            if (mapping.original_line.? == 0 and mapping.original_column.? == 14) {
+                saw_utf16_terminal = true;
+            }
+        }
+    }
+    try std.testing.expect(saw_entry);
+    try std.testing.expect(saw_import);
+    try std.testing.expect(saw_utf16_terminal);
 }
 
 test "external Zig API owns native diagnostics and dependency facts" {
@@ -279,9 +512,11 @@ test "external Zig API returns structured native failures without partial facts"
         .syntax = .scss,
         .root_paths = &.{fixture.root},
         .format = .minified,
+        .source_map = true,
     });
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 0), result.css.len);
+    try std.testing.expect(result.source_map == null);
     try std.testing.expectEqual(@as(usize, 0), result.dependencies.len);
     try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
     const diagnostic = result.diagnostics[0];
@@ -302,10 +537,12 @@ test "external Zig API returns structured native failures without partial facts"
             .syntax = .scss,
             .root_paths = &.{fixture.root},
             .format = .minified,
+            .source_map = true,
         },
     );
     defer parse_failure.deinit();
     try std.testing.expectEqual(@as(usize, 0), parse_failure.css.len);
+    try std.testing.expect(parse_failure.source_map == null);
     try std.testing.expectEqual(@as(usize, 0), parse_failure.dependencies.len);
     try std.testing.expect(parse_failure.diagnostics.len > 0);
     try std.testing.expectEqual(native.DiagnosticSeverity.err, parse_failure.diagnostics[0].severity);
@@ -436,9 +673,11 @@ fn exerciseNativeApiAllocationFailures(
         .root_paths = &.{context.root},
         .format = .minified,
         .watch = true,
+        .source_map = true,
     });
     defer result.deinit();
     try std.testing.expectEqualStrings(".a{color:red}", result.css);
+    try std.testing.expect(result.source_map != null);
     try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
     try std.testing.expectEqual(@as(usize, 1), result.dependencies.len);
     const reloaded = try result.readWatchInput(allocator);
@@ -453,9 +692,11 @@ fn exerciseNativeApiAllocationFailures(
         .syntax = .scss,
         .root_paths = &.{context.root},
         .format = .minified,
+        .source_map = true,
     });
     defer failure.deinit();
     try std.testing.expectEqual(@as(usize, 0), failure.css.len);
+    try std.testing.expect(failure.source_map == null);
     try std.testing.expectEqual(@as(usize, 1), failure.diagnostics.len);
     try std.testing.expectEqual(@as(usize, 0), failure.dependencies.len);
 }

@@ -407,8 +407,8 @@
   "productRouting": {
     "ownerPackage": "NATIVE-006",
     "releaseGapFamily": "native-product-routing",
-    "state": "in-progress",
-    "packageState": "in-progress",
+    "state": "closed",
+    "packageState": "verified",
     "terminalContract": {
       "adapters": ["scss", "sass", "less", "stylus"],
       "surfaces": [
@@ -521,8 +521,14 @@
       {
         "id": "source-maps",
         "releaseGapFamily": "native-source-map-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "external Zig API composes deterministic source maps for the finite native syntax set",
+          "external Zig API composes imported Unicode source positions without intermediate leaks",
+          "binary CLI routes composed native source maps through files stdin and parallel batches",
+          "binary CLI native watch atomically replaces CSS and its composed source map",
+          "javascript wrapper routes the finite native syntax set through the installed binary"
+        ]
       }
     ]
   },

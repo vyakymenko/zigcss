@@ -403,6 +403,101 @@ test "source maps reject disorder invalid spans and segment limits" {
     );
 }
 
+test "source maps compose the bounded core stage over native multi-source mappings" {
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const first = try sources.add("a.scss", "a😀b");
+    const second = try sources.add("b.scss", "xy");
+    var builder = sourcemap.Builder.init(std.testing.allocator, &sources, .{});
+    defer builder.deinit();
+    try builder.addMapped(.{ .line = 0, .column = 0 }, try sources.span(first, 5, 6), null);
+    try builder.addUnmapped(.{ .line = 0, .column = 4 });
+    try builder.addMapped(.{ .line = 1, .column = 0 }, try sources.span(second, 1, 2), "token");
+    var frontend = try builder.finish();
+    defer frontend.deinit();
+
+    const core =
+        "{\"version\":3,\"sources\":[\"zigcss-native:///intermediate.css\"]," ++
+        "\"sourcesContent\":[\"first line\\nsecond line\"],\"names\":[]," ++
+        "\"mappings\":\"AAAA,IAAI;AACJ\"}";
+    const composed = try sourcemap.composeCoreMap(
+        std.testing.allocator,
+        core,
+        &frontend,
+        &sources,
+        .{ .intermediate_source = "zigcss-native:///intermediate.css" },
+    );
+    defer std.testing.allocator.free(composed);
+    try std.testing.expectEqualStrings(
+        "{\"version\":3,\"sources\":[\"a.scss\",\"b.scss\"]," ++
+            "\"sourcesContent\":[\"a😀b\",\"xy\"],\"names\":[\"token\"]," ++
+            "\"mappings\":\"AAAG,I;ACAFA\"}",
+        composed,
+    );
+
+    const terminal = try sourcemap.composeCoreMap(
+        std.testing.allocator,
+        core,
+        &frontend,
+        &sources,
+        .{
+            .intermediate_source = "zigcss-native:///intermediate.css",
+            .max_segments = 3,
+            .max_output_bytes = composed.len,
+        },
+    );
+    defer std.testing.allocator.free(terminal);
+    try std.testing.expectEqualStrings(composed, terminal);
+    try std.testing.expectError(
+        error.MappingLimitExceeded,
+        sourcemap.composeCoreMap(
+            std.testing.allocator,
+            core,
+            &frontend,
+            &sources,
+            .{
+                .intermediate_source = "zigcss-native:///intermediate.css",
+                .max_segments = 2,
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.OutputLimitExceeded,
+        sourcemap.composeCoreMap(
+            std.testing.allocator,
+            core,
+            &frontend,
+            &sources,
+            .{
+                .intermediate_source = "zigcss-native:///intermediate.css",
+                .max_output_bytes = composed.len - 1,
+            },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidCoreMap,
+        sourcemap.composeCoreMap(
+            std.testing.allocator,
+            "{\"version\":3,\"sources\":[],\"names\":[],\"mappings\":\"\"}",
+            &frontend,
+            &sources,
+            .{ .intermediate_source = "zigcss-native:///intermediate.css" },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidCoreMap,
+        sourcemap.composeCoreMap(
+            std.testing.allocator,
+            "{\"version\":3,\"file\":\"zigcss-native:///intermediate.css\"," ++
+                "\"sources\":[\"zigcss-native:///intermediate.css\"]," ++
+                "\"names\":[],\"mappings\":\"\"}",
+            &frontend,
+            &sources,
+            .{ .intermediate_source = "zigcss-native:///intermediate.css" },
+        ),
+    );
+}
+
 fn exerciseFoundationAllocationFailures(allocator: std.mem.Allocator) !void {
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();

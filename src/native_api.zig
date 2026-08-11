@@ -3,8 +3,8 @@
 //! This explicit experimental namespace does not graduate a public language
 //! row or authorize CLI, JavaScript, package, documentation, or release claims.
 //! Compilation exposes owned CSS, structured diagnostics, ordered local
-//! dependency identities, and opaque watch invalidation. Source maps remain
-//! behind their separately declared NATIVE-006 routing gate.
+//! dependency identities, composed Source Map v3 bytes, and opaque watch
+//! invalidation behind an explicit pre-graduation gate.
 
 const std = @import("std");
 const native_compiler = @import("preprocessor/compiler.zig");
@@ -117,6 +117,9 @@ pub const Options = struct {
     /// Retain an opaque content snapshot of successfully loaded local inputs
     /// so the native CLI can poll for watch invalidation.
     watch: bool = false,
+    /// Compose the core-emitter and native-frontend mapping stages into one
+    /// result-owned Source Map v3 document over original sources.
+    source_map: bool = false,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -281,6 +284,7 @@ fn mapWatchPathError(err: native_resolver.Error) Error {
 pub const CompileResult = struct {
     result_allocator: std.mem.Allocator,
     css: []const u8,
+    source_map: ?[]const u8,
     diagnostics: []const Diagnostic,
     dependencies: []const Dependency,
     watch_state: ?WatchState,
@@ -295,6 +299,7 @@ pub const CompileResult = struct {
         const allocator = self.result_allocator;
         if (self.watch_state) |*watch_state| watch_state.deinit();
         if (self.css.len > 0) allocator.free(self.css);
+        if (self.source_map) |bytes| allocator.free(bytes);
         releaseDiagnostics(allocator, self.diagnostics);
         releaseDependencies(allocator, self.dependencies);
         self.* = empty(allocator);
@@ -320,6 +325,7 @@ pub const CompileResult = struct {
         return .{
             .result_allocator = allocator,
             .css = &.{},
+            .source_map = null,
             .diagnostics = &.{},
             .dependencies = &.{},
             .watch_state = null,
@@ -359,7 +365,7 @@ pub fn compile(
             .pretty => .pretty,
             .minified => .minified,
         },
-        .source_map = false,
+        .source_map = options.source_map,
         .limits = .{
             .sass_parser = .{ .lexer = .{ .max_input_bytes = options.max_input_bytes } },
             .less_parser = .{ .lexer = .{ .max_input_bytes = options.max_input_bytes } },
@@ -380,6 +386,11 @@ pub fn compile(
             errdefer releaseDiagnostics(allocator, diagnostics);
             const dependencies = try cloneDependencies(allocator, compiled.dependencies());
             errdefer releaseDependencies(allocator, dependencies);
+            const source_map = if (options.source_map)
+                compiled.composeSourceMap(allocator) catch |err| return mapCompileError(err)
+            else
+                null;
+            errdefer if (source_map) |bytes| allocator.free(bytes);
             var watch_state = if (options.watch)
                 try WatchState.init(
                     allocator,
@@ -395,6 +406,7 @@ pub fn compile(
             break :success .{
                 .result_allocator = allocator,
                 .css = css,
+                .source_map = source_map,
                 .diagnostics = diagnostics,
                 .dependencies = dependencies,
                 .watch_state = watch_state,
@@ -410,6 +422,7 @@ pub fn compile(
             break :failed .{
                 .result_allocator = allocator,
                 .css = &.{},
+                .source_map = null,
                 .diagnostics = diagnostics,
                 .dependencies = &.{},
                 .watch_state = null,
