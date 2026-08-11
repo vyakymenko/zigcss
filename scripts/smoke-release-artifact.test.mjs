@@ -116,6 +116,23 @@ test('smoke CLI accepts only the exact archive, binary, target, and version cont
     version: '0.5.0-rc.1',
   })
 
+  const commit = '0123456789abcdef0123456789abcdef01234567'
+  assert.deepEqual(parseSmokeArguments([
+    '--archive', 'release-assets/zigcss-v0.5.0-rc.1-aarch64-macos.tar.gz',
+    '--binary', 'zig-out/bin/zigcss',
+    '--target', 'aarch64-macos',
+    '--version', '0.5.0-rc.1',
+    '--commit', commit,
+    '--evidence', 'native-target-evidence/aarch64-macos.json',
+  ]), {
+    archive: 'release-assets/zigcss-v0.5.0-rc.1-aarch64-macos.tar.gz',
+    binary: 'zig-out/bin/zigcss',
+    target: 'aarch64-macos',
+    version: '0.5.0-rc.1',
+    commit,
+    evidence: 'native-target-evidence/aarch64-macos.json',
+  })
+
   for (const invalid of [
     [],
     ['--target', 'aarch64-macos'],
@@ -123,9 +140,134 @@ test('smoke CLI accepts only the exact archive, binary, target, and version cont
     ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '../tag'],
     ['--archive', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.5.0-rc.1'],
     ['--unknown', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.5.0-rc.1'],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.5.0-rc.1', '--commit', commit],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.5.0-rc.1', '--commit', 'ABC', '--evidence', 'native-target-evidence/aarch64-macos.json'],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.5.0-rc.1', '--commit', commit, '--evidence', '../aarch64-macos.json'],
   ]) {
     assert.throws(() => parseSmokeArguments(invalid), /release smoke integrity/)
   }
+})
+
+test('native smoke builds a canonical commit-bound five-target receipt', async () => {
+  const smoke = await import('./smoke-release-artifact.mjs')
+  assert.equal(typeof smoke.nativeTargetEvidence, 'function')
+  assert.equal(typeof smoke.writeNativeTargetEvidence, 'function')
+
+  const commit = '0123456789abcdef0123456789abcdef01234567'
+  const result = {
+    target: 'aarch64-macos',
+    archiveSha256: 'a'.repeat(64),
+    binarySha256: 'b'.repeat(64),
+    checksumsSha256: 'c'.repeat(64),
+    installedBytes: 3_575_623,
+    installedEntries: 10,
+    npmPackage: 'zigcss-0.5.0-rc.1.tgz',
+    directStylesheetSmokes: 5,
+    offlinePackageStylesheetSmokes: 5,
+    directRuntimeTrace: {
+      invocations: 6,
+      nativeSpawns: 6,
+      networkAttempts: 0,
+      deniedProcessAttempts: 0,
+    },
+    offlinePackageRuntimeTrace: {
+      invocations: 6,
+      nativeSpawns: 6,
+      networkAttempts: 0,
+      deniedProcessAttempts: 0,
+    },
+  }
+  const evidence = smoke.nativeTargetEvidence(result, {
+    commit,
+    version: '0.5.0-rc.1',
+    platform: 'darwin',
+    arch: 'arm64',
+  })
+  assert.deepEqual(evidence, {
+    schemaVersion: 1,
+    commit,
+    version: '0.5.0-rc.1',
+    target: 'aarch64-macos',
+    runner: 'macos-15',
+    host: {
+      platform: 'darwin',
+      arch: 'arm64',
+    },
+    languages: ['css', 'scss', 'sass', 'less', 'stylus'],
+    artifacts: {
+      archive: 'zigcss-v0.5.0-rc.1-aarch64-macos.tar.gz',
+      archiveSha256: 'a'.repeat(64),
+      binary: 'zigcss',
+      binarySha256: 'b'.repeat(64),
+      checksums: 'zigcss-v0.5.0-rc.1-aarch64-macos.sha256',
+      checksumsSha256: 'c'.repeat(64),
+      npmPackage: 'zigcss-0.5.0-rc.1.tgz',
+    },
+    directArchive: {
+      stylesheetCompilations: 5,
+      tracedInvocations: 6,
+      nativeSpawns: 6,
+      networkAttempts: 0,
+      deniedProcessAttempts: 0,
+    },
+    offlineInstalledPackage: {
+      stylesheetCompilations: 5,
+      tracedInvocations: 6,
+      nativeSpawns: 6,
+      networkAttempts: 0,
+      deniedProcessAttempts: 0,
+      entries: 10,
+      bytes: 3_575_623,
+    },
+  })
+
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-native-target-evidence-'))
+  try {
+    const relative = 'native-target-evidence/aarch64-macos.json'
+    assert.equal(smoke.writeNativeTargetEvidence(temporary, relative, evidence), relative)
+    assert.equal(
+      fs.readFileSync(path.join(temporary, relative), 'utf8'),
+      `${JSON.stringify(evidence, null, 2)}\n`,
+    )
+    assert.throws(
+      () => smoke.writeNativeTargetEvidence(temporary, relative, evidence),
+      /already exists/,
+    )
+    assert.throws(
+      () => smoke.writeNativeTargetEvidence(temporary, '../aarch64-macos.json', evidence),
+      /evidence path/,
+    )
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+
+  assert.throws(
+    () => smoke.nativeTargetEvidence(result, {
+      commit: commit.toUpperCase(),
+      version: '0.5.0-rc.1',
+      platform: 'darwin',
+      arch: 'arm64',
+    }),
+    /commit/,
+  )
+  assert.throws(
+    () => smoke.nativeTargetEvidence({ ...result, directStylesheetSmokes: 4 }, {
+      commit,
+      version: '0.5.0-rc.1',
+      platform: 'darwin',
+      arch: 'arm64',
+    }),
+    /five-language/,
+  )
+  assert.throws(
+    () => smoke.nativeTargetEvidence(result, {
+      commit,
+      version: '0.5.0-rc.1',
+      platform: 'darwin',
+      arch: 'x64',
+    }),
+    /matching runner/,
+  )
 })
 
 test('npm lifecycle preload serves only the two exact local release URLs', () => {
@@ -367,6 +509,7 @@ test('build and release workflows require native archive and npm installation sm
     buildTargets: 5,
     releaseTargets: 5,
     smokeCommands: 2,
+    buildTargetReceipts: 5,
   })
 
   assert.throws(
@@ -390,4 +533,24 @@ test('build and release workflows require native archive and npm installation sm
     ),
     /release native smoke step/,
   )
+})
+
+test('build matrix uploads one commit-bound native receipt from every matching runner', () => {
+  const build = fs.readFileSync(path.join(repositoryRoot, '.github/workflows/build.yml'), 'utf8')
+  const release = fs.readFileSync(path.join(repositoryRoot, '.github/workflows/release.yml'), 'utf8')
+  assert.equal(validateReleaseSmokeWorkflowSources(build, release).buildTargetReceipts, 5)
+
+  for (const changed of [
+    build.replace(
+      '            --commit "$GITHUB_SHA" \\\n            --evidence',
+      '            --commit "0000000000000000000000000000000000000000" \\\n            --evidence',
+    ),
+    build.replace('--evidence "native-target-evidence/${{ matrix.target }}.json"', '--evidence "native-target-evidence/shared.json"'),
+    build.replace('native-target-evidence/${{ matrix.target }}.json', 'native-target-evidence/missing.json'),
+  ]) {
+    assert.throws(
+      () => validateReleaseSmokeWorkflowSources(changed, release),
+      /native target evidence|receipt/,
+    )
+  }
 })

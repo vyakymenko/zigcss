@@ -135,13 +135,17 @@ jobs:
             --archive "release-assets/$RELEASE_ARCHIVE" \
             --binary "zig-out/bin/${{ matrix.binary-name }}" \
             --target "${{ matrix.target }}" \
-            --version "$RELEASE_VERSION"
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --evidence "native-target-evidence/${{ matrix.target }}.json"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: zigcss-${{ matrix.target }}
-          path: zig-out/bin/${{ matrix.binary-name }}
+          path: |
+            zig-out/bin/${{ matrix.binary-name }}
+            native-target-evidence/${{ matrix.target }}.json
           if-no-files-found: error
           retention-days: 7
 

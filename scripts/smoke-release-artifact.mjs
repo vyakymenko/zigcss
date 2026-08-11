@@ -66,6 +66,9 @@ export const nativePreprocessorSmokeCases = Object.freeze([
   }),
 ])
 
+const nativeTargetLanguages = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])
+const nativeTargetEvidenceDirectory = 'native-target-evidence'
+
 function fail(message) {
   throw new Error(`release smoke integrity: ${message}`)
 }
@@ -165,16 +168,44 @@ export function validateReleaseSmokeWorkflowSources(buildSource, releaseSource) 
   expectLiteralCount(buildSource, smokeStep, 1, 'build native smoke step')
   expectLiteralCount(releaseSource, smokeStep, 1, 'release native smoke step')
   const smokeSteps = [
-    namedStep(buildSource, 'Smoke Native Archive and npm Installation', 'build native smoke step'),
-    namedStep(releaseSource, 'Smoke Native Archive and npm Installation', 'release native smoke step'),
+    {
+      kind: 'build',
+      source: namedStep(buildSource, 'Smoke Native Archive and npm Installation', 'build native smoke step'),
+    },
+    {
+      kind: 'release',
+      source: namedStep(releaseSource, 'Smoke Native Archive and npm Installation', 'release native smoke step'),
+    },
   ]
-  for (const source of smokeSteps) {
+  for (const { kind, source } of smokeSteps) {
     expectLiteralCount(source, smokeCommand, 1, 'native smoke command')
     expectLiteralCount(source, '--archive "release-assets/$RELEASE_ARCHIVE" \\', 1, 'smoke archive argument')
     expectLiteralCount(source, '--binary "zig-out/bin/${{ matrix.binary-name }}" \\', 1, 'smoke binary argument')
     expectLiteralCount(source, '--target "${{ matrix.target }}" \\', 1, 'smoke target argument')
-    expectLiteralCount(source, '--version "$RELEASE_VERSION"', 1, 'smoke version argument')
+    if (kind === 'build') {
+      expectLiteralCount(source, '--version "$RELEASE_VERSION" \\', 1, 'build smoke version argument')
+      expectLiteralCount(source, '--commit "$GITHUB_SHA" \\', 1, 'native target evidence commit')
+      expectLiteralCount(
+        source,
+        '--evidence "native-target-evidence/${{ matrix.target }}.json"',
+        1,
+        'native target evidence receipt',
+      )
+    } else {
+      expectLiteralCount(source, '--version "$RELEASE_VERSION"', 1, 'release smoke version argument')
+      if (source.includes('--commit') || source.includes('--evidence')) {
+        fail('release smoke must not create unsigned native target evidence')
+      }
+    }
   }
+
+  const buildUpload = namedStep(buildSource, 'Upload Artifact', 'build native receipt upload')
+  expectLiteralCount(
+    buildUpload,
+    '          path: |\n            zig-out/bin/${{ matrix.binary-name }}\n            native-target-evidence/${{ matrix.target }}.json',
+    1,
+    'native target evidence receipt upload',
+  )
 
   expectOrdered(buildSource, [
     '- name: Setup Node.js',
@@ -195,12 +226,20 @@ export function validateReleaseSmokeWorkflowSources(buildSource, releaseSource) 
     '  create-release:',
   ], 'release native smoke pipeline')
 
-  return { buildTargets: build.length, releaseTargets: release.length, smokeCommands: 2 }
+  return {
+    buildTargets: build.length,
+    releaseTargets: release.length,
+    smokeCommands: 2,
+    buildTargetReceipts: build.length,
+  }
 }
 
 export function parseSmokeArguments(args) {
-  if (!Array.isArray(args) || args.length !== 8) fail('expected exactly four named smoke arguments')
-  const allowed = new Set(['--archive', '--binary', '--target', '--version'])
+  if (!Array.isArray(args) || (args.length !== 8 && args.length !== 12)) {
+    fail('expected four smoke inputs with an optional commit/evidence pair')
+  }
+  const required = ['--archive', '--binary', '--target', '--version']
+  const allowed = new Set([...required, '--commit', '--evidence'])
   const values = {}
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
@@ -210,7 +249,7 @@ export function parseSmokeArguments(args) {
     if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) fail(`${name} has an invalid value`)
     values[name] = value
   }
-  for (const name of allowed) if (!Object.hasOwn(values, name)) fail(`missing smoke argument ${name}`)
+  for (const name of required) if (!Object.hasOwn(values, name)) fail(`missing smoke argument ${name}`)
   try {
     parseReleaseVersion(values['--version'], 'release smoke version')
   } catch (error) {
@@ -219,12 +258,27 @@ export function parseSmokeArguments(args) {
   if (!nativeSmokeTargets.some(item => item.target === values['--target'])) {
     fail(`unsupported release smoke target ${JSON.stringify(values['--target'])}`)
   }
-  return {
+  const hasCommit = Object.hasOwn(values, '--commit')
+  const hasEvidence = Object.hasOwn(values, '--evidence')
+  if (hasCommit !== hasEvidence) fail('commit and evidence arguments must be supplied together')
+  if (hasCommit && !/^[0-9a-f]{40}$/.test(values['--commit'])) {
+    fail('native target evidence commit must be a lowercase 40-character object ID')
+  }
+  const expectedEvidence = `${nativeTargetEvidenceDirectory}/${values['--target']}.json`
+  if (hasEvidence && values['--evidence'] !== expectedEvidence) {
+    fail(`native target evidence path must be ${expectedEvidence}`)
+  }
+  const options = {
     archive: values['--archive'],
     binary: values['--binary'],
     target: values['--target'],
     version: values['--version'],
   }
+  if (hasCommit) {
+    options.commit = values['--commit']
+    options.evidence = values['--evidence']
+  }
+  return options
 }
 
 function canonicalRoot(root) {
@@ -499,6 +553,247 @@ export function validateRuntimeTrace(filename, expectedInvocations, label = 'run
   }
 }
 
+function validateSha256(value, label) {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    fail(`${label} must be a lowercase SHA-256 digest`)
+  }
+}
+
+function validateNativeTargetEvidence(evidence) {
+  exactRecordKeys(
+    evidence,
+    [
+      'schemaVersion',
+      'commit',
+      'version',
+      'target',
+      'runner',
+      'host',
+      'languages',
+      'artifacts',
+      'directArchive',
+      'offlineInstalledPackage',
+    ],
+    'native target evidence',
+  )
+  if (evidence.schemaVersion !== 1) fail('native target evidence schema changed')
+  if (!/^[0-9a-f]{40}$/.test(evidence.commit)) fail('native target evidence commit is invalid')
+  const version = parseReleaseVersion(evidence.version, 'native target evidence version').value
+  const policy = nativeSmokeTargets.find(item => item.target === evidence.target)
+  if (policy === undefined || evidence.runner !== policy.runner) {
+    fail('native target evidence does not identify one matching runner')
+  }
+  exactRecordKeys(evidence.host, ['platform', 'arch'], 'native target evidence host')
+  if (evidence.host.platform !== policy.nodePlatform || evidence.host.arch !== policy.nodeArch) {
+    fail('native target evidence does not identify one matching runner')
+  }
+  if (!same(evidence.languages, nativeTargetLanguages)) {
+    fail('native target evidence does not own the finite five-language inventory')
+  }
+
+  const assets = releaseAssetsFor(version, policy.target)
+  exactRecordKeys(
+    evidence.artifacts,
+    [
+      'archive',
+      'archiveSha256',
+      'binary',
+      'binarySha256',
+      'checksums',
+      'checksumsSha256',
+      'npmPackage',
+    ],
+    'native target evidence artifacts',
+  )
+  if (
+    evidence.artifacts.archive !== assets.archive
+    || evidence.artifacts.binary !== policy.binaryName
+    || evidence.artifacts.checksums !== assets.checksums
+    || evidence.artifacts.npmPackage !== `zigcss-${version}.tgz`
+  ) {
+    fail('native target evidence artifact identity changed')
+  }
+  validateSha256(evidence.artifacts.archiveSha256, 'native target archive')
+  validateSha256(evidence.artifacts.binarySha256, 'native target binary')
+  validateSha256(evidence.artifacts.checksumsSha256, 'native target checksum manifest')
+
+  exactRecordKeys(
+    evidence.directArchive,
+    [
+      'stylesheetCompilations',
+      'tracedInvocations',
+      'nativeSpawns',
+      'networkAttempts',
+      'deniedProcessAttempts',
+    ],
+    'native target direct archive evidence',
+  )
+  if (!same(evidence.directArchive, {
+    stylesheetCompilations: nativeTargetLanguages.length,
+    tracedInvocations: nativeTargetLanguages.length + 1,
+    nativeSpawns: nativeTargetLanguages.length + 1,
+    networkAttempts: 0,
+    deniedProcessAttempts: 0,
+  })) {
+    fail('native target direct archive evidence is incomplete')
+  }
+
+  exactRecordKeys(
+    evidence.offlineInstalledPackage,
+    [
+      'stylesheetCompilations',
+      'tracedInvocations',
+      'nativeSpawns',
+      'networkAttempts',
+      'deniedProcessAttempts',
+      'entries',
+      'bytes',
+    ],
+    'native target offline package evidence',
+  )
+  if (
+    evidence.offlineInstalledPackage.stylesheetCompilations !== nativeTargetLanguages.length
+    || evidence.offlineInstalledPackage.tracedInvocations !== nativeTargetLanguages.length + 1
+    || evidence.offlineInstalledPackage.nativeSpawns !== nativeTargetLanguages.length + 1
+    || evidence.offlineInstalledPackage.networkAttempts !== 0
+    || evidence.offlineInstalledPackage.deniedProcessAttempts !== 0
+    || !Number.isSafeInteger(evidence.offlineInstalledPackage.entries)
+    || evidence.offlineInstalledPackage.entries <= 0
+    || evidence.offlineInstalledPackage.entries > maximumInstalledEntries
+    || !Number.isSafeInteger(evidence.offlineInstalledPackage.bytes)
+    || evidence.offlineInstalledPackage.bytes <= 0
+    || evidence.offlineInstalledPackage.bytes > maximumInstalledBytes
+  ) {
+    fail('native target offline package evidence is incomplete')
+  }
+  return evidence
+}
+
+export function nativeTargetEvidence(result, options = {}) {
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+    fail('native target result is not an object')
+  }
+  const policy = nativeSmokeTargets.find(item => item.target === result.target)
+  if (
+    policy === undefined
+    || options.platform !== policy.nodePlatform
+    || options.arch !== policy.nodeArch
+  ) {
+    fail('native target evidence requires one matching runner')
+  }
+  if (!/^[0-9a-f]{40}$/.test(options.commit)) {
+    fail('native target evidence commit must be a lowercase 40-character object ID')
+  }
+  const version = parseReleaseVersion(options.version, 'native target evidence version').value
+  if (
+    result.directStylesheetSmokes !== nativeTargetLanguages.length
+    || result.offlinePackageStylesheetSmokes !== nativeTargetLanguages.length
+  ) {
+    fail('native target evidence requires the complete five-language distribution smoke')
+  }
+  const expectedRuntimeTrace = {
+    invocations: nativeTargetLanguages.length + 1,
+    nativeSpawns: nativeTargetLanguages.length + 1,
+    networkAttempts: 0,
+    deniedProcessAttempts: 0,
+  }
+  if (
+    !same(result.directRuntimeTrace, expectedRuntimeTrace)
+    || !same(result.offlinePackageRuntimeTrace, expectedRuntimeTrace)
+  ) {
+    fail('native target evidence requires the complete process/network trace')
+  }
+  for (const [value, label] of [
+    [result.archiveSha256, 'native target archive'],
+    [result.binarySha256, 'native target binary'],
+    [result.checksumsSha256, 'native target checksum manifest'],
+  ]) {
+    validateSha256(value, label)
+  }
+  const assets = releaseAssetsFor(version, policy.target)
+  return validateNativeTargetEvidence({
+    schemaVersion: 1,
+    commit: options.commit,
+    version,
+    target: policy.target,
+    runner: policy.runner,
+    host: {
+      platform: options.platform,
+      arch: options.arch,
+    },
+    languages: [...nativeTargetLanguages],
+    artifacts: {
+      archive: assets.archive,
+      archiveSha256: result.archiveSha256,
+      binary: policy.binaryName,
+      binarySha256: result.binarySha256,
+      checksums: assets.checksums,
+      checksumsSha256: result.checksumsSha256,
+      npmPackage: result.npmPackage,
+    },
+    directArchive: {
+      stylesheetCompilations: result.directStylesheetSmokes,
+      tracedInvocations: result.directRuntimeTrace.invocations,
+      nativeSpawns: result.directRuntimeTrace.nativeSpawns,
+      networkAttempts: result.directRuntimeTrace.networkAttempts,
+      deniedProcessAttempts: result.directRuntimeTrace.deniedProcessAttempts,
+    },
+    offlineInstalledPackage: {
+      stylesheetCompilations: result.offlinePackageStylesheetSmokes,
+      tracedInvocations: result.offlinePackageRuntimeTrace.invocations,
+      nativeSpawns: result.offlinePackageRuntimeTrace.nativeSpawns,
+      networkAttempts: result.offlinePackageRuntimeTrace.networkAttempts,
+      deniedProcessAttempts: result.offlinePackageRuntimeTrace.deniedProcessAttempts,
+      entries: result.installedEntries,
+      bytes: result.installedBytes,
+    },
+  })
+}
+
+export function writeNativeTargetEvidence(rootInput, relativePath, evidenceInput) {
+  const evidence = validateNativeTargetEvidence(evidenceInput)
+  const expected = `${nativeTargetEvidenceDirectory}/${evidence.target}.json`
+  if (relativePath !== expected) fail(`native target evidence path must be ${expected}`)
+  const root = canonicalRoot(rootInput)
+  const directory = path.join(root, nativeTargetEvidenceDirectory)
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 })
+  } catch (error) {
+    if (error.code !== 'EEXIST') fail(`native target evidence directory is unavailable: ${error.message}`)
+  }
+  let directoryStat
+  try {
+    directoryStat = fs.lstatSync(directory)
+  } catch (error) {
+    fail(`native target evidence directory is unavailable: ${error.message}`)
+  }
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || fs.realpathSync(directory) !== directory) {
+    fail('native target evidence directory must be a repository-confined regular directory')
+  }
+
+  const filename = path.join(root, ...relativePath.split('/'))
+  try {
+    fs.lstatSync(filename)
+    fail('native target evidence already exists')
+  } catch (error) {
+    if (error.message.startsWith('release smoke integrity:')) throw error
+    if (error.code !== 'ENOENT') fail(`native target evidence output is unavailable: ${error.message}`)
+  }
+  const bytes = `${JSON.stringify(evidence, null, 2)}\n`
+  if (Buffer.byteLength(bytes) > 64 * 1024) fail('native target evidence exceeds its byte limit')
+  try {
+    fs.writeFileSync(filename, bytes, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    if (error.code === 'EEXIST') fail('native target evidence already exists')
+    fail(`native target evidence write failed: ${error.message}`)
+  }
+  const stat = fs.lstatSync(filename)
+  if (!stat.isFile() || stat.isSymbolicLink() || fs.readFileSync(filename, 'utf8') !== bytes) {
+    fail('native target evidence write was not byte-exact')
+  }
+  return relativePath
+}
+
 function confinedExecutableShim(root, relativePath, expectedTarget) {
   const candidate = path.resolve(root, relativePath)
   const relative = path.relative(root, candidate)
@@ -675,6 +970,7 @@ export function smokeReleaseArtifact(options) {
     return {
       target: policy.target,
       archiveSha256: hashFile(archive),
+      binarySha256: hashFile(binary),
       checksumsSha256: hashFile(checksums),
       installedBytes: installed.bytes,
       installedEntries: installed.entries,
@@ -683,6 +979,8 @@ export function smokeReleaseArtifact(options) {
       offlinePackageStylesheetSmokes: 1 + offlineNativeSmokes,
       directRuntimeTraces: directTrace.invocations,
       offlinePackageRuntimeTraces: offlineTrace.invocations,
+      directRuntimeTrace: directTrace,
+      offlinePackageRuntimeTrace: offlineTrace,
     }
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -693,6 +991,15 @@ function main() {
   try {
     const options = parseSmokeArguments(process.argv.slice(2))
     const result = smokeReleaseArtifact(options)
+    if (options.evidence !== undefined) {
+      const evidence = nativeTargetEvidence(result, {
+        commit: options.commit,
+        version: options.version,
+        platform: process.platform,
+        arch: process.arch,
+      })
+      writeNativeTargetEvidence(repositoryRoot, options.evidence, evidence)
+    }
     process.stdout.write(
       `Native release smoke passed for ${result.target}: direct archive compiled ${result.directStylesheetSmokes} languages under ${result.directRuntimeTraces} process/network traces, lifecycle-disabled clean install, offline postinstall compiled ${result.offlinePackageStylesheetSmokes} languages under ${result.offlinePackageRuntimeTraces} process/network traces, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
     )

@@ -578,8 +578,12 @@
       },
       {
         "id": "five-native-targets",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "implemented",
+        "evidenceTests": [
+          "native smoke policy covers every release target on one matching runner",
+          "native smoke builds a canonical commit-bound five-target receipt",
+          "build matrix uploads one commit-bound native receipt from every matching runner"
+        ]
       },
       {
         "id": "release-sbom-provenance",

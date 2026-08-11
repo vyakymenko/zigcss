@@ -1672,8 +1672,16 @@ test('owns the finite native zero-dependency package migration contract', () => 
           'offline installed native package runtime trace admits one native child and zero network access',
         ],
       },
+      {
+        id: 'five-native-targets',
+        state: 'implemented',
+        evidenceTests: [
+          'native smoke policy covers every release target on one matching runner',
+          'native smoke builds a canonical commit-bound five-target receipt',
+          'build matrix uploads one commit-bound native receipt from every matching runner',
+        ],
+      },
       ...[
-        'five-native-targets',
         'release-sbom-provenance',
         'consumer-behavior',
       ].map(id => ({ id, state: 'pending', evidenceTests: [] })),
@@ -1687,6 +1695,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
     migration => { migration.gates[0].state = 'pending' },
     migration => { migration.gates[1].state = 'pending' },
     migration => { migration.gates[2].state = 'pending' },
+    migration => { migration.gates[3].state = 'verified' },
     migration => migration.gates.push(clone(migration.gates[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1730,10 +1739,28 @@ test('owns the finite native zero-dependency package migration contract', () => 
     }),
     /native package migration runtime-process-network-tracing evidence.*missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseSmokeTests: releaseSmokeTests.replace(
+        "test('native smoke builds a canonical commit-bound five-target receipt'",
+        "test('missing native target receipt evidence'",
+      ),
+    }),
+    /native package migration five-native-targets evidence.*missing/,
+  )
 
   const releaseSmokeSource = fs.readFileSync(
     path.join(repositoryRoot, 'scripts/smoke-release-artifact.mjs'),
     'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      releaseSmokeSource: releaseSmokeSource.replace(
+        'export function writeNativeTargetEvidence(',
+        'function missingNativeTargetEvidenceWrite(',
+      ),
+    }),
+    /native package migration five-target receipt write.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {

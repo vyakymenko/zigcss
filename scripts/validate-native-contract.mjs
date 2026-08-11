@@ -597,8 +597,16 @@ const expectedPackageMigration = Object.freeze({
         'offline installed native package runtime trace admits one native child and zero network access',
       ]),
     }),
+    Object.freeze({
+      id: 'five-native-targets',
+      state: 'implemented',
+      evidenceTests: Object.freeze([
+        'native smoke policy covers every release target on one matching runner',
+        'native smoke builds a canonical commit-bound five-target receipt',
+        'build matrix uploads one commit-bound native receipt from every matching runner',
+      ]),
+    }),
     ...[
-      'five-native-targets',
       'release-sbom-provenance',
       'consumer-behavior',
     ].map(id => Object.freeze({ id, state: 'pending', evidenceTests: Object.freeze([]) })),
@@ -1409,13 +1417,15 @@ function validatePackageMigration(
     fail('native package migration terminal surface inventory drifted')
   }
   for (const gate of migration.gates) {
-    if (gate.state === 'verified') {
+    if (gate.state === 'verified' || gate.state === 'implemented') {
       if (gate.evidenceTests.length === 0) fail('native package migration verified gate lacks evidence')
       for (const evidenceTest of gate.evidenceTests) {
         const source = evidenceTest.startsWith('javascript wrapper ')
           ? nodeWrapperTests
           : evidenceTest.startsWith('direct native archive ') ||
-              evidenceTest.startsWith('offline installed native package ')
+              evidenceTest.startsWith('offline installed native package ') ||
+              evidenceTest.startsWith('native smoke ') ||
+              evidenceTest.startsWith('build matrix ')
             ? releaseSmokeTests
             : packageTests
         requireText(
@@ -1488,6 +1498,10 @@ function validatePackageMigration(
     ['const offlineRuntimeTrace = createRuntimeTrace(', 'offline package runtime trace creation'],
     ['validateRuntimeTrace(offlineRuntimeTrace, 6,', 'offline package runtime trace'],
     ['offlineEnvironment,', 'offline package traced environment'],
+    ['export function nativeTargetEvidence(', 'five-target receipt construction'],
+    ['export function writeNativeTargetEvidence(', 'five-target receipt write'],
+    ['nativeTargetEvidence(result, {', 'five-target receipt main binding'],
+    ['writeNativeTargetEvidence(repositoryRoot, options.evidence, evidence)', 'five-target receipt output binding'],
   ]) {
     requireText(
       releaseSmokeSource,
