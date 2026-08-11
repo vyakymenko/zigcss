@@ -7847,6 +7847,17 @@ const Engine = struct {
                 try self.reportInvalidArguments(span);
                 return error.InvalidArguments;
             }
+            if (try literalCallHasSingleDivisionArgument(
+                self.allocator,
+                source_input,
+                call,
+            ) and
+                !isLiteralCalcCallName(name) and
+                !(self.active_keyframe_header != null and
+                    nameEql(name, "radial-gradient")))
+            {
+                return self.evaluateLiteralCall(span, source_input, call, scope);
+            }
         }
         const grouped_input = stripOuterParentheses(source_input);
         // Resolve grouped calls before raw interpolation can rewrite a call
@@ -8364,6 +8375,15 @@ const Engine = struct {
                 nameEql(name, "radial-gradient"))
             {
                 return self.evaluateKeyframeRadialGradient(span, input, call);
+            }
+            if (!isLiteralCalcCallName(name) and
+                try literalCallHasSingleDivisionArgument(
+                    self.allocator,
+                    input,
+                    call,
+                ))
+            {
+                return self.evaluateLiteralCall(span, input, call, scope);
             }
             if (try self.normalizeMultilineFunctionOwned(span, input)) |normalized| {
                 defer self.allocator.free(normalized);
@@ -10701,6 +10721,51 @@ const Engine = struct {
             output.appendAssumeCapacity(try self.evaluateValue(span, argument, scope, 0));
         }
         return output;
+    }
+
+    fn evaluateLiteralCall(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        var ranges = try splitTopLevel(
+            self.allocator,
+            raw[call.arguments.start..call.arguments.end],
+            ',',
+        );
+        defer ranges.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) ranges.clearRetainingCapacity();
+
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, raw[call.name.start..call.name.end]);
+        try self.appendTemporary(&output, span, "(");
+        for (ranges.items, 0..) |range, index| {
+            const argument = std.mem.trim(
+                u8,
+                raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+                " \t\r\n\x0c",
+            );
+            if (argument.len == 0) {
+                try self.reportInvalidArguments(span);
+                return error.InvalidArguments;
+            }
+            const value = try self.evaluateValue(span, argument, scope, 0);
+            const serialized = try self.serializeDeclarationValueOwned(value, span, argument);
+            defer self.allocator.free(serialized);
+            if (index > 0) {
+                try self.appendTemporary(
+                    &output,
+                    span,
+                    if (self.options.output_style == .expanded) ", " else ",",
+                );
+            }
+            try self.appendTemporary(&output, span, serialized);
+        }
+        try self.appendTemporary(&output, span, ")");
+        return self.ownStringResult(span, output.items, false);
     }
 
     fn bindBuiltinArgumentText(
@@ -15910,6 +15975,13 @@ fn nameEql(left: []const u8, right: []const u8) bool {
     return native_lexer.identifierEqlIgnoreCaseAscii(left, right);
 }
 
+fn isLiteralCalcCallName(name: []const u8) bool {
+    inline for (.{ "calc", "-moz-calc", "-webkit-calc", "-o-calc", "-ms-calc" }) |candidate| {
+        if (nameEql(name, candidate)) return true;
+    }
+    return false;
+}
+
 fn isBuiltinCallableName(name: []const u8) bool {
     if (isDeferredBuiltin(name)) return true;
     inline for (.{
@@ -16435,6 +16507,29 @@ fn callHasEmptyArgument(
         }
     }
     return false;
+}
+
+fn literalCallHasSingleDivisionArgument(
+    allocator: std.mem.Allocator,
+    raw: []const u8,
+    call: Call,
+) std.mem.Allocator.Error!bool {
+    var arguments = try splitTopLevel(
+        allocator,
+        raw[call.arguments.start..call.arguments.end],
+        ',',
+    );
+    defer arguments.deinit(allocator);
+    if (arguments.items.len != 1) return false;
+    const range = arguments.items[0];
+    const argument = std.mem.trim(
+        u8,
+        raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+        " \t\r\n\x0c",
+    );
+    if (!looksNumeric(argument)) return false;
+    const binary = findGenericBinary(argument) orelse return false;
+    return binary.operator == '/';
 }
 
 fn boundedReplacementSize(

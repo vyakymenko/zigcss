@@ -608,6 +608,15 @@ const regression_2820_grouped_type_input =
 
 const regression_2820_grouped_type_css = ".main{color:#f00}";
 
+const regression_432_literal_call_input =
+    \\body
+    \\  foo: unit(16 / 4, px)
+    \\  foo: foo(16 / 4)
+    \\  foo: (16/4)px
+;
+
+const regression_432_literal_call_css = "body{foo:4px;foo:foo(4);foo:4px}";
+
 const forwarded_selector_arguments_terminal_input =
     \\modernize(features, support)
     \\  selector = support ? '' : ('.no-js ' + selector())
@@ -4817,6 +4826,53 @@ test "native Stylus grouped type predicates own the finite regression 2820 condi
     );
 }
 
+test "native Stylus literal calls own the finite regression 432 argument contract" {
+    const lower_input =
+        \\body
+        \\  value foo(8 / 2)
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{value:foo(4)}", lower.css());
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = regression_432_literal_call_input.len;
+    terminal_limits.max_selectors = 1;
+    var first = try compile(
+        std.testing.allocator,
+        regression_432_literal_call_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        regression_432_literal_call_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(regression_432_literal_call_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_source = terminal_limits;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        regression_432_literal_call_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus root conditional assignments own the finite alias and binding contract" {
     const lower_input =
         \\primary := 'first'
@@ -8706,6 +8762,15 @@ fn exerciseRegression2820GroupedTypeAllocationFailures(allocator: std.mem.Alloca
     try std.testing.expectEqualStrings(regression_2820_grouped_type_css, result.css());
 }
 
+fn exerciseRegression432LiteralCallAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = regression_432_literal_call_input.len;
+    limits.max_selectors = 1;
+    var result = try compile(allocator, regression_432_literal_call_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(regression_432_literal_call_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -9264,6 +9329,14 @@ test "native Stylus regression 2820 grouped type predicates handle every allocat
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseRegression2820GroupedTypeAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus regression 432 literal calls handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseRegression432LiteralCallAllocationFailures,
         .{},
     );
 }
