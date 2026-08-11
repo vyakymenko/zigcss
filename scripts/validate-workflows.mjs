@@ -140,6 +140,16 @@ export const nativeTestRunners = Object.freeze([
   'run_native_cli_tests',
 ])
 
+export const buildThroughputPolicy = Object.freeze({
+  interventionPercent: 75,
+  artifactTargets: 5,
+  jobs: Object.freeze({
+    build: Object.freeze({ timeoutMinutes: 240 }),
+    'native-package-evidence': Object.freeze({ timeoutMinutes: 60 }),
+    test: Object.freeze({ timeoutMinutes: 240 }),
+  }),
+})
+
 function fail(message) {
   throw new Error(`workflow integrity: ${message}`)
 }
@@ -265,14 +275,44 @@ function validateSelfGate(buildWorkflow) {
   }
 }
 
-function validateBuildThroughput(buildWorkflow) {
+function parseJobTimeout(lines, job) {
+  const candidates = lines.filter(line => /^\s*timeout-minutes\s*:/.test(line))
+  if (candidates.length !== 1) {
+    fail(`build.yml job ${job} must declare exactly one hard timeout`)
+  }
+  const match = candidates[0].match(/^    timeout-minutes: ([1-9][0-9]*)$/)
+  if (match === null) fail(`build.yml job ${job} has a malformed hard timeout`)
+  return Number.parseInt(match[1], 10)
+}
+
+export function validateBuildThroughput(buildWorkflow) {
   const concurrency = 'concurrency:\n  group: build-${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: false\n'
   if (buildWorkflow.split(concurrency).length !== 2) {
     fail('build.yml must use one bounded non-cancelling concurrency group per workflow ref')
   }
   const jobs = splitJobs(buildWorkflow, 'build.yml')
+  const hardTimeoutMinutes = {}
+  const interventionMinutes = {}
+  for (const [job, policy] of Object.entries(buildThroughputPolicy.jobs)) {
+    const timeoutMinutes = parseJobTimeout(jobs.get(job), job)
+    if (timeoutMinutes !== policy.timeoutMinutes) {
+      fail(`build.yml job ${job} hard timeout must remain ${policy.timeoutMinutes} minutes`)
+    }
+    hardTimeoutMinutes[job] = timeoutMinutes
+    interventionMinutes[job] = timeoutMinutes * buildThroughputPolicy.interventionPercent / 100
+  }
   const artifactJob = jobs.get('build').join('\n')
   const testJob = jobs.get('test').join('\n')
+  const artifactTargets = artifactJob.split('\n').flatMap(line => {
+    const match = line.match(/^            target: ([a-z0-9_-]+)$/)
+    return match === null ? [] : [match[1]]
+  })
+  if (
+    artifactTargets.length !== buildThroughputPolicy.artifactTargets
+    || new Set(artifactTargets).size !== artifactTargets.length
+  ) {
+    fail(`build.yml artifact matrix must contain exactly ${buildThroughputPolicy.artifactTargets} unique targets`)
+  }
   const debugAggregate = '      - name: Run Native Tests\n        run: zig build test --summary all'
   const releaseSafeAggregate = '      - name: Run Native Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
   if (artifactJob.includes(debugAggregate)) {
@@ -291,6 +331,15 @@ function validateBuildThroughput(buildWorkflow) {
   const aggregate = '      - name: Run Tests\n        run: zig build test --summary all'
   if (testJob.split(aggregate).length !== 2) {
     fail('build.yml Test Suite must run exactly one complete root Zig test graph')
+  }
+  return {
+    artifactTargets: artifactTargets.length,
+    hardTimeoutMinutes,
+    interventionMinutes,
+    semanticGraphs: {
+      build: 'ReleaseSafe',
+      test: 'Debug',
+    },
   }
 }
 

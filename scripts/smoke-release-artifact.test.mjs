@@ -27,9 +27,17 @@ function runtimeTraceFixture(temporary) {
     ? process.env.ComSpec
     : '/bin/sh'
   assert.equal(typeof nativeInput, 'string')
-  const native = path.join(temporary, process.platform === 'win32' ? 'native-fixture.exe' : 'sh')
-  fs.copyFileSync(fs.realpathSync(nativeInput), native)
-  if (process.platform !== 'win32') fs.chmodSync(native, 0o700)
+  const nativeSource = fs.realpathSync(nativeInput)
+  // Apple platform binaries retain an arm64e signature that the kernel kills
+  // after copying. The system shell is already a regular non-symlink file on
+  // macOS; hosted release smokes still exercise the real extracted Zig binary.
+  const native = process.platform === 'darwin'
+    ? nativeSource
+    : path.join(temporary, process.platform === 'win32' ? 'native-fixture.exe' : 'sh')
+  if (native !== nativeSource) {
+    fs.copyFileSync(nativeSource, native)
+    if (process.platform !== 'win32') fs.chmodSync(native, 0o700)
+  }
   const nativeStat = fs.lstatSync(native)
   assert.equal(nativeStat.isFile(), true)
   assert.equal(nativeStat.isSymbolicLink(), false)

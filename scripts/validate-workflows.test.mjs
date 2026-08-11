@@ -3,7 +3,9 @@ import fs from 'node:fs'
 import test from 'node:test'
 import {
   actionPins,
+  buildThroughputPolicy,
   readWorkflowSources,
+  validateBuildThroughput,
   validateBuildTestGraph,
   validateWorkflowSources,
   validateWorkflows,
@@ -120,6 +122,81 @@ test('the build workflow preserves one complete aggregate suite within a bounded
     '      - name: Run Native Tests\n        run: zig build test --summary all',
   ))
   assert.throws(() => validateWorkflowSources(unoptimizedMatrix), /must not run the complete Zig graph in Debug/)
+})
+
+test('required build jobs declare finite hard timeout budgets', () => {
+  const workflow = cloneSources().get('build.yml')
+  assert.deepEqual(validateBuildThroughput(workflow), {
+    artifactTargets: 5,
+    hardTimeoutMinutes: {
+      build: 240,
+      'native-package-evidence': 60,
+      test: 240,
+    },
+    interventionMinutes: {
+      build: 180,
+      'native-package-evidence': 45,
+      test: 180,
+    },
+    semanticGraphs: {
+      build: 'ReleaseSafe',
+      test: 'Debug',
+    },
+  })
+
+  const jobs = Object.keys(buildThroughputPolicy.jobs)
+  for (const [index, job] of jobs.entries()) {
+    const nextJob = jobs[index + 1]
+    const timeoutMinutes = buildThroughputPolicy.jobs[job].timeoutMinutes
+    const start = workflow.indexOf(`  ${job}:\n`)
+    const end = nextJob === undefined ? workflow.length : workflow.indexOf(`\n  ${nextJob}:\n`, start)
+    assert.notEqual(start, -1)
+    assert.notEqual(end, -1)
+    assert.match(
+      workflow.slice(start, end),
+      new RegExp(`^    timeout-minutes: ${timeoutMinutes}$`, 'm'),
+      `${job} must declare its ${timeoutMinutes}-minute hard timeout`,
+    )
+
+    const jobSource = workflow.slice(start, end)
+    const timeout = `    timeout-minutes: ${timeoutMinutes}\n`
+    const missing = cloneSources()
+    missing.set('build.yml', workflow.slice(0, start) + jobSource.replace(timeout, '') + workflow.slice(end))
+    assert.throws(() => validateWorkflowSources(missing), new RegExp(`job ${job}.*hard timeout`))
+
+    const malformed = cloneSources()
+    malformed.set(
+      'build.yml',
+      workflow.slice(0, start)
+        + jobSource.replace(timeout, `    timeout-minutes: ${timeoutMinutes}.5\n`)
+        + workflow.slice(end),
+    )
+    assert.throws(() => validateWorkflowSources(malformed), new RegExp(`job ${job}.*hard timeout`))
+
+    const drifted = cloneSources()
+    drifted.set(
+      'build.yml',
+      workflow.slice(0, start)
+        + jobSource.replace(timeout, `    timeout-minutes: ${timeoutMinutes + 1}\n`)
+        + workflow.slice(end),
+    )
+    assert.throws(() => validateWorkflowSources(drifted), new RegExp(`job ${job}.*hard timeout`))
+
+    const duplicated = cloneSources()
+    duplicated.set(
+      'build.yml',
+      workflow.slice(0, start) + jobSource.replace(timeout, timeout + timeout) + workflow.slice(end),
+    )
+    assert.throws(() => validateWorkflowSources(duplicated), new RegExp(`job ${job}.*hard timeout`))
+  }
+
+  const lowerTargets = cloneSources()
+  lowerTargets.set('build.yml', workflow.replace('            target: x86_64-linux\n', ''))
+  assert.throws(() => validateWorkflowSources(lowerTargets), /exactly 5 unique targets/)
+
+  const duplicateTarget = cloneSources()
+  duplicateTarget.set('build.yml', workflow.replace('            target: aarch64-linux', '            target: x86_64-linux'))
+  assert.throws(() => validateWorkflowSources(duplicateTarget), /exactly 5 unique targets/)
 })
 
 test('the artifact matrix uses the optimized complete suite while the test job owns Debug', () => {
