@@ -293,6 +293,25 @@ const font_face_css =
     "@font-face{font-family:\"Lower\";src:url(\"lower.woff\")}" ++
     "@font-face{font-family:'Explicit'}";
 
+const formatted_comma_property_input =
+    \\font-name = 'foo'
+    \\file-path = 'foo'
+    \\@font-face
+    \\  font-family: '"%s"' % (unquote(font-name))
+    \\  src: 'local("%s")' % (unquote(font-name)),
+    \\       'url("%s.eot?#iefix")' % (unquote(file-path)) format('embedded-opentype'),
+    \\       'url("%s.woff")' % (unquote(file-path)) format('woff'),
+    \\       'url("%s.ttf")' % (unquote(file-path)) format('truetype'),
+    \\       'url("%s.svg#%s")' % (unquote(file-path) unquote(font-name)) format('svg')
+;
+
+const formatted_comma_property_css =
+    "@font-face{font-family:\"foo\";src:local(\"foo\"), " ++
+    "url(\"foo.eot?#iefix\") format('embedded-opentype'), " ++
+    "url(\"foo.woff\") format('woff'), " ++
+    "url(\"foo.ttf\") format('truetype'), " ++
+    "url(\"foo.svg#foo\") format('svg')}";
+
 const keyframe_loop_terminal_input =
     \\vendors = official
     \\for index in 1..3
@@ -6184,6 +6203,55 @@ test "native Stylus indentation-owned font face rules are evaluated deterministi
     );
 }
 
+test "native Stylus formatted comma property lists own the finite terminal contract" {
+    const lower_input =
+        \\body
+        \\  src: 'local("%s")' % (unquote('foo')),
+        \\       'url("%s.woff")' % (unquote('foo')) format('woff')
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{src:local(\"foo\"), url(\"foo.woff\") format('woff')}",
+        lower.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = formatted_comma_property_input.len;
+    var first = try compile(
+        std.testing.allocator,
+        formatted_comma_property_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        formatted_comma_property_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(formatted_comma_property_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        formatted_comma_property_input,
+        over_limit,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus complex loops retain bounded range group nesting and callable ownership" {
     const lower_input =
         \\values = a b
@@ -7872,6 +7940,14 @@ fn exerciseFontFaceAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(font_face_css, result.css());
 }
 
+fn exerciseFormattedCommaPropertyAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = formatted_comma_property_input.len;
+    var result = try compile(allocator, formatted_comma_property_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(formatted_comma_property_css, result.css());
+}
+
 fn exerciseComplexForAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_loop_iterations = 11;
@@ -8512,6 +8588,14 @@ test "native Stylus indentation-owned font face rules handle every allocation fa
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseFontFaceAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus formatted comma property lists handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseFormattedCommaPropertyAllocationFailures,
         .{},
     );
 }

@@ -8593,14 +8593,15 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         depth: u16,
     ) Error!*const native_value.Value {
-        var slash_parts = try splitTopLevel(self.allocator, raw, '/');
-        defer slash_parts.deinit(self.allocator);
-        if (slash_parts.items.len == 1) {
-            return self.evaluateValue(span, raw, scope, depth);
-        }
-
         var comma_parts = try splitTopLevel(self.allocator, raw, ',');
         defer comma_parts.deinit(self.allocator);
+        var slash_parts = try splitTopLevel(self.allocator, raw, '/');
+        defer slash_parts.deinit(self.allocator);
+        const comma_binary_precedence = comma_parts.items.len > 1 and
+            findGenericBinary(raw) != null;
+        if (slash_parts.items.len == 1 and !comma_binary_precedence) {
+            return self.evaluateValue(span, raw, scope, depth);
+        }
         if (comma_parts.items.len == 1) {
             return self.evaluatePropertySlashGroup(span, raw, scope, depth + 1);
         }
