@@ -109,8 +109,11 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'javascript-wrapper',
       releaseGapFamily: 'native-javascript-wrapper-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'javascript wrapper routes the finite native syntax set through the installed binary',
+        'javascript wrapper keeps native routing explicit and provider routes unchanged',
+      ],
     }, {
       id: 'files-and-stdin',
       releaseGapFamily: 'native-files-stdin-routing',
@@ -1256,7 +1259,7 @@ test('binds unavailable native rows and the pre-graduation product bridges', () 
   )
 })
 
-test('binds the finite native product routing inventory and verified first three routes', () => {
+test('binds the finite native product routing inventory and verified first four routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
@@ -1264,6 +1267,7 @@ test('binds the finite native product routing inventory and verified first three
     routing => { routing.routes[0].state = 'pending' },
     routing => { routing.routes[1].state = 'pending' },
     routing => { routing.routes[2].state = 'pending' },
+    routing => { routing.routes[3].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1311,6 +1315,31 @@ test('binds the finite native product routing inventory and verified first three
       ),
     }),
     /native product routing binary-cli evidence.*missing/,
+  )
+
+  const nodeWrapperTests = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/verify-node-wrapper.test.mjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeWrapperTests: nodeWrapperTests.replace(
+        "test('javascript wrapper keeps native routing explicit and provider routes unchanged'",
+        "test('missing JavaScript wrapper route evidence'",
+      ),
+    }),
+    /native product routing javascript-wrapper evidence.*missing/,
+  )
+
+  const nodeWrapperSource = fs.readFileSync(path.join(repositoryRoot, 'index.js'), 'utf8')
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeWrapperSource: nodeWrapperSource.replace(
+        "if (args.includes('--experimental-native')) return false;",
+        "if (args.includes('--experimental-native-next')) return false;",
+      ),
+    }),
+    /JavaScript wrapper explicit gate.*missing/,
   )
 })
 

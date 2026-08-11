@@ -481,8 +481,11 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'javascript-wrapper',
       releaseGapFamily: 'native-javascript-wrapper-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'javascript wrapper routes the finite native syntax set through the installed binary',
+        'javascript wrapper keeps native routing explicit and provider routes unchanged',
+      ]),
     }),
     Object.freeze({
       id: 'files-and-stdin',
@@ -1010,7 +1013,7 @@ const expectedImplementations = Object.freeze([
   }),
   Object.freeze({
     id: 'native-product-compiler',
-    current: 'native-binary-cli',
+    current: 'native-javascript-wrapper',
     ownerPackage: 'NATIVE-006',
     adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
     capabilities: Object.freeze([
@@ -1025,6 +1028,9 @@ const expectedImplementations = Object.freeze([
       'explicit-native-cli-gate',
       'single-file-native-cli',
       'no-partial-cli-output',
+      'pre-graduation-javascript-wrapper',
+      'explicit-native-wrapper-gate',
+      'exact-wrapper-argument-forwarding',
     ]),
     nativeSources: Object.freeze([
       'src/preprocessor/compiler.zig',
@@ -1034,8 +1040,9 @@ const expectedImplementations = Object.freeze([
       'tests/native-preprocessor/compiler.zig',
       'tests/public-api/native_consumer.zig',
       'tests/cli/native_cli.zig',
+      'scripts/verify-node-wrapper.test.mjs',
     ]),
-    testStep: 'test-native-cli',
+    testStep: 'test:node-wrapper',
     publicAvailable: false,
     productionReachable: true,
   }),
@@ -1204,6 +1211,8 @@ function validateProductRouting(
   compilerTests,
   zigApiTests,
   cliTests,
+  nodeWrapperSource,
+  nodeWrapperTests,
   sassConformanceTests,
   lessConformanceTests,
   stylusConformanceTests,
@@ -1229,11 +1238,16 @@ function validateProductRouting(
           ? zigApiTests
           : route.id === 'binary-cli'
             ? cliTests
-            : ''
+            : route.id === 'javascript-wrapper'
+              ? nodeWrapperTests
+              : ''
       for (const evidenceTest of route.evidenceTests) {
+        const testDeclaration = route.id === 'javascript-wrapper'
+          ? `test('${evidenceTest}'`
+          : `test "${evidenceTest}"`
         requireText(
           evidenceSource,
-          `test "${evidenceTest}"`,
+          testDeclaration,
           `native product routing ${route.id} evidence`,
         )
       }
@@ -1241,6 +1255,16 @@ function validateProductRouting(
       fail('product routing pending route drifted')
     }
   }
+  requireText(
+    nodeWrapperSource,
+    "if (args.includes('--experimental-native')) return false;",
+    'native product routing JavaScript wrapper explicit gate',
+  )
+  requireText(
+    nodeWrapperSource,
+    'runNative(binaryPath, args);',
+    'native product routing JavaScript wrapper binary dispatch',
+  )
   for (const [label, tests] of [
     ['Sass', sassConformanceTests],
     ['Less', lessConformanceTests],
@@ -1683,6 +1707,7 @@ function validateInternalReachability(implementations, buildFile, productionSour
   requireText(buildFile, 'root_source_file = b.path("src/preprocessor.zig")', 'build.zig')
   for (const implementation of implementations) {
     for (const testSource of implementation.testSources) {
+      if (!testSource.endsWith('.zig')) continue
       requireText(
         buildFile,
         `root_source_file = b.path("${testSource}")`,
@@ -1915,6 +1940,11 @@ export function validateContract(
       repositoryFile('tests/public-api/native_consumer.zig'),
       'utf8',
     ),
+    nodeWrapperSource = fs.readFileSync(repositoryFile('index.js'), 'utf8'),
+    nodeWrapperTests = fs.readFileSync(
+      repositoryFile('scripts/verify-node-wrapper.test.mjs'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -2006,6 +2036,8 @@ export function validateContract(
     compilerTests,
     zigApiTests,
     cliTests,
+    nodeWrapperSource,
+    nodeWrapperTests,
     sassConformanceTests,
     lessConformanceTests,
     stylusConformanceTests,
@@ -2056,6 +2088,7 @@ export function validateContract(
 
   const buildGate = 'npm run test:native-contract && npm run check:native-contract'
   requireText(buildWorkflow, buildGate, 'build workflow')
+  requireText(buildWorkflow, 'npm run test:node-wrapper', 'native JavaScript wrapper workflow')
   requireText(buildWorkflow, 'zig build test --summary all', 'build workflow')
   if (buildWorkflow.includes('zig build test-native-preprocessor --summary all')) {
     fail('build workflow must not duplicate native frontend coverage before the complete root test graph')

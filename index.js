@@ -55,6 +55,7 @@ Exit status: 0 success/info, 1 compilation or I/O failure, 2 usage error.
 `;
 
 function shouldUseProductCli(args) {
+  if (args.includes('--experimental-native')) return false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--syntax') {

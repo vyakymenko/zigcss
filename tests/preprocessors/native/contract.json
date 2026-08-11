@@ -461,8 +461,11 @@
       {
         "id": "javascript-wrapper",
         "releaseGapFamily": "native-javascript-wrapper-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "javascript wrapper routes the finite native syntax set through the installed binary",
+          "javascript wrapper keeps native routing explicit and provider routes unchanged"
+        ]
       },
       {
         "id": "files-and-stdin",
@@ -978,7 +981,7 @@
     },
     {
       "id": "native-product-compiler",
-      "current": "native-binary-cli",
+      "current": "native-javascript-wrapper",
       "ownerPackage": "NATIVE-006",
       "adapters": ["scss", "sass", "less", "stylus"],
       "capabilities": [
@@ -992,15 +995,19 @@
         "pre-graduation-binary-cli",
         "explicit-native-cli-gate",
         "single-file-native-cli",
-        "no-partial-cli-output"
+        "no-partial-cli-output",
+        "pre-graduation-javascript-wrapper",
+        "explicit-native-wrapper-gate",
+        "exact-wrapper-argument-forwarding"
       ],
       "nativeSources": ["src/preprocessor/compiler.zig", "src/native_api.zig"],
       "testSources": [
         "tests/native-preprocessor/compiler.zig",
         "tests/public-api/native_consumer.zig",
-        "tests/cli/native_cli.zig"
+        "tests/cli/native_cli.zig",
+        "scripts/verify-node-wrapper.test.mjs"
       ],
-      "testStep": "test-native-cli",
+      "testStep": "test:node-wrapper",
       "publicAvailable": false,
       "productionReachable": true
     }

@@ -3,10 +3,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const require = createRequire(import.meta.url)
 
 test('npm package metadata is canonical before registry publication', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
@@ -27,6 +29,11 @@ function withWrapperFixture(run) {
     fs.mkdirSync(binDirectory)
     const binary = path.join(binDirectory, process.platform === 'win32' ? 'zigcss.exe' : 'zigcss')
     fs.writeFileSync(binary, `#!/usr/bin/env node
+const args = process.argv.slice(2)
+if (args.includes('--experimental-native')) {
+  process.stdout.write(JSON.stringify(args))
+  return
+}
 const mode = process.argv[2]
 if (mode === 'echo') {
   process.stdin.pipe(process.stdout)
@@ -61,6 +68,50 @@ test('npm wrapper forwards stdin/stdout and exact native exit statuses', () => {
     assert.equal(streamed.stderr, '')
     assert.equal(streamed.stdout, input)
   })
+})
+
+test('javascript wrapper routes the finite native syntax set through the installed binary', () => {
+  const routeCases = [
+    ['input.scss', 'scss'],
+    ['input.sass', 'sass'],
+    ['input.less', 'less'],
+    ['input.styl', 'stylus'],
+  ]
+
+  withWrapperFixture(wrapper => {
+    for (const [input, syntax] of routeCases) {
+      const argv = [input, '--experimental-native', '--syntax', syntax, '--minify']
+      const first = spawnSync(process.execPath, [wrapper, ...argv], { encoding: 'utf8' })
+      const second = spawnSync(process.execPath, [wrapper, ...argv], { encoding: 'utf8' })
+
+      assert.equal(first.error, undefined)
+      assert.equal(first.signal, null)
+      assert.equal(first.status, 0, first.stderr)
+      assert.equal(first.stderr, '')
+      assert.equal(first.stdout, JSON.stringify(argv))
+      assert.equal(second.error, undefined)
+      assert.equal(second.signal, first.signal)
+      assert.equal(second.status, first.status)
+      assert.equal(second.stderr, first.stderr)
+      assert.equal(second.stdout, first.stdout)
+    }
+  })
+})
+
+test('javascript wrapper keeps native routing explicit and provider routes unchanged', () => {
+  const { shouldUseProductCli } = require('../index.js')
+  for (const [input, syntax] of [
+    ['input.scss', 'scss'],
+    ['input.sass', 'sass'],
+    ['input.less', 'less'],
+    ['input.styl', 'stylus'],
+  ]) {
+    assert.equal(shouldUseProductCli([input, '--syntax', syntax]), true)
+    assert.equal(
+      shouldUseProductCli([input, '--experimental-native', '--syntax', syntax]),
+      false,
+    )
+  }
 })
 
 test('npm wrapper help publishes the combined five-language contract', () => {
