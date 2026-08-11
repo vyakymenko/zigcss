@@ -647,6 +647,24 @@ const regression_480_expression_multiplication_input =
 const regression_480_expression_multiplication_css =
     "body{foo:25px;foo:25px}body{foo:10em;foo:10em;foo:10px}";
 
+const regression_498_grouped_extension_input =
+    \\button
+    \\  padding: 10px
+    \\  border: 1px solid #eee
+    \\  font-size: 12px
+    \\
+    \\a.button
+    \\input[type=submit]
+    \\  @extends button
+    \\
+    \\.button
+    \\  @extends a.button
+;
+
+const regression_498_grouped_extension_css =
+    "button,a.button,input[type=submit],.button{padding:10px;" ++
+    "border:1px solid #eee;font-size:12px}";
+
 const forwarded_selector_arguments_terminal_input =
     \\modernize(features, support)
     \\  selector = support ? '' : ('.no-js ' + selector())
@@ -5000,6 +5018,63 @@ test "native Stylus expression multiplication owns the finite regression 480 con
     );
 }
 
+test "native Stylus grouped root extensions own the finite regression 498 contract" {
+    const lower_input =
+        \\button
+        \\  padding 10px
+        \\a.button
+        \\input[type=submit]
+        \\  @extends button
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    lower_limits.max_selectors = 5;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "button,a.button,input[type=submit]{padding:10px}",
+        lower.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = regression_498_grouped_extension_input.len;
+    terminal_limits.max_selectors = 8;
+    var first = try compile(
+        std.testing.allocator,
+        regression_498_grouped_extension_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        regression_498_grouped_extension_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(regression_498_grouped_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_selectors = terminal_limits;
+    over_selectors.max_selectors -= 1;
+    try expectSemanticRejectionWithLimits(
+        regression_498_grouped_extension_input,
+        over_selectors,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(
+            u8,
+            regression_498_grouped_extension_input,
+            "\n.button\n",
+        ).? + 1),
+    );
+}
+
 test "native Stylus root conditional assignments own the finite alias and binding contract" {
     const lower_input =
         \\primary := 'first'
@@ -8916,6 +8991,15 @@ fn exerciseRegression480ExpressionMultiplicationAllocationFailures(allocator: st
     try std.testing.expectEqualStrings(regression_480_expression_multiplication_css, result.css());
 }
 
+fn exerciseRegression498GroupedExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = regression_498_grouped_extension_input.len;
+    limits.max_selectors = 8;
+    var result = try compile(allocator, regression_498_grouped_extension_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(regression_498_grouped_extension_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -9498,6 +9582,14 @@ test "native Stylus regression 480 expression multiplication handles every alloc
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseRegression480ExpressionMultiplicationAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus regression 498 grouped root extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseRegression498GroupedExtensionAllocationFailures,
         .{},
     );
 }

@@ -2367,6 +2367,7 @@ const StaticExtension = struct {
     extender: []u8,
     directive_order: usize,
     prefixed_target: bool,
+    original_targets_only: bool,
 };
 
 const DynamicExtensionPlan = struct {
@@ -2902,6 +2903,7 @@ const Engine = struct {
                 .extender = owned_extender,
                 .directive_order = extension.directive_order,
                 .prefixed_target = extension.prefixed_target,
+                .original_targets_only = extension.original_targets_only,
             }) catch |failure| {
                 self.allocator.free(owned_target);
                 self.allocator.free(owned_extender);
@@ -3727,6 +3729,7 @@ const Engine = struct {
                 if (targets_raw.len == 0) continue;
                 var targets = try splitTopLevel(self.allocator, targets_raw, ',');
                 defer targets.deinit(self.allocator);
+                var original_targets_only = false;
                 if (directive.plural) {
                     if (targets.items.len != 1) continue;
                     const plural_target = stripOptionalExtensionModifier(
@@ -3738,7 +3741,13 @@ const Engine = struct {
                     if (current_selector_nested and !placeholder_target) continue;
                     var extenders = try splitTopLevel(self.allocator, extender, ',');
                     defer extenders.deinit(self.allocator);
-                    if (extenders.items.len != 1 and !placeholder_target) continue;
+                    if (extenders.items.len != 1 and !placeholder_target and
+                        selectorHasTopLevelCombinator(plural_target)) continue;
+                    // Stylus registers every branch in a root selector group on
+                    // one simple target. That edge must not recursively rewrite
+                    // selectors it just generated from the same group.
+                    original_targets_only = extenders.items.len != 1 and
+                        !placeholder_target;
                 }
                 try self.static_extension_directives.put(
                     self.allocator,
@@ -3762,6 +3771,7 @@ const Engine = struct {
                         .extender = owned_extender,
                         .directive_order = self.static_group_count,
                         .prefixed_target = current_selector_nested,
+                        .original_targets_only = original_targets_only,
                     }) catch |failure| {
                         self.allocator.free(owned_target);
                         self.allocator.free(owned_extender);
@@ -4049,6 +4059,7 @@ const Engine = struct {
             else
                 self.static_group_count,
             .prefixed_target = nested,
+            .original_targets_only = false,
         }) catch |failure| {
             self.allocator.free(owned_target);
             self.allocator.free(owned_extender);
@@ -4113,6 +4124,8 @@ const Engine = struct {
                 const current_len = selectors.items.len;
                 var candidate_index: usize = 0;
                 while (candidate_index < current_len) : (candidate_index += 1) {
+                    if (extension.original_targets_only and
+                        candidate_index >= original_selector_count) continue;
                     const candidate = selectors.items[candidate_index];
                     const match: ByteRange = if (std.mem.eql(
                         u8,
