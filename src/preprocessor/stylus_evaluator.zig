@@ -7859,6 +7859,7 @@ const Engine = struct {
         if (grouped_input.len != source_input.len and grouped_input.len != 0 and
             (parseGenericTernary(grouped_input) != null or
                 isDefinedExpression(grouped_input) or
+                findTopLevelSequence(grouped_input, " is a ") != null or
                 parseCall(grouped_input) != null or
                 grouped_binary_owns_call))
         {
@@ -11867,6 +11868,20 @@ const Engine = struct {
                 return isTruthy(try self.evaluateValue(
                     span,
                     source_condition,
+                    scope.*,
+                    depth + 1,
+                ));
+            }
+        }
+        if (unaryPrefix(source_condition)) |unary| {
+            if (unary.kind == .logical_not) {
+                const operand = ByteRange{
+                    .start = unary.end,
+                    .end = source_condition.len,
+                };
+                return !isTruthy(try self.evaluateValue(
+                    try self.relativeSpan(span, operand),
+                    source_condition[operand.start..operand.end],
                     scope.*,
                     depth + 1,
                 ));

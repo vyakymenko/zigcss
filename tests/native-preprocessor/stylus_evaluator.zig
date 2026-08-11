@@ -588,6 +588,26 @@ const regression_274_color_css =
     "less-equal:true;greater:false;less:false;conjunction:'ok';" ++
     "ternary:'ok';truthy:true;membership-miss:false;membership-hit:true}";
 
+const regression_2820_grouped_type_input =
+    \\$JIG_CONFIG = {
+    \\  color: #f00
+    \\}
+    \\$jig---config ?= null
+    \\if !($jig---config is a 'object')
+    \\  if jig---config is defined
+    \\    $jig---config = jig---config
+    \\  else if $JIG_CONFIG is defined
+    \\    $jig---config = $JIG_CONFIG
+    \\  else if JIG_CONFIG is defined
+    \\    $jig---config = JIG_CONFIG
+    \\if !($jig---config is a 'object')
+    \\  error('jig config is undefined or not an object')
+    \\.main
+    \\  color: $jig---config.color
+;
+
+const regression_2820_grouped_type_css = ".main{color:#f00}";
+
 const forwarded_selector_arguments_terminal_input =
     \\modernize(features, support)
     \\  selector = support ? '' : ('.no-js ' + selector())
@@ -4745,6 +4765,58 @@ test "native Stylus color nodes own the finite regression 274 comparison contrac
     );
 }
 
+test "native Stylus grouped type predicates own the finite regression 2820 condition contract" {
+    const lower_input =
+        \\config = { color: #f00 }
+        \\missing = null
+        \\if !(config is a 'object')
+        \\  error('unexpected object result')
+        \\if !(missing is a 'object')
+        \\  .lower
+        \\    color config.color
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".lower{color:#f00}", lower.css());
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = regression_2820_grouped_type_input.len;
+    terminal_limits.max_selectors = 1;
+    var first = try compile(
+        std.testing.allocator,
+        regression_2820_grouped_type_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        regression_2820_grouped_type_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(regression_2820_grouped_type_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_source = terminal_limits;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        regression_2820_grouped_type_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus root conditional assignments own the finite alias and binding contract" {
     const lower_input =
         \\primary := 'first'
@@ -8625,6 +8697,15 @@ fn exerciseRegression274ColorComparisonAllocationFailures(allocator: std.mem.All
     try std.testing.expectEqualStrings(regression_274_color_css, result.css());
 }
 
+fn exerciseRegression2820GroupedTypeAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = regression_2820_grouped_type_input.len;
+    limits.max_selectors = 1;
+    var result = try compile(allocator, regression_2820_grouped_type_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(regression_2820_grouped_type_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -9175,6 +9256,14 @@ test "native Stylus regression 274 color comparisons handle every allocation fai
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseRegression274ColorComparisonAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus regression 2820 grouped type predicates handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseRegression2820GroupedTypeAllocationFailures,
         .{},
     );
 }
