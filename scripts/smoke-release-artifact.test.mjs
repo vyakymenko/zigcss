@@ -147,7 +147,7 @@ test('npm lifecycle preload serves only the two exact local release URLs', () =>
   }
 })
 
-test('canonical provider host installs a process-wide deny-network policy', () => {
+test('development reference provider host installs a process-wide deny-network policy', () => {
   const policy = path.join(repositoryRoot, 'preprocessor', 'network-policy.mjs')
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', [
     "import https from 'node:https'",
@@ -163,6 +163,15 @@ test('canonical provider host installs a process-wide deny-network policy', () =
   assert.equal(result.error, undefined)
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout, 'denied')
+})
+
+test('release smoke routes all four preprocessors only through the explicit native binary gate', () => {
+  const source = fs.readFileSync(path.join(repositoryRoot, 'scripts/smoke-release-artifact.mjs'), 'utf8')
+  assert.match(source, /function checkNativePreprocessors\(/)
+  assert.match(source, /'--experimental-native',[\s\S]*?'--syntax'/)
+  assert.doesNotMatch(source, /function checkCanonicalPreprocessors\(/)
+  assert.doesNotMatch(source, /function checkCanonicalApi\(/)
+  assert.doesNotMatch(source, /zigcss\/api/)
 })
 
 test('build and release workflows require native archive and npm installation smokes', () => {

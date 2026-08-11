@@ -3,13 +3,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { createRequire } from 'node:module'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const require = createRequire(import.meta.url)
-
 test('npm package metadata is canonical before registry publication', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
@@ -30,6 +27,10 @@ function withWrapperFixture(run) {
     const binary = path.join(binDirectory, process.platform === 'win32' ? 'zigcss.exe' : 'zigcss')
     fs.writeFileSync(binary, `#!/usr/bin/env node
 const args = process.argv.slice(2)
+if (args.length === 1 && ['--help', '-h'].includes(args[0])) {
+  process.stdout.write('ZigCSS native pre-graduation CLI\\n--experimental-native\\n--syntax <syntax>\\nprovider plugins unavailable\\n')
+  return
+}
 if (args.includes('--experimental-native')) {
   if (args.includes('--native-diagnostic-fixture')) {
     process.stderr.write('input.scss:0:12: error NATIVE0002: undefined Sass variable\\n')
@@ -37,6 +38,10 @@ if (args.includes('--experimental-native')) {
   }
   process.stdout.write(JSON.stringify(args))
   return
+}
+if (args.some(value => /\\.(?:scss|sass|less|styl)$/.test(value))) {
+  process.stderr.write('native preprocessor syntax requires --experimental-native\\n')
+  process.exit(2)
 }
 const mode = process.argv[2]
 if (mode === 'echo') {
@@ -109,20 +114,24 @@ test('javascript wrapper routes the finite native syntax set through the install
   })
 })
 
-test('javascript wrapper keeps native routing explicit and provider routes unchanged', () => {
-  const { shouldUseProductCli } = require('../index.js')
-  for (const [input, syntax] of [
-    ['input.scss', 'scss'],
-    ['input.sass', 'sass'],
-    ['input.less', 'less'],
-    ['input.styl', 'stylus'],
-  ]) {
-    assert.equal(shouldUseProductCli([input, '--syntax', syntax]), true)
-    assert.equal(
-      shouldUseProductCli([input, '--experimental-native', '--syntax', syntax]),
-      false,
-    )
-  }
+test('javascript wrapper cannot reach the provider host', () => {
+  const source = fs.readFileSync(path.join(repositoryRoot, 'index.js'), 'utf8')
+  assert.doesNotMatch(source, /preprocessor\//)
+  assert.doesNotMatch(source, /shouldUseProductCli/)
+  assert.doesNotMatch(source, /\bimport\s*\(/)
+})
+
+test('javascript wrapper keeps native routing explicit and ungated preprocessors fail closed', () => {
+  withWrapperFixture(wrapper => {
+    for (const input of ['input.scss', 'input.sass', 'input.less', 'input.styl']) {
+      const result = spawnSync(process.execPath, [wrapper, input], { encoding: 'utf8' })
+      assert.equal(result.error, undefined)
+      assert.equal(result.signal, null)
+      assert.equal(result.status, 2)
+      assert.equal(result.stdout, '')
+      assert.equal(result.stderr, 'native preprocessor syntax requires --experimental-native\n')
+    }
+  })
 })
 
 test('javascript wrapper preserves native diagnostic streams and exit status', () => {
@@ -146,17 +155,16 @@ test('javascript wrapper preserves native diagnostic streams and exit status', (
   })
 })
 
-test('npm wrapper help publishes the combined five-language contract', () => {
+test('npm wrapper help preserves the pre-graduation native boundary', () => {
   withWrapperFixture(wrapper => {
     const result = spawnSync(process.execPath, [wrapper, '--help'], { encoding: 'utf8' })
     assert.equal(result.status, 0, result.stderr)
     assert.equal(result.stderr, '')
     for (const expected of [
-      '--syntax <css|scss|sass|less|stylus>',
-      'Dart Sass 1.101.0',
-      'Less 4.6.7',
-      'Stylus 0.64.0',
-      'project plugins, custom functions, custom importers, or JavaScript',
+      'native pre-graduation CLI',
+      '--experimental-native',
+      '--syntax <syntax>',
+      'provider plugins unavailable',
     ]) {
       assert.match(result.stdout, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     }

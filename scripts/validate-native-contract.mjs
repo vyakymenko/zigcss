@@ -40,7 +40,8 @@ const expectedReferenceOracles = Object.freeze([
     version: '1.101.0',
     license: 'MIT',
     adapters: Object.freeze(['scss', 'sass']),
-    currentReferencePackage: true,
+    currentReferencePackage: false,
+    developmentOracle: true,
     productionInNativeTarget: false,
   }),
   Object.freeze({
@@ -49,7 +50,8 @@ const expectedReferenceOracles = Object.freeze([
     version: '4.6.7',
     license: 'Apache-2.0',
     adapters: Object.freeze(['less']),
-    currentReferencePackage: true,
+    currentReferencePackage: false,
+    developmentOracle: true,
     productionInNativeTarget: false,
   }),
   Object.freeze({
@@ -58,7 +60,8 @@ const expectedReferenceOracles = Object.freeze([
     version: '0.64.0',
     license: 'MIT',
     adapters: Object.freeze(['stylus']),
-    currentReferencePackage: true,
+    currentReferencePackage: false,
+    developmentOracle: true,
     productionInNativeTarget: false,
   }),
 ])
@@ -484,7 +487,7 @@ const expectedProductRouting = Object.freeze({
       state: 'verified',
       evidenceTests: Object.freeze([
         'javascript wrapper routes the finite native syntax set through the installed binary',
-        'javascript wrapper keeps native routing explicit and provider routes unchanged',
+        'javascript wrapper keeps native routing explicit and ungated preprocessors fail closed',
       ]),
     }),
     Object.freeze({
@@ -553,7 +556,42 @@ const expectedProductRouting = Object.freeze({
   ]),
 })
 
-const expectedCurrentDependencies = Object.freeze({
+const expectedPackageMigration = Object.freeze({
+  ownerPackage: 'NATIVE-007',
+  releaseGapFamily: 'native-zero-dependency-package',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  terminalContract: Object.freeze({
+    surfaces: Object.freeze([
+      'production-package-closure',
+      'direct-archive-offline-package',
+      'runtime-process-network-tracing',
+      'five-native-targets',
+      'release-sbom-provenance',
+      'consumer-behavior',
+    ]),
+  }),
+  gates: Object.freeze([
+    Object.freeze({
+      id: 'production-package-closure',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'native npm package has zero production and optional dependencies',
+        'native npm archive excludes provider host and JavaScript API bytes',
+        'javascript wrapper cannot reach the provider host',
+      ]),
+    }),
+    ...[
+      'direct-archive-offline-package',
+      'runtime-process-network-tracing',
+      'five-native-targets',
+      'release-sbom-provenance',
+      'consumer-behavior',
+    ].map(id => Object.freeze({ id, state: 'pending', evidenceTests: Object.freeze([]) })),
+  ]),
+})
+
+const expectedReferenceDevelopmentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
   sass: '1.101.0',
@@ -1311,11 +1349,6 @@ function validateProductRouting(
   )
   requireText(
     nodeWrapperSource,
-    "if (args.includes('--experimental-native')) return false;",
-    'native product routing JavaScript wrapper explicit gate',
-  )
-  requireText(
-    nodeWrapperSource,
     'runNative(binaryPath, args);',
     'native product routing JavaScript wrapper binary dispatch',
   )
@@ -1335,6 +1368,84 @@ function validateProductRouting(
       `native product routing ${label} conformance`,
     )
   }
+}
+
+function validatePackageMigration(
+  migration,
+  plan,
+  manifest,
+  packageTests,
+  nodeWrapperSource,
+  nodeWrapperTests,
+) {
+  if (!same(migration, expectedPackageMigration)) fail('native package migration contract drifted')
+  requireText(
+    plan,
+    '`NATIVE-007` | Remove production providers/host/runtime closure; prove zero `dependencies` and `optionalDependencies`, closed archive/package inventories, no compile child process/network/runtime data, offline installation, five native targets, SBOM, provenance, and consumer behavior',
+    'DEVELOPMENT_PLAN.md native package migration package',
+  )
+  if (!same(
+    migration.terminalContract.surfaces,
+    migration.gates.map(gate => gate.id),
+  )) {
+    fail('native package migration terminal surface inventory drifted')
+  }
+  for (const gate of migration.gates) {
+    if (gate.state === 'verified') {
+      if (gate.evidenceTests.length === 0) fail('native package migration verified gate lacks evidence')
+      for (const evidenceTest of gate.evidenceTests) {
+        const source = evidenceTest.startsWith('javascript wrapper ')
+          ? nodeWrapperTests
+          : packageTests
+        requireText(
+          source,
+          `test('${evidenceTest}'`,
+          `native package migration ${gate.id} evidence`,
+        )
+      }
+    } else if (gate.state !== 'pending' || gate.evidenceTests.length !== 0) {
+      fail('native package migration pending gate drifted')
+    }
+  }
+
+  if (!same(manifest.dependencies ?? {}, {})) {
+    fail('native package migration production dependency closure is not empty')
+  }
+  if (Object.keys(manifest.optionalDependencies ?? {}).length !== 0) {
+    fail('native package migration optional dependency closure is not empty')
+  }
+  const referenceDependencies = Object.fromEntries(
+    Object.keys(expectedReferenceDevelopmentDependencies).map(name => [
+      name,
+      manifest.devDependencies?.[name],
+    ]),
+  )
+  if (!same(referenceDependencies, expectedReferenceDevelopmentDependencies)) {
+    fail('native package migration development oracle graph drifted')
+  }
+  if (!same(manifest.exports, {
+    '.': './index.js',
+    './package.json': './package.json',
+  })) {
+    fail('native package migration export inventory drifted')
+  }
+  if (!Array.isArray(manifest.files) || manifest.files.some(relativePath => (
+    relativePath === 'api.mjs' ||
+    relativePath === 'preprocessor' ||
+    relativePath.startsWith('preprocessor/')
+  ))) {
+    fail('native package migration retained provider host or JavaScript API bytes')
+  }
+  for (const forbidden of ['preprocessor/', 'shouldUseProductCli', 'import(']) {
+    if (nodeWrapperSource.includes(forbidden)) {
+      fail(`native package migration JavaScript wrapper retained ${forbidden}`)
+    }
+  }
+  requireText(
+    nodeWrapperSource,
+    'runNative(binaryPath, args);',
+    'native package migration JavaScript wrapper binary dispatch',
+  )
 }
 
 function validateSassEvaluatorClosure(
@@ -2216,6 +2327,10 @@ export function validateContract(
       repositoryFile('scripts/verify-node-wrapper.test.mjs'),
       'utf8',
     ),
+    packageTests = fs.readFileSync(
+      repositoryFile('scripts/validate-preprocessor-package.test.mjs'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -2237,13 +2352,14 @@ export function validateContract(
       'lessConformance',
       'stylusConformance',
       'productRouting',
+      'packageMigration',
       'foundations',
       'implementations',
       'adapters',
     ],
     'root',
   )
-  if (contract.schemaVersion !== 6) fail('schemaVersion must be 6')
+  if (contract.schemaVersion !== 7) fail('schemaVersion must be 7')
   if (contract.state !== 'native-foundation') fail('state must remain native-foundation during Milestone 10')
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
@@ -2313,6 +2429,14 @@ export function validateContract(
     lessConformanceTests,
     stylusConformanceTests,
   )
+  validatePackageMigration(
+    contract.packageMigration,
+    plan,
+    manifest,
+    packageTests,
+    nodeWrapperSource,
+    nodeWrapperTests,
+  )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
   }
@@ -2325,11 +2449,20 @@ export function validateContract(
   }
 
   if (manifest.version !== contract.referenceCandidate) fail('package version is not the reference candidate')
-  if (!same(manifest.dependencies, expectedCurrentDependencies)) {
-    fail('current canonical reference dependency graph drifted before native replacement')
+  if (!same(manifest.dependencies ?? {}, {})) {
+    fail('native package production dependency graph is not empty')
   }
   if (manifest.optionalDependencies !== undefined && Object.keys(manifest.optionalDependencies).length !== 0) {
     fail('current package has unexpected optionalDependencies')
+  }
+  const referenceDependencies = Object.fromEntries(
+    Object.keys(expectedReferenceDevelopmentDependencies).map(name => [
+      name,
+      manifest.devDependencies?.[name],
+    ]),
+  )
+  if (!same(referenceDependencies, expectedReferenceDevelopmentDependencies)) {
+    fail('development-only canonical reference dependency graph drifted')
   }
   if (manifest.scripts?.['check:native-contract'] !== 'node scripts/validate-native-contract.mjs --check') {
     fail('package script check:native-contract is missing or changed')

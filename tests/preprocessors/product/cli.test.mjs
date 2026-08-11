@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { runProductCli } from '../../../preprocessor/product-cli.mjs'
 import { loadFileForCompilation } from '../../../preprocessor/product-api.mjs'
@@ -20,41 +19,32 @@ const binaryPath = path.join(
   process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
 )
 const runtime = Object.freeze({ binaryPath, runCore: runZigCssCore, runHost: runPreprocessorHost })
-const require = createRequire(import.meta.url)
 
-test('npm launcher routes only preprocessor requests away from the native CSS path', () => {
-  const { shouldUseProductCli } = require('../../../index.js')
-  for (const argv of [
-    ['input.scss'],
-    ['input.sass', '--minify'],
-    ['input.less', '-o', 'output.css'],
-    ['input.styl'],
-    ['-', '--syntax', 'scss'],
-    ['input.css', '--syntax', 'less'],
-    ['*.scss', '-o', 'dist', '--output-dir'],
-  ]) {
-    assert.equal(shouldUseProductCli(argv), true, argv.join(' '))
-  }
-  for (const argv of [
-    ['input.css'],
-    ['-', '--syntax', 'css'],
-    ['echo'],
-    ['input.css', '-o', 'output.scss'],
-    ['input.module.css'],
-    ['--help'],
-    ['--version'],
-  ]) {
-    assert.equal(shouldUseProductCli(argv), false, argv.join(' '))
-  }
+function writeDevelopmentProductLauncher(fixture) {
+  fs.cpSync(path.join(repositoryRoot, 'preprocessor'), path.join(fixture, 'preprocessor'), {
+    recursive: true,
+  })
+  const launcher = path.join(fixture, 'development-product-launcher.mjs')
+  fs.writeFileSync(launcher, [
+    "import { mainProductCli } from './preprocessor/product-cli.mjs'",
+    'await mainProductCli()',
+    '',
+  ].join('\n'))
+  return launcher
+}
+
+test('npm launcher contains no route into the development provider CLI', () => {
+  const source = fs.readFileSync(path.join(repositoryRoot, 'index.js'), 'utf8')
+  assert.doesNotMatch(source, /shouldUseProductCli/)
+  assert.doesNotMatch(source, /preprocessor\//)
+  assert.doesNotMatch(source, /product-cli\.mjs/)
+  assert.match(source, /runNative\(binaryPath, args\);/)
 })
 
-test('installed-style npm launcher reaches the canonical product pipeline', () => {
+test('development provider CLI reaches the canonical reference pipeline', () => {
   const fixture = fs.mkdtempSync(path.join(repositoryRoot, '.zigcss-product-launcher-'))
   try {
-    fs.copyFileSync(path.join(repositoryRoot, 'index.js'), path.join(fixture, 'index.js'))
-    fs.cpSync(path.join(repositoryRoot, 'preprocessor'), path.join(fixture, 'preprocessor'), {
-      recursive: true,
-    })
+    const launcher = writeDevelopmentProductLauncher(fixture)
     fs.mkdirSync(path.join(fixture, 'bin'))
     const fixtureBinary = path.join(
       fixture,
@@ -69,7 +59,7 @@ test('installed-style npm launcher reaches the canonical product pipeline', () =
     )
 
     const result = spawnSync(process.execPath, [
-      path.join(fixture, 'index.js'),
+      launcher,
       'input.scss',
       '--minify',
     ], {
@@ -83,7 +73,7 @@ test('installed-style npm launcher reaches the canonical product pipeline', () =
     assert.equal(result.stderr, '')
 
     const stdinResult = spawnSync(process.execPath, [
-      path.join(fixture, 'index.js'),
+      launcher,
       '-',
       '--syntax',
       'sass',
@@ -570,16 +560,13 @@ test('npm CLI watch cancellation stops its polling loop without another compile'
   }
 })
 
-test('installed npm watch launcher preserves terminal signal ownership', {
+test('development provider watch launcher preserves terminal signal ownership', {
   skip: process.platform === 'win32',
 }, async () => {
   const fixture = fs.mkdtempSync(path.join(repositoryRoot, '.zigcss-product-watch-signal-'))
   let child = null
   try {
-    fs.copyFileSync(path.join(repositoryRoot, 'index.js'), path.join(fixture, 'index.js'))
-    fs.cpSync(path.join(repositoryRoot, 'preprocessor'), path.join(fixture, 'preprocessor'), {
-      recursive: true,
-    })
+    const launcher = writeDevelopmentProductLauncher(fixture)
     fs.mkdirSync(path.join(fixture, 'bin'))
     const fixtureBinary = path.join(fixture, 'bin', 'zigcss')
     fs.copyFileSync(binaryPath, fixtureBinary)
@@ -587,7 +574,7 @@ test('installed npm watch launcher preserves terminal signal ownership', {
     fs.writeFileSync(path.join(fixture, 'input.scss'), '$color: red; .card { color: $color; }')
 
     child = spawn(process.execPath, [
-      path.join(fixture, 'index.js'),
+      launcher,
       'input.scss',
       '-o',
       'output.css',
@@ -623,7 +610,7 @@ test('installed npm watch launcher preserves terminal signal ownership', {
     assert.equal(fs.readFileSync(path.join(fixture, 'output.css'), 'utf8'), '.card{color:red}')
 
     child = spawn(process.execPath, [
-      path.join(fixture, 'index.js'),
+      launcher,
       '-',
       '--syntax',
       'scss',

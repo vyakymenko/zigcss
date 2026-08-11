@@ -346,62 +346,53 @@ function validateInstalledPackageFiles(installedRoot, binaryName) {
   if (!same(rows, expectedPackedFiles)) fail('installed ZigCSS package file inventory changed')
 }
 
-function checkCanonicalPreprocessors(wrapper, working, environment) {
+function checkNativePreprocessors(wrapper, working, environment, version) {
   const cases = [
     {
       extension: 'scss',
+      syntax: 'scss',
       source: '$color: red;\n.scss { color: $color; }\n',
       expected: '.scss {\n  color: red;\n}\n',
     },
     {
       extension: 'sass',
+      syntax: 'sass',
       source: '$color: red\n.sass\n  color: $color\n',
       expected: '.sass {\n  color: red;\n}\n',
     },
     {
       extension: 'less',
+      syntax: 'less',
       source: '@color: red;\n.less { color: @color; }\n',
       expected: '.less {\n  color: red;\n}\n',
     },
     {
       extension: 'styl',
+      syntax: 'stylus',
       source: '.styl\n  color red\n',
       expected: '.styl {\n  color: #f00;\n}\n',
     },
   ]
   for (const item of cases) {
-    const input = path.join(working, `canonical.${item.extension}`)
+    const input = path.join(working, `native.${item.extension}`)
     fs.writeFileSync(input, item.source)
-    const result = child(process.execPath, [wrapper, input], {
+    const result = child(process.execPath, [
+      wrapper,
+      input,
+      '--experimental-native',
+      '--syntax',
+      item.syntax,
+    ], {
       cwd: working,
       env: environment,
-      label: `${item.extension} offline compile smoke`,
+      label: `${item.extension} offline native compile smoke`,
     })
-    if (result.stdout !== item.expected || result.stderr !== '') {
-      fail(`${item.extension} returned an unexpected offline compiler contract`)
+    const warning = `Warning: ZigCSS ${version} is an experimental release candidate; do not use it for production CSS.\n`
+    if (result.stdout !== item.expected || result.stderr !== warning) {
+      fail(`${item.extension} returned an unexpected offline native compiler contract`)
     }
   }
   return cases.length
-}
-
-function checkCanonicalApi(consumer, environment) {
-  const script = path.join(consumer, 'api-smoke.mjs')
-  fs.writeFileSync(script, [
-    "import { SUPPORTED_SYNTAXES, compileString } from 'zigcss/api'",
-    "const result = await compileString('$color: red; .api { color: $color; }', { syntax: 'scss' })",
-    "process.stdout.write(JSON.stringify({ syntaxes: SUPPORTED_SYNTAXES, css: result.css }))",
-    '',
-  ].join('\n'))
-  const result = child(process.execPath, [script], {
-    cwd: consumer,
-    env: environment,
-    label: 'npm API offline compile smoke',
-  })
-  const expected = JSON.stringify({
-    syntaxes: ['css', 'scss', 'sass', 'less', 'stylus'],
-    css: '.api {\n  color: red;\n}\n',
-  })
-  if (result.stdout !== expected || result.stderr !== '') fail('npm API returned an unexpected offline compiler contract')
 }
 
 function nodeOptionsRequire(filename) {
@@ -495,7 +486,7 @@ export function smokeReleaseArtifact(options) {
       '--no-fund',
     ], { cwd: warmConsumer, env: npmEnvironment, label: 'npm lifecycle-disabled clean install smoke' })
     const warmInstalledRoot = path.join(warmConsumer, 'node_modules', 'zigcss')
-    confinedRegularFile(warmInstalledRoot, 'api.mjs', 'lifecycle-disabled npm API', 64 * 1024)
+    confinedRegularFile(warmInstalledRoot, 'index.js', 'lifecycle-disabled npm wrapper', 64 * 1024)
     if (fs.existsSync(path.join(warmInstalledRoot, 'bin'))) {
       fail('lifecycle-disabled installation unexpectedly created a native binary directory')
     }
@@ -542,8 +533,12 @@ export function smokeReleaseArtifact(options) {
       npm_config_offline: 'true',
       ZIGCSS_RELEASE_SMOKE_RUNTIME: '1',
     }
-    const providerSmokes = checkCanonicalPreprocessors(wrapper, temporary, offlineEnvironment)
-    checkCanonicalApi(consumer, offlineEnvironment)
+    const nativePreprocessorSmokes = checkNativePreprocessors(
+      wrapper,
+      temporary,
+      offlineEnvironment,
+      version,
+    )
     const installed = measureInstalledTree(path.join(consumer, 'node_modules'))
 
     return {
@@ -553,7 +548,7 @@ export function smokeReleaseArtifact(options) {
       installedBytes: installed.bytes,
       installedEntries: installed.entries,
       npmPackage: packageName,
-      providerSmokes,
+      nativePreprocessorSmokes,
     }
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -565,7 +560,7 @@ function main() {
     const options = parseSmokeArguments(process.argv.slice(2))
     const result = smokeReleaseArtifact(options)
     process.stdout.write(
-      `Native release smoke passed for ${result.target}: direct archive, lifecycle-disabled clean install, offline postinstall, ${result.providerSmokes} canonical provider compiles, API, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
+      `Native release smoke passed for ${result.target}: direct archive, lifecycle-disabled clean install, offline postinstall, ${result.nativePreprocessorSmokes} native preprocessor compiles, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
     )
   } catch (error) {
     process.stderr.write(`${error.message}\n`)

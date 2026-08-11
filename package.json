@@ -8,7 +8,6 @@
   },
   "exports": {
     ".": "./index.js",
-    "./api": "./api.mjs",
     "./package.json": "./package.json"
   },
   "files": [
@@ -16,29 +15,8 @@
     "PREPROCESSOR-SBOM.spdx.json",
     "README.md",
     "THIRD_PARTY_NOTICES.md",
-    "api.mjs",
     "index.js",
-    "install.js",
-    "preprocessor/README.md",
-    "preprocessor/core-runner.mjs",
-    "preprocessor/environment.mjs",
-    "preprocessor/host-core.mjs",
-    "preprocessor/host.mjs",
-    "preprocessor/metadata.mjs",
-    "preprocessor/network-policy.mjs",
-    "preprocessor/product-api.mjs",
-    "preprocessor/product-cli.mjs",
-    "preprocessor/protocol.mjs",
-    "preprocessor/provider-registry.mjs",
-    "preprocessor/providers/dart-sass.mjs",
-    "preprocessor/providers/less-importer.mjs",
-    "preprocessor/providers/less.mjs",
-    "preprocessor/providers/sass-importer.mjs",
-    "preprocessor/providers/stylus-importer.mjs",
-    "preprocessor/providers/stylus.mjs",
-    "preprocessor/resolver.mjs",
-    "preprocessor/runner.mjs",
-    "preprocessor/source-map.mjs"
+    "install.js"
   ],
   "scripts": {
     "postinstall": "node install.js",
@@ -184,19 +162,18 @@
     "node": ">=20.19.0"
   },
   "preferGlobal": true,
-  "dependencies": {
-    "image-size": "0.5.5",
-    "less": "4.6.7",
-    "sass": "1.101.0",
-    "stylus": "0.64.0"
-  },
+  "dependencies": {},
   "overrides": {
-    "brace-expansion": "5.0.8"
+    "brace-expansion": "5.0.9"
   },
   "devDependencies": {
     "@mdn/browser-compat-data": "8.0.0",
     "esbuild": "0.28.1",
+    "image-size": "0.5.5",
+    "less": "4.6.7",
     "lightningcss": "1.30.1",
-    "lightningcss-cli": "1.30.1"
+    "lightningcss-cli": "1.30.1",
+    "sass": "1.101.0",
+    "stylus": "0.64.0"
   }
 }

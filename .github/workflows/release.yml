@@ -23,7 +23,7 @@ jobs:
           node-version: '20.19.0'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Verify canonical preprocessor package
+      - name: Verify native zero-dependency package
         run: npm run test:preprocessor-package && npm run check:preprocessor-package
 
       - name: Verify synchronized release version for publication

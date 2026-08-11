@@ -9,7 +9,8 @@ import {
   renderDependabotConfig,
   repositoryRoot,
   validateManifestLocks,
-  validateReviewedProductionOverrides,
+  validateExtensionProductionSecurityPatches,
+  validateReviewedDevelopmentOracleOverrides,
   validateUpdatePolicy,
 } from './audit-production-dependencies.mjs'
 
@@ -67,36 +68,55 @@ test('production audit parsing requires a consistent v2 report with no high or c
   assert.throws(() => parseAuditReport({ error: 'offline' }, 'fixture'), /report version 2/)
 })
 
-test('root production override is exact and locks the reviewed minimatch security patch', () => {
+test('development oracle override is exact and locks the reviewed minimatch security patch', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
-  assert.equal(validateReviewedProductionOverrides(manifest, lock), true)
+  assert.equal(validateReviewedDevelopmentOracleOverrides(manifest, lock), true)
 
   const missing = structuredClone(manifest)
   delete missing.overrides
   assert.throws(
-    () => validateReviewedProductionOverrides(missing, lock),
+    () => validateReviewedDevelopmentOracleOverrides(missing, lock),
     /overrides must equal/,
   )
 
   const extra = structuredClone(manifest)
   extra.overrides.unreviewed = '1.0.0'
   assert.throws(
-    () => validateReviewedProductionOverrides(extra, lock),
+    () => validateReviewedDevelopmentOracleOverrides(extra, lock),
     /overrides must equal/,
   )
 
   const vulnerable = structuredClone(lock)
   vulnerable.packages['node_modules/brace-expansion'].version = '2.1.2'
   assert.throws(
-    () => validateReviewedProductionOverrides(manifest, vulnerable),
-    /must lock brace-expansion 5\.0\.8/,
+    () => validateReviewedDevelopmentOracleOverrides(manifest, vulnerable),
+    /must lock brace-expansion 5\.0\.9/,
   )
 
   const detached = structuredClone(lock)
   detached.packages['node_modules/minimatch'].dependencies['brace-expansion'] = '^5.0.8'
   assert.throws(
-    () => validateReviewedProductionOverrides(manifest, detached),
+    () => validateReviewedDevelopmentOracleOverrides(manifest, detached),
+    /no longer matches the locked minimatch dependency edge/,
+  )
+})
+
+test('VS Code production graph locks the reviewed brace-expansion security patch', () => {
+  const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'vscode-extension', 'package-lock.json'), 'utf8'))
+  assert.equal(validateExtensionProductionSecurityPatches(lock), true)
+
+  const vulnerable = structuredClone(lock)
+  vulnerable.packages['node_modules/brace-expansion'].version = '5.0.8'
+  assert.throws(
+    () => validateExtensionProductionSecurityPatches(vulnerable),
+    /must lock brace-expansion 5\.0\.9/,
+  )
+
+  const detached = structuredClone(lock)
+  detached.packages['node_modules/minimatch'].dependencies['brace-expansion'] = '^6.0.0'
+  assert.throws(
+    () => validateExtensionProductionSecurityPatches(detached),
     /no longer matches the locked minimatch dependency edge/,
   )
 })

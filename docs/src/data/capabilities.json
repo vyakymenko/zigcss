@@ -157,7 +157,7 @@
         },
         {
           "path": "scripts/smoke-release-artifact.mjs",
-          "contains": ["checkCanonicalPreprocessors", "checkCanonicalApi"]
+          "contains": ["checkNativePreprocessors"]
         }
       ]
     },

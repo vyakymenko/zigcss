@@ -12,7 +12,8 @@ const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 
 export const minimumNodeVersion = '>=20.19.0'
-export const directProductionDependencies = Object.freeze({
+export const directProductionDependencies = Object.freeze({})
+export const referenceDevelopmentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
   sass: '1.101.0',
@@ -47,28 +48,8 @@ export const nativePackageTargets = Object.freeze([
 ])
 
 export const runtimeSourceFiles = Object.freeze([
-  'api.mjs',
   'index.js',
   'install.js',
-  'preprocessor/core-runner.mjs',
-  'preprocessor/environment.mjs',
-  'preprocessor/host-core.mjs',
-  'preprocessor/host.mjs',
-  'preprocessor/metadata.mjs',
-  'preprocessor/network-policy.mjs',
-  'preprocessor/product-api.mjs',
-  'preprocessor/product-cli.mjs',
-  'preprocessor/protocol.mjs',
-  'preprocessor/provider-registry.mjs',
-  'preprocessor/providers/dart-sass.mjs',
-  'preprocessor/providers/less-importer.mjs',
-  'preprocessor/providers/less.mjs',
-  'preprocessor/providers/sass-importer.mjs',
-  'preprocessor/providers/stylus-importer.mjs',
-  'preprocessor/providers/stylus.mjs',
-  'preprocessor/resolver.mjs',
-  'preprocessor/runner.mjs',
-  'preprocessor/source-map.mjs',
 ])
 
 export const generatedPackageFiles = Object.freeze([
@@ -80,7 +61,6 @@ export const manifestPackageFiles = Object.freeze([
   'LICENSE',
   'README.md',
   ...generatedPackageFiles,
-  'preprocessor/README.md',
   ...runtimeSourceFiles,
 ].sort())
 
@@ -93,12 +73,6 @@ const maximumPackageArchiveBytes = 2 * 1024 * 1024
 const maximumPackageUnpackedBytes = 4 * 1024 * 1024
 const maximumGeneratedBytes = 2 * 1024 * 1024
 const reviewedLicenses = new Set(['Apache-2.0', 'BSD-3-Clause', 'BlueOak-1.0.0', 'ISC', 'MIT'])
-const reviewedDependencyLifecycle = Object.freeze(['node_modules/@parcel/watcher'])
-const reviewedDeprecatedDependency = Object.freeze({
-  path: 'node_modules/glob',
-  version: '10.5.0',
-  message: 'Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me',
-})
 const builtinNames = new Set(builtinModules.flatMap(name => [name, `node:${name}`]))
 
 function fail(message) {
@@ -229,12 +203,16 @@ export function validateManifestPolicy(manifest, lock) {
     fail('package identity is invalid')
   }
   if (!same(sortedObject(manifest.dependencies), directProductionDependencies)) {
-    fail('production dependencies differ from the exact canonical provider graph')
+    fail('native npm package must have zero production dependencies')
   }
-  for (const dependency of Object.keys(directProductionDependencies)) {
-    if (Object.hasOwn(manifest.devDependencies ?? {}, dependency)) {
-      fail(`${dependency} must not remain a development dependency`)
-    }
+  if (Object.keys(manifest.optionalDependencies ?? {}).length !== 0) {
+    fail('native npm package must have zero optional dependencies')
+  }
+  const actualReferenceDependencies = Object.fromEntries(
+    Object.keys(referenceDevelopmentDependencies).map(name => [name, manifest.devDependencies?.[name]]),
+  )
+  if (!same(actualReferenceDependencies, referenceDevelopmentDependencies)) {
+    fail('development-only canonical reference dependency graph drifted')
   }
   if (manifest.engines?.node !== minimumNodeVersion) {
     fail(`Node policy must be ${minimumNodeVersion}`)
@@ -245,10 +223,9 @@ export function validateManifestPolicy(manifest, lock) {
   if (!same(manifest.files, manifestPackageFiles)) fail('package files do not match the exact runtime allowlist')
   if (!same(manifest.exports, {
     '.': './index.js',
-    './api': './api.mjs',
     './package.json': './package.json',
   })) {
-    fail('package exports do not match the CLI/API contract')
+    fail('package exports do not match the native binary-wrapper contract')
   }
   if (!same(manifest.zigcss?.canonicalProviders, canonicalProviderMetadata)) {
     fail('canonical provider package metadata drifted')
@@ -273,6 +250,8 @@ export function validateManifestPolicy(manifest, lock) {
     root?.name !== manifest.name ||
     root?.version !== manifest.version ||
     !same(sortedObject(root.dependencies), directProductionDependencies) ||
+    Object.keys(root.optionalDependencies ?? {}).length !== 0 ||
+    !same(sortedObject(root.devDependencies), sortedObject(manifest.devDependencies)) ||
     root.engines?.node !== minimumNodeVersion ||
     Object.hasOwn(root, 'os') ||
     Object.hasOwn(root, 'cpu')
@@ -283,18 +262,11 @@ export function validateManifestPolicy(manifest, lock) {
   const closure = productionDependencyClosure(lock)
   for (const packagePath of closure) validateLockedRecord(packagePath, lock.packages[packagePath])
   const deprecated = closure.filter(packagePath => lock.packages[packagePath].deprecated !== undefined)
-  if (!same(deprecated, [reviewedDeprecatedDependency.path])) {
+  if (!same(deprecated, [])) {
     fail(`deprecated dependency inventory drifted: ${JSON.stringify(deprecated)}`)
   }
-  const deprecatedEntry = lock.packages[reviewedDeprecatedDependency.path]
-  if (
-    deprecatedEntry.version !== reviewedDeprecatedDependency.version ||
-    deprecatedEntry.deprecated !== reviewedDeprecatedDependency.message
-  ) {
-    fail('reviewed glob deprecation identity drifted')
-  }
   const lifecycle = closure.filter(packagePath => lock.packages[packagePath].hasInstallScript === true)
-  if (!same(lifecycle, reviewedDependencyLifecycle)) {
+  if (!same(lifecycle, [])) {
     fail(`dependency lifecycle inventory drifted: ${JSON.stringify(lifecycle)}`)
   }
   return closure
@@ -308,6 +280,7 @@ export function validateLinkedDocumentationConsumer(manifest, lock) {
     linked?.hasInstallScript !== true ||
     linked?.license !== manifest.license ||
     !same(sortedObject(linked.dependencies), directProductionDependencies) ||
+    Object.keys(linked.optionalDependencies ?? {}).length !== 0 ||
     !same(sortedObject(linked.devDependencies), sortedObject(manifest.devDependencies)) ||
     !same(linked.bin, manifest.bin) ||
     linked.engines?.node !== minimumNodeVersion ||
@@ -334,7 +307,7 @@ function sourceReferences(source) {
 }
 
 export function discoverRuntimeSourceClosure(root = repositoryRoot) {
-  const pending = ['api.mjs', 'index.js', 'install.js']
+  const pending = [...runtimeSourceFiles]
   const seen = new Set()
   const external = new Set()
   while (pending.length !== 0) {
@@ -361,7 +334,7 @@ export function discoverRuntimeSourceClosure(root = repositoryRoot) {
   if (!same(files, [...runtimeSourceFiles])) {
     fail(`runtime import closure drifted: ${JSON.stringify(files)}`)
   }
-  const allowedExternal = [...Object.keys(directProductionDependencies), 'glob'].sort()
+  const allowedExternal = []
   if (!same([...external].sort(), allowedExternal)) {
     fail(`runtime external import closure drifted: ${JSON.stringify([...external].sort())}`)
   }
@@ -410,9 +383,7 @@ export function renderPreprocessorSbom(manifest, lock, closure = validateManifes
         referenceType: 'purl',
         referenceLocator: purl(name, entry.version),
       }],
-      comment: packagePath === reviewedDeprecatedDependency.path
-        ? `npm lock path: ${packagePath}. Reviewed exception: Stylus 0.64.0 requires glob ^10.4.5; 10.5.0 is the fixed 10.x release for GHSA-5j98-mcp5-4vw2 and ZigCSS invokes only its bounded library iterator, never its CLI.`
-        : `npm lock path: ${packagePath}`,
+      comment: `npm lock path: ${packagePath}`,
     }
   })
   const relationships = [{
@@ -448,11 +419,11 @@ export function renderPreprocessorSbom(manifest, lock, closure = validateManifes
     name: `zigcss-${manifest.version}-npm-runtime`,
     documentNamespace: `https://github.com/vyakymenko/zigcss/spdx/npm/${manifest.version}/${closureIdentity(lock, closure)}`,
     creationInfo: {
-      created: '2026-07-16T00:00:00Z',
-      creators: ['Tool: zigcss-preprocessor-package/1'],
+      created: '2026-08-11T00:00:00Z',
+      creators: ['Tool: zigcss-native-package/1'],
     },
     documentDescribes: ['SPDXRef-Package-zigcss'],
-    comment: 'Exact locked npm runtime graph for the ZigCSS canonical SCSS, indented Sass, Less, and Stylus host. Optional dependencies are included.',
+    comment: 'Exact zero-dependency npm runtime graph for the self-contained ZigCSS native binary wrapper.',
     packages: [
       {
         SPDXID: 'SPDXRef-Package-zigcss',
@@ -482,19 +453,10 @@ export function renderThirdPartyNotices(lock, closure) {
   const lines = [
     '# ZigCSS npm runtime third-party notices',
     '',
-    'This inventory covers the exact locked runtime graph used by the canonical SCSS, indented Sass, Less, and Stylus host. Each installed npm dependency retains its own license file and package metadata.',
-    '',
-    '## Reviewed compatibility exception',
-    '',
-    'Stylus 0.64.0 declares `glob ^10.4.5`. ZigCSS locks `glob 10.5.0`: the fixed 10.x release for GHSA-5j98-mcp5-4vw2. The registry retains a generic old-major deprecation notice, so this exact exception is fail-closed in the package gate. ZigCSS invokes only the bounded library iterator; the glob CLI is never called or exposed.',
-    '',
-    '| Locked package path | Version | SPDX license | npm integrity |',
-    '| --- | --- | --- | --- |',
+    'The shipped npm runtime has zero production dependencies and zero optional dependencies. Exact canonical providers remain development-only reference oracles and are excluded from the package archive and installed production graph.',
   ]
-  for (const packagePath of closure) {
-    const entry = lock.packages[packagePath]
-    lines.push(`| \`${packagePath}\` | \`${entry.version}\` | \`${entry.license}\` | \`${entry.integrity}\` |`)
-  }
+  if (closure.length !== 0) fail('third-party notice rendering received a nonempty production closure')
+  void lock
   lines.push('')
   return lines.join('\n')
 }
@@ -607,20 +569,20 @@ function literalCount(source, literal) {
 export function validatePreprocessorPackagingWorkflows(build, release, docs) {
   const command = 'npm run test:preprocessor-package && npm run check:preprocessor-package'
   if (literalCount(build, command) !== 1 || literalCount(release, command) !== 1) {
-    fail('build and release workflows must each own one exact preprocessor package gate')
+    fail('build and release workflows must each own one exact native package gate')
   }
   const buildConsumer = build.indexOf('- name: Test release consumer paths')
-  const buildPackage = build.indexOf('- name: Verify canonical preprocessor package', buildConsumer)
+  const buildPackage = build.indexOf('- name: Verify native zero-dependency package', buildConsumer)
   const buildInstall = build.indexOf('- name: Install independent validator', buildPackage)
   const buildAudit = build.indexOf('- name: Verify dependency policy and production audits', buildInstall)
   if (buildConsumer < 0 || buildPackage <= buildConsumer || buildInstall <= buildPackage || buildAudit <= buildInstall) {
-    fail('build workflow preprocessor package gate is ordered incorrectly')
+    fail('build workflow native package gate is ordered incorrectly')
   }
   const releaseSetup = release.indexOf('- name: Setup Node.js')
-  const releasePackage = release.indexOf('- name: Verify canonical preprocessor package', releaseSetup)
+  const releasePackage = release.indexOf('- name: Verify native zero-dependency package', releaseSetup)
   const releaseVersion = release.indexOf('- name: Verify synchronized release version for publication', releasePackage)
   if (releaseSetup < 0 || releasePackage <= releaseSetup || releaseVersion <= releasePackage) {
-    fail('release preflight package gate is ordered incorrectly')
+    fail('release preflight native package gate is ordered incorrectly')
   }
   if (literalCount(build, "node-version: '20.19.0'") !== 1) {
     fail('native package matrix must use exact Node 20.19.0')
@@ -688,7 +650,7 @@ function main() {
     ? writePreprocessorPackageMetadata()
     : validatePreprocessorPackage()
   process.stdout.write(
-    `Preprocessor package verified: ${result.runtimeSources} runtime sources, ${result.packageFiles} archive files, ${result.dependencies} locked dependencies, ${result.nativeTargets} native targets.\n`,
+    `Native package verified: ${result.runtimeSources} runtime sources, ${result.packageFiles} archive files, ${result.dependencies} production dependencies, ${result.nativeTargets} native targets.\n`,
   )
 }
 

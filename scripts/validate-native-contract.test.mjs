@@ -20,7 +20,7 @@ function clone(value) {
 
 test('accepts the bounded native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 6)
+  assert.equal(contract.schemaVersion, 7)
   assert.equal(contract.state, 'native-foundation')
   assert.equal(contract.nativeReleaseReady, false)
   assert.deepEqual(contract.nativePublicationAuthority, {
@@ -31,6 +31,19 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     channels: ['github-prerelease', 'npm-next'],
   })
   assert.equal(contract.productionBoundary.packageDependencies, 0)
+  assert.deepEqual(
+    contract.referenceOracles.map(oracle => ({
+      id: oracle.id,
+      currentReferencePackage: oracle.currentReferencePackage,
+      developmentOracle: oracle.developmentOracle,
+      productionInNativeTarget: oracle.productionInNativeTarget,
+    })),
+    [
+      { id: 'dart-sass', currentReferencePackage: false, developmentOracle: true, productionInNativeTarget: false },
+      { id: 'less', currentReferencePackage: false, developmentOracle: true, productionInNativeTarget: false },
+      { id: 'stylus', currentReferencePackage: false, developmentOracle: true, productionInNativeTarget: false },
+    ],
+  )
   assert.deepEqual(contract.foundations.map(foundation => foundation.id), [
     'shared-lossless-lexer',
     'shared-semantic-primitives',
@@ -112,7 +125,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       state: 'verified',
       evidenceTests: [
         'javascript wrapper routes the finite native syntax set through the installed binary',
-        'javascript wrapper keeps native routing explicit and provider routes unchanged',
+        'javascript wrapper keeps native routing explicit and ungated preprocessors fail closed',
       ],
     }, {
       id: 'files-and-stdin',
@@ -1482,7 +1495,7 @@ test('binds the finite native product routing inventory and verified closed pack
   assert.throws(
     () => validateContract(loadContract(), {
       nodeWrapperTests: nodeWrapperTests.replace(
-        "test('javascript wrapper keeps native routing explicit and provider routes unchanged'",
+        "test('javascript wrapper keeps native routing explicit and ungated preprocessors fail closed'",
         "test('missing JavaScript wrapper route evidence'",
       ),
     }),
@@ -1493,11 +1506,11 @@ test('binds the finite native product routing inventory and verified closed pack
   assert.throws(
     () => validateContract(loadContract(), {
       nodeWrapperSource: nodeWrapperSource.replace(
-        "if (args.includes('--experimental-native')) return false;",
-        "if (args.includes('--experimental-native-next')) return false;",
+        'runNative(binaryPath, args);',
+        'missingNativeDispatch(binaryPath, args);',
       ),
     }),
-    /JavaScript wrapper explicit gate.*missing/,
+    /JavaScript wrapper binary dispatch.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {
@@ -1615,12 +1628,92 @@ test('binds the finite native product routing inventory and verified closed pack
   )
 })
 
-test('binds the current provider package only as migration reference evidence', () => {
+test('owns the finite native zero-dependency package migration contract', () => {
+  const contract = loadContract()
+  assert.equal(contract.schemaVersion, 7)
+  assert.deepEqual(contract.packageMigration, {
+    ownerPackage: 'NATIVE-007',
+    releaseGapFamily: 'native-zero-dependency-package',
+    state: 'in-progress',
+    packageState: 'in-progress',
+    terminalContract: {
+      surfaces: [
+        'production-package-closure',
+        'direct-archive-offline-package',
+        'runtime-process-network-tracing',
+        'five-native-targets',
+        'release-sbom-provenance',
+        'consumer-behavior',
+      ],
+    },
+    gates: [
+      {
+        id: 'production-package-closure',
+        state: 'verified',
+        evidenceTests: [
+          'native npm package has zero production and optional dependencies',
+          'native npm archive excludes provider host and JavaScript API bytes',
+          'javascript wrapper cannot reach the provider host',
+        ],
+      },
+      ...[
+        'direct-archive-offline-package',
+        'runtime-process-network-tracing',
+        'five-native-targets',
+        'release-sbom-provenance',
+        'consumer-behavior',
+      ].map(id => ({ id, state: 'pending', evidenceTests: [] })),
+    ],
+  })
+
+  for (const mutate of [
+    migration => { migration.state = 'closed' },
+    migration => { migration.packageState = 'verified' },
+    migration => migration.terminalContract.surfaces.reverse(),
+    migration => { migration.gates[0].state = 'pending' },
+    migration => { migration.gates[1].state = 'verified' },
+    migration => migration.gates.push(clone(migration.gates[0])),
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed.packageMigration)
+    assert.throws(() => validateContract(changed), /native package migration.*drifted/)
+  }
+
+  const packageTests = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/validate-preprocessor-package.test.mjs'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      packageTests: packageTests.replace(
+        "test('native npm archive excludes provider host and JavaScript API bytes'",
+        "test('missing package archive evidence'",
+      ),
+    }),
+    /native package migration production-package-closure evidence.*missing/,
+  )
+
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
-  manifest.dependencies = { ...manifest.dependencies, sass: '^1.101.0' }
+  manifest.exports['./api'] = './api.mjs'
   assert.throws(
     () => validateContract(loadContract(), { manifest }),
-    /canonical reference dependency graph drifted/,
+    /native package migration export inventory drifted/,
+  )
+})
+
+test('binds canonical providers only as exact development-oracle evidence', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+  manifest.devDependencies = { ...manifest.devDependencies, sass: '^1.101.0' }
+  assert.throws(
+    () => validateContract(loadContract(), { manifest }),
+    /development oracle graph drifted|development-only canonical reference dependency graph drifted/,
+  )
+
+  manifest.devDependencies.sass = '1.101.0'
+  manifest.dependencies = { sass: '1.101.0' }
+  assert.throws(
+    () => validateContract(loadContract(), { manifest }),
+    /production dependency closure is not empty|production dependency graph is not empty/,
   )
 })
 

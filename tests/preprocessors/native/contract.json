@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "state": "native-foundation",
   "nativeReleaseReady": false,
   "nativeReleaseVersion": null,
@@ -31,7 +31,8 @@
       "version": "1.101.0",
       "license": "MIT",
       "adapters": ["scss", "sass"],
-      "currentReferencePackage": true,
+      "currentReferencePackage": false,
+      "developmentOracle": true,
       "productionInNativeTarget": false
     },
     {
@@ -40,7 +41,8 @@
       "version": "4.6.7",
       "license": "Apache-2.0",
       "adapters": ["less"],
-      "currentReferencePackage": true,
+      "currentReferencePackage": false,
+      "developmentOracle": true,
       "productionInNativeTarget": false
     },
     {
@@ -49,7 +51,8 @@
       "version": "0.64.0",
       "license": "MIT",
       "adapters": ["stylus"],
-      "currentReferencePackage": true,
+      "currentReferencePackage": false,
+      "developmentOracle": true,
       "productionInNativeTarget": false
     }
   ],
@@ -464,7 +467,7 @@
         "state": "verified",
         "evidenceTests": [
           "javascript wrapper routes the finite native syntax set through the installed binary",
-          "javascript wrapper keeps native routing explicit and provider routes unchanged"
+          "javascript wrapper keeps native routing explicit and ungated preprocessors fail closed"
         ]
       },
       {
@@ -529,6 +532,58 @@
           "binary CLI native watch atomically replaces CSS and its composed source map",
           "javascript wrapper routes the finite native syntax set through the installed binary"
         ]
+      }
+    ]
+  },
+  "packageMigration": {
+    "ownerPackage": "NATIVE-007",
+    "releaseGapFamily": "native-zero-dependency-package",
+    "state": "in-progress",
+    "packageState": "in-progress",
+    "terminalContract": {
+      "surfaces": [
+        "production-package-closure",
+        "direct-archive-offline-package",
+        "runtime-process-network-tracing",
+        "five-native-targets",
+        "release-sbom-provenance",
+        "consumer-behavior"
+      ]
+    },
+    "gates": [
+      {
+        "id": "production-package-closure",
+        "state": "verified",
+        "evidenceTests": [
+          "native npm package has zero production and optional dependencies",
+          "native npm archive excludes provider host and JavaScript API bytes",
+          "javascript wrapper cannot reach the provider host"
+        ]
+      },
+      {
+        "id": "direct-archive-offline-package",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "runtime-process-network-tracing",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "five-native-targets",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "release-sbom-provenance",
+        "state": "pending",
+        "evidenceTests": []
+      },
+      {
+        "id": "consumer-behavior",
+        "state": "pending",
+        "evidenceTests": []
       }
     ]
   },

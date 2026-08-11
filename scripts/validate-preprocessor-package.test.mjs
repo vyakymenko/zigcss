@@ -11,6 +11,7 @@ import {
   minimumNodeVersion,
   nativePackageTargets,
   productionDependencyClosure,
+  referenceDevelopmentDependencies,
   renderPreprocessorSbom,
   renderThirdPartyNotices,
   repositoryRoot,
@@ -29,31 +30,74 @@ function sources() {
   }
 }
 
-test('owns one exact installable canonical preprocessor package surface', () => {
-  const result = validatePreprocessorPackage(repositoryRoot, { pack: false })
-  assert.deepEqual(result, {
-    dependencies: 86,
-    externalImports: 5,
-    nativeTargets: 5,
-    packageFiles: 28,
-    runtimeSources: 22,
+test('native npm package has zero production and optional dependencies', () => {
+  const { manifest, lock } = sources()
+  assert.deepEqual(manifest.dependencies, {})
+  assert.equal(Object.hasOwn(manifest, 'optionalDependencies'), false)
+  assert.deepEqual(lock.packages[''].dependencies, undefined)
+  assert.deepEqual(lock.packages[''].optionalDependencies, undefined)
+  assert.deepEqual(productionDependencyClosure(lock), [])
+  assert.deepEqual(
+    Object.fromEntries(
+      ['image-size', 'less', 'sass', 'stylus']
+        .map(name => [name, manifest.devDependencies[name]]),
+    ),
+    {
+      'image-size': '0.5.5',
+      less: '4.6.7',
+      sass: '1.101.0',
+      stylus: '0.64.0',
+    },
+  )
+})
+
+test('native npm archive excludes provider host and JavaScript API bytes', () => {
+  const { manifest } = sources()
+  assert.deepEqual(manifest.exports, {
+    '.': './index.js',
+    './package.json': './package.json',
   })
+  for (const relativePath of [...manifest.files, ...expectedPackedFiles]) {
+    assert.doesNotMatch(relativePath, /^(?:api\.mjs|preprocessor(?:\/|$))/)
+  }
   assert.deepEqual(discoverRuntimeSourceClosure(), {
-    files: runtimeSourceFiles,
-    external: ['glob', 'image-size', 'less', 'sass', 'stylus'],
+    files: ['index.js', 'install.js'],
+    external: [],
   })
 })
 
-test('binds direct dependencies, providers, Node, exports, files, and non-Cartesian targets', () => {
+test('owns one exact installable native binary-wrapper package surface', () => {
+  const result = validatePreprocessorPackage(repositoryRoot, { pack: false })
+  assert.deepEqual(result, {
+    dependencies: 0,
+    externalImports: 0,
+    nativeTargets: 5,
+    packageFiles: 7,
+    runtimeSources: 2,
+  })
+  assert.deepEqual(discoverRuntimeSourceClosure(), {
+    files: runtimeSourceFiles,
+    external: [],
+  })
+})
+
+test('binds zero runtime dependencies, development oracles, Node, exports, files, and non-Cartesian targets', () => {
   const { manifest, lock } = sources()
   assert.deepEqual(manifest.dependencies, directProductionDependencies)
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(referenceDevelopmentDependencies).map(name => [
+      name,
+      manifest.devDependencies[name],
+    ])),
+    referenceDevelopmentDependencies,
+  )
   assert.deepEqual(manifest.zigcss.canonicalProviders, canonicalProviderMetadata)
   assert.deepEqual(manifest.zigcss.nativeTargets, nativePackageTargets)
   assert.equal(manifest.engines.node, minimumNodeVersion)
   assert.equal(Object.hasOwn(manifest, 'os'), false)
   assert.equal(Object.hasOwn(manifest, 'cpu'), false)
   assert.deepEqual(manifest.files, manifestPackageFiles)
-  assert.deepEqual(productionDependencyClosure(lock).length, 86)
+  assert.deepEqual(productionDependencyClosure(lock).length, 0)
 
   const invalidNode = structuredClone(manifest)
   invalidNode.engines.node = '>=18'
@@ -65,8 +109,16 @@ test('binds direct dependencies, providers, Node, exports, files, and non-Cartes
   assert.throws(() => validateManifestPolicy(cartesian, lock), /non-Cartesian/)
 
   const ranged = structuredClone(manifest)
-  ranged.dependencies.sass = '^1.101.0'
-  assert.throws(() => validateManifestPolicy(ranged, lock), /exact canonical provider graph/)
+  ranged.devDependencies.sass = '^1.101.0'
+  assert.throws(() => validateManifestPolicy(ranged, lock), /development-only canonical reference/)
+
+  const productionProvider = structuredClone(manifest)
+  productionProvider.dependencies.sass = '1.101.0'
+  assert.throws(() => validateManifestPolicy(productionProvider, lock), /zero production dependencies/)
+
+  const optionalProvider = structuredClone(manifest)
+  optionalProvider.optionalDependencies = { sass: '1.101.0' }
+  assert.throws(() => validateManifestPolicy(optionalProvider, lock), /zero optional dependencies/)
 
   const extraFile = structuredClone(manifest)
   extraFile.files.push('tests')
@@ -86,28 +138,21 @@ test('keeps the documentation package consumer lock synchronized with the shippe
   )
 })
 
-test('locks the complete reviewed runtime graph and generated SPDX/notices bytes', () => {
+test('generates an exact zero-dependency SPDX document and runtime notice', () => {
   const { manifest, lock } = sources()
   const closure = validateManifestPolicy(manifest, lock)
-  assert.equal(closure.length, 86)
-  assert.deepEqual(
-    [...new Set(closure.map(packagePath => lock.packages[packagePath].license))].sort(),
-    ['Apache-2.0', 'BSD-3-Clause', 'BlueOak-1.0.0', 'ISC', 'MIT'],
-  )
-  assert.deepEqual(
-    closure.filter(packagePath => lock.packages[packagePath].hasInstallScript === true),
-    ['node_modules/@parcel/watcher'],
-  )
-  assert.deepEqual(
-    closure.filter(packagePath => lock.packages[packagePath].deprecated !== undefined),
-    ['node_modules/glob'],
-  )
+  assert.equal(closure.length, 0)
 
   const sbom = renderPreprocessorSbom(manifest, lock, closure)
   const parsed = JSON.parse(sbom)
   assert.equal(parsed.spdxVersion, 'SPDX-2.3')
-  assert.equal(parsed.packages.length, 87)
+  assert.equal(parsed.packages.length, 1)
   assert.equal(parsed.packages[0].name, 'zigcss')
+  assert.deepEqual(parsed.relationships, [{
+    spdxElementId: 'SPDXRef-DOCUMENT',
+    relationshipType: 'DESCRIBES',
+    relatedSpdxElement: 'SPDXRef-Package-zigcss',
+  }])
   assert.match(parsed.documentNamespace, /^https:\/\/github\.com\/vyakymenko\/zigcss\/spdx\/npm\//)
   assert.equal(
     fs.readFileSync(path.join(repositoryRoot, 'PREPROCESSOR-SBOM.spdx.json'), 'utf8'),
@@ -118,21 +163,8 @@ test('locks the complete reviewed runtime graph and generated SPDX/notices bytes
     renderThirdPartyNotices(lock, closure),
   )
 
-  const changedLicense = structuredClone(lock)
-  changedLicense.packages['node_modules/sass'].license = 'UNKNOWN'
-  assert.throws(() => validateManifestPolicy(manifest, changedLicense), /unreviewed license/)
-
-  const changedIntegrity = structuredClone(lock)
-  changedIntegrity.packages['node_modules/sass'].integrity = 'sha256-invalid'
-  assert.throws(() => validateManifestPolicy(manifest, changedIntegrity), /SHA-512 integrity/)
-
-  const changedLifecycle = structuredClone(lock)
-  changedLifecycle.packages['node_modules/sass'].hasInstallScript = true
-  assert.throws(() => validateManifestPolicy(manifest, changedLifecycle), /lifecycle inventory/)
-
-  const changedDeprecation = structuredClone(lock)
-  changedDeprecation.packages['node_modules/glob'].deprecated = 'different warning'
-  assert.throws(() => validateManifestPolicy(manifest, changedDeprecation), /deprecation identity/)
+  assert.match(renderThirdPartyNotices(lock, closure), /zero production dependencies/i)
+  assert.match(renderThirdPartyNotices(lock, closure), /development-only reference oracles/i)
 })
 
 test('npm pack description permits only the exact bounded runtime archive', () => {
