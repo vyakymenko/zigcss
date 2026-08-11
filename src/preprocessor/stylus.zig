@@ -1114,11 +1114,11 @@ pub const Parser = struct {
             {
                 break :blk false;
             }
-            for (candidates[0..last_selector]) |candidate| {
-                if (isSilentComment(self.lineBytes(candidate))) continue;
-                if (!endsWithSignificant(self.lineBytes(candidate), ',')) break :blk false;
-            }
-            break :blk true;
+            // A trailing comma makes the provider enter selector mode. Once
+            // there, every following same-level newline starts another
+            // selector until the indented block, even when later branches do
+            // not repeat the comma.
+            break :blk endsWithSignificant(self.lineBytes(candidates[0]), ',');
         };
         var first_pseudo_selector: ?usize = null;
         for (candidates, 0..) |candidate, index| {
