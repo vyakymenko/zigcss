@@ -37173,6 +37173,7 @@ test "native Sass forwards the pinned configured module once" {
         mode: sass.Mode,
         files: []const LocalUseFile,
         dependency_suffixes: []const []const u8,
+        dependency_kinds: []const resolver.DependencyKind,
         edges: []const ExpectedEdge,
     }{
         .{
@@ -37184,6 +37185,7 @@ test "native Sass forwards the pinned configured module once" {
                 .{ .name = "_upstream.scss", .contents = "$a: original !default; b { c: $a; }" },
             },
             .dependency_suffixes = &.{ "/_midstream.scss", "/_upstream.scss" },
+            .dependency_kinds = &.{ .use, .forward },
             .edges = &.{
                 .{ .parent_suffix = "/input.scss", .child_suffix = "/_midstream.scss" },
                 .{ .parent_suffix = "/_midstream.scss", .child_suffix = "/_upstream.scss" },
@@ -37198,6 +37200,7 @@ test "native Sass forwards the pinned configured module once" {
                 .{ .name = "_upstream.sass", .contents = "$a: original !default\nb\n  c: $a" },
             },
             .dependency_suffixes = &.{ "/_midstream.sass", "/_upstream.sass" },
+            .dependency_kinds = &.{ .use, .forward },
             .edges = &.{
                 .{ .parent_suffix = "/input.sass", .child_suffix = "/_midstream.sass" },
                 .{ .parent_suffix = "/_midstream.sass", .child_suffix = "/_upstream.sass" },
@@ -37229,8 +37232,8 @@ test "native Sass forwards the pinned configured module once" {
         try std.testing.expectEqualStrings(first.css(), second.css());
         try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
         try std.testing.expectEqual(case.dependency_suffixes.len, first.dependencies().len);
-        for (case.dependency_suffixes, first.dependencies()) |suffix, dependency| {
-            try std.testing.expectEqual(resolver.DependencyKind.use, dependency.kind);
+        for (case.dependency_suffixes, case.dependency_kinds, first.dependencies()) |suffix, kind, dependency| {
+            try std.testing.expectEqual(kind, dependency.kind);
             try std.testing.expect(std.mem.endsWith(u8, dependency.url, suffix));
         }
         try std.testing.expectEqual(case.edges.len, first.edges().len);

@@ -418,7 +418,7 @@ test "binary CLI native watch failures retain output and recover once" {
     defer allocator.free(stderr);
     try std.testing.expectEqual(
         @as(usize, 1),
-        countOccurrences(stderr, "native SCSS compilation failed"),
+        countOccurrences(stderr, "error NATIVE0009:"),
     );
     try std.testing.expectEqual(@as(usize, 2), countOccurrences(stderr, "Compiled:"));
 }
@@ -549,7 +549,7 @@ test "binary CLI native stdin confines imports and commits no partial output" {
     defer deinitRun(&escaped);
     try expectExitCode(escaped, 1);
     try std.testing.expectEqual(@as(usize, 0), escaped.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, escaped.stderr, "native SCSS compilation failed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, escaped.stderr, "error NATIVE0009:") != null);
 
     const output = try root.readFileAlloc(allocator, "output.css", 1024);
     defer allocator.free(output);
@@ -753,7 +753,7 @@ test "binary CLI native parallel failure cancels queued work without partial out
     defer deinitRun(&result);
     try expectExitCode(result, 1);
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "native SCSS compilation failed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "error NATIVE0002:") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Compiled:") == null);
 
     for (output_names, sentinels) |output_name, sentinel| {
@@ -786,7 +786,7 @@ test "binary CLI native batch failures commit no partial output" {
     defer deinitRun(&result);
     try expectExitCode(result, 1);
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "native SCSS compilation failed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "error NATIVE0002:") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Compiled:") == null);
 
     const good_output = try tmp.dir.readFileAlloc(allocator, "out/good.css", 1024);
@@ -795,6 +795,52 @@ test "binary CLI native batch failures commit no partial output" {
     defer allocator.free(bad_output);
     try std.testing.expectEqualStrings("good-sentinel", good_output);
     try std.testing.expectEqualStrings("bad-sentinel", bad_output);
+}
+
+test "binary CLI renders structured native diagnostics without partial output" {
+    var warning = try runCompilerNamed(
+        "warning.scss",
+        ".a { $new: blue !global; color: $new; } .b { color: $new; }",
+        &.{ "--experimental-native", "--syntax", "scss", "--minify" },
+    );
+    defer deinitRun(&warning);
+    try expectExitCode(warning, 0);
+    try std.testing.expectEqualStrings(".a{color:blue}.b{color:blue}", warning.stdout);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        warning.stderr,
+        "warning NATIVE0001: !global assignment declares a new variable; Sass 2.0 will reject it",
+    ) != null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "failure.scss", .data = ".a { color: $missing; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "failure.css", .data = "sentinel" });
+    var failure = try runInDir(tmp.dir, &.{
+        "failure.scss",
+        "-o",
+        "failure.css",
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--minify",
+    });
+    defer deinitRun(&failure);
+    try expectExitCode(failure, 1);
+    try std.testing.expectEqual(@as(usize, 0), failure.stdout.len);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        failure.stderr,
+        "failure.scss:0:12: error NATIVE0002: undefined Sass variable",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        failure.stderr,
+        "native SCSS compilation failed: CompilationFailed",
+    ) == null);
+    const retained = try tmp.dir.readFileAlloc(allocator, "failure.css", 1024);
+    defer allocator.free(retained);
+    try std.testing.expectEqualStrings("sentinel", retained);
 }
 
 test "binary CLI native failures commit no partial output" {
@@ -815,7 +861,7 @@ test "binary CLI native failures commit no partial output" {
     defer deinitRun(&result);
     try expectExitCode(result, 1);
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "native SCSS compilation failed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "error NATIVE0002:") != null);
 
     const output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
     defer allocator.free(output);

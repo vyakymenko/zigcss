@@ -1,8 +1,8 @@
 //! Private shared compiler route for the self-contained stylesheet frontends.
 //!
-//! This is the first NATIVE-006 routing boundary. It deliberately remains
-//! unreachable from the public Zig library, binary CLI, and JavaScript wrapper
-//! until those surfaces pass their own product-routing gates.
+//! This private NATIVE-006 boundary is reachable only through the explicit
+//! pre-graduation native bridge. It does not itself graduate an adapter or
+//! authorize a general-availability product claim.
 
 const std = @import("std");
 const core_diagnostics = @import("../diagnostics.zig");
@@ -61,6 +61,12 @@ pub const Error = native_evaluator.Error ||
     native_stylus.Error ||
     native_stylus_evaluator.Error;
 
+pub const Diagnostic = native_diagnostics.Diagnostic;
+pub const Dependency = native_resolver.Dependency;
+pub const Related = native_diagnostics.Related;
+pub const SourceId = native_source.SourceId;
+pub const SourceTable = native_source.Table;
+
 /// Owns the complete source table alongside the committed evaluation result so
 /// native diagnostic spans and frontend Source Map source IDs stay meaningful.
 pub const Result = struct {
@@ -110,6 +116,37 @@ pub const Result = struct {
     }
 };
 
+/// Owns structured native diagnostics for an expected language failure. It
+/// deliberately carries no CSS, dependency, edge, or map fact from the
+/// aborted transaction.
+pub const ReportedFailure = struct {
+    sources: native_source.Table,
+    diagnostic_items: []const native_diagnostics.Diagnostic,
+    cause: Error,
+
+    pub fn deinit(self: *ReportedFailure) void {
+        native_evaluator.releaseNativeDiagnostics(
+            self.sources.allocator,
+            self.diagnostic_items,
+        );
+        self.sources.deinit();
+        self.* = undefined;
+    }
+
+    pub fn diagnostics(self: *const ReportedFailure) []const native_diagnostics.Diagnostic {
+        return self.diagnostic_items;
+    }
+
+    pub fn sourceTable(self: *const ReportedFailure) *const native_source.Table {
+        return &self.sources;
+    }
+};
+
+pub const CompileOutcome = union(enum) {
+    success: Result,
+    failure: ReportedFailure,
+};
+
 /// Compiles one already-loaded entry source through exactly one native parser,
 /// evaluator, transactional core validation, and owned-result path.
 pub fn compile(
@@ -118,6 +155,27 @@ pub fn compile(
     input: []const u8,
     options: Options,
 ) Error!Result {
+    const outcome = try compileReported(allocator, entry_url, input, options);
+    return switch (outcome) {
+        .success => |result| result,
+        .failure => |failure_value| {
+            var failure = failure_value;
+            const cause = failure.cause;
+            failure.deinit();
+            return cause;
+        },
+    };
+}
+
+/// Preserves structured, source-aware diagnostics for expected language
+/// failures while operational, allocation, confinement, and resource errors
+/// retain the ordinary error union.
+pub fn compileReported(
+    allocator: std.mem.Allocator,
+    entry_url: []const u8,
+    input: []const u8,
+    options: Options,
+) Error!CompileOutcome {
     var authority = try native_resolver.Resolver.init(
         allocator,
         options.root_paths,
@@ -152,15 +210,29 @@ pub fn compile(
                 .{},
             );
             defer parser.deinit();
-            var document = try parser.parse();
+            var document = parser.parse() catch |err| {
+                return reportFailure(
+                    allocator,
+                    &sources,
+                    parser.diagnostics(),
+                    err,
+                );
+            };
             defer document.deinit();
-            try native_sass_evaluator.evaluate(
+            native_sass_evaluator.evaluate(
                 allocator,
                 &sources,
                 &document,
                 &transaction,
                 options.limits.sass_evaluator,
-            );
+            ) catch |err| {
+                return reportFailure(
+                    allocator,
+                    &sources,
+                    transaction.diagnostics(),
+                    err,
+                );
+            };
         },
         .less => {
             var parser = try native_less.Parser.init(
@@ -171,15 +243,29 @@ pub fn compile(
                 .{},
             );
             defer parser.deinit();
-            var document = try parser.parse();
+            var document = parser.parse() catch |err| {
+                return reportFailure(
+                    allocator,
+                    &sources,
+                    parser.diagnostics(),
+                    err,
+                );
+            };
             defer document.deinit();
-            try native_less_evaluator.evaluateWithOptions(
+            native_less_evaluator.evaluateWithOptions(
                 &sources,
                 &document,
                 &transaction,
                 options.less,
                 options.limits.less_evaluator,
-            );
+            ) catch |err| {
+                return reportFailure(
+                    allocator,
+                    &sources,
+                    transaction.diagnostics(),
+                    err,
+                );
+            };
         },
         .stylus => {
             var parser = try native_stylus.Parser.init(
@@ -190,7 +276,14 @@ pub fn compile(
                 .{},
             );
             defer parser.deinit();
-            var document = try parser.parse();
+            var document = parser.parse() catch |err| {
+                return reportFailure(
+                    allocator,
+                    &sources,
+                    parser.diagnostics(),
+                    err,
+                );
+            };
             defer document.deinit();
             const stylus_options = options.stylus orelse native_stylus_evaluator.Options{
                 .output_style = switch (options.format) {
@@ -198,20 +291,56 @@ pub fn compile(
                     .minified => .compressed,
                 },
             };
-            try native_stylus_evaluator.evaluateWithOptions(
+            native_stylus_evaluator.evaluateWithOptions(
                 &sources,
                 &document,
                 &transaction,
                 stylus_options,
                 options.limits.stylus_evaluator,
-            );
+            ) catch |err| {
+                return reportFailure(
+                    allocator,
+                    &sources,
+                    transaction.diagnostics(),
+                    err,
+                );
+            };
         },
     }
 
-    var validated = try transaction.finish(.{
+    var validated = transaction.finish(.{
         .format = options.format,
         .source_map = options.source_map,
-    });
+    }) catch |err| {
+        return reportFailure(
+            allocator,
+            &sources,
+            transaction.diagnostics(),
+            err,
+        );
+    };
     errdefer validated.deinit();
-    return .{ .sources = sources, .validated = validated };
+    return .{ .success = .{ .sources = sources, .validated = validated } };
+}
+
+fn reportFailure(
+    allocator: std.mem.Allocator,
+    sources: *native_source.Table,
+    diagnostics: []const native_diagnostics.Diagnostic,
+    cause: Error,
+) Error!CompileOutcome {
+    var has_error = false;
+    for (diagnostics) |diagnostic| {
+        if (diagnostic.severity == .err) {
+            has_error = true;
+            break;
+        }
+    }
+    if (!has_error) return cause;
+    const owned = try native_evaluator.cloneNativeDiagnostics(allocator, diagnostics);
+    return .{ .failure = .{
+        .sources = sources.*,
+        .diagnostic_items = owned,
+        .cause = cause,
+    } };
 }

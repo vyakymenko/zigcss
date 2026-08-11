@@ -153,8 +153,13 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'diagnostics-and-dependencies',
       releaseGapFamily: 'native-result-facts-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'external Zig API owns native diagnostics and dependency facts',
+        'external Zig API returns structured native failures without partial facts',
+        'binary CLI renders structured native diagnostics without partial output',
+        'javascript wrapper preserves native diagnostic streams and exit status',
+      ],
     }, {
       id: 'source-maps',
       releaseGapFamily: 'native-source-map-routing',
@@ -1275,7 +1280,7 @@ test('binds unavailable native rows and the pre-graduation product bridges', () 
   )
 })
 
-test('binds the finite native product routing inventory and verified first eight routes', () => {
+test('binds the finite native product routing inventory and verified first nine routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
@@ -1288,6 +1293,7 @@ test('binds the finite native product routing inventory and verified first eight
     routing => { routing.routes[5].state = 'pending' },
     routing => { routing.routes[6].state = 'pending' },
     routing => { routing.routes[7].state = 'pending' },
+    routing => { routing.routes[8].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1323,6 +1329,41 @@ test('binds the finite native product routing inventory and verified first eight
     /native product routing zig-api evidence.*missing/,
   )
 
+  for (const [needle, replacement, expected] of [
+    ['compiled.nativeDiagnostics(),', '&.{},', /diagnostic promotion.*missing/],
+    [
+      'cloneDependencies(allocator, compiled.dependencies())',
+      'cloneDependencies(allocator, &.{})',
+      /dependency promotion.*missing/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateContract(loadContract(), {
+        productionSources: loadProductionSources().map(([relativePath, source]) => [
+          relativePath,
+          relativePath === 'src/native_api.zig'
+            ? source.replace(needle, replacement)
+            : source,
+        ]),
+      }),
+      expected,
+    )
+  }
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/preprocessor/sass_evaluator.zig'
+          ? source.replace(
+            'parsed.url,\n            &configuration,\n            .forward,\n            node.span,',
+            'parsed.url,\n            &configuration,\n            .use,\n            node.span,',
+          )
+          : source,
+      ]),
+    }),
+    /native Sass forward dependency kind.*missing/,
+  )
+
   const cliTests = fs.readFileSync(
     path.join(repositoryRoot, 'tests/cli/native_cli.zig'),
     'utf8',
@@ -1335,6 +1376,20 @@ test('binds the finite native product routing inventory and verified first eight
       ),
     }),
     /native product routing binary-cli evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/main.zig'
+          ? source.replaceAll(
+            'printNativeDiagnostics(result.diagnostics);',
+            'discardNativeDiagnostics(result.diagnostics);',
+          )
+          : source,
+      ]),
+    }),
+    /structured diagnostic rendering.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {

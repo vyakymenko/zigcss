@@ -660,7 +660,7 @@ fn cloneNativeDiagnostic(
     };
 }
 
-fn cloneNativeDiagnostics(
+pub fn cloneNativeDiagnostics(
     allocator: std.mem.Allocator,
     items: []const native_diagnostics.Diagnostic,
 ) std.mem.Allocator.Error![]const native_diagnostics.Diagnostic {
@@ -689,7 +689,7 @@ fn releaseNativeDiagnostic(
     if (item.related.len > 0) allocator.free(item.related);
 }
 
-fn releaseNativeDiagnostics(
+pub fn releaseNativeDiagnostics(
     allocator: std.mem.Allocator,
     items: []const native_diagnostics.Diagnostic,
 ) void {

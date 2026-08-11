@@ -510,8 +510,13 @@
       {
         "id": "diagnostics-and-dependencies",
         "releaseGapFamily": "native-result-facts-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "external Zig API owns native diagnostics and dependency facts",
+          "external Zig API returns structured native failures without partial facts",
+          "binary CLI renders structured native diagnostics without partial output",
+          "javascript wrapper preserves native diagnostic streams and exit status"
+        ]
       },
       {
         "id": "source-maps",

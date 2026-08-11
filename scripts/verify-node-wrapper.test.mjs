@@ -31,6 +31,10 @@ function withWrapperFixture(run) {
     fs.writeFileSync(binary, `#!/usr/bin/env node
 const args = process.argv.slice(2)
 if (args.includes('--experimental-native')) {
+  if (args.includes('--native-diagnostic-fixture')) {
+    process.stderr.write('input.scss:0:12: error NATIVE0002: undefined Sass variable\\n')
+    process.exit(1)
+  }
   process.stdout.write(JSON.stringify(args))
   return
 }
@@ -112,6 +116,27 @@ test('javascript wrapper keeps native routing explicit and provider routes uncha
       false,
     )
   }
+})
+
+test('javascript wrapper preserves native diagnostic streams and exit status', () => {
+  withWrapperFixture(wrapper => {
+    const result = spawnSync(process.execPath, [
+      wrapper,
+      'input.scss',
+      '--experimental-native',
+      '--syntax',
+      'scss',
+      '--native-diagnostic-fixture',
+    ], { encoding: 'utf8' })
+    assert.equal(result.error, undefined)
+    assert.equal(result.signal, null)
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.equal(
+      result.stderr,
+      'input.scss:0:12: error NATIVE0002: undefined Sass variable\n',
+    )
+  })
 })
 
 test('npm wrapper help publishes the combined five-language contract', () => {

@@ -2,9 +2,9 @@
 //!
 //! This explicit experimental namespace does not graduate a public language
 //! row or authorize CLI, JavaScript, package, documentation, or release claims.
-//! Compilation currently exposes owned CSS plus opaque watch invalidation;
-//! diagnostics, dependency identities, and source maps remain behind their
-//! separately declared NATIVE-006 routing gates.
+//! Compilation exposes owned CSS, structured diagnostics, ordered local
+//! dependency identities, and opaque watch invalidation. Source maps remain
+//! behind their separately declared NATIVE-006 routing gate.
 
 const std = @import("std");
 const native_compiler = @import("preprocessor/compiler.zig");
@@ -24,6 +24,88 @@ pub const OutputFormat = enum {
     minified,
 };
 
+pub const DiagnosticSeverity = enum {
+    err,
+    warning,
+    note,
+};
+
+pub const DiagnosticCode = enum {
+    syntax,
+    undefined_variable,
+    duplicate_binding,
+    type_mismatch,
+    invalid_operation,
+    call_limit,
+    loop_limit,
+    resource_limit,
+    invalid_import,
+    unsupported_feature,
+    internal,
+
+    pub fn label(self: DiagnosticCode) []const u8 {
+        return switch (self) {
+            .syntax => "NATIVE0001",
+            .undefined_variable => "NATIVE0002",
+            .duplicate_binding => "NATIVE0003",
+            .type_mismatch => "NATIVE0004",
+            .invalid_operation => "NATIVE0005",
+            .call_limit => "NATIVE0006",
+            .loop_limit => "NATIVE0007",
+            .resource_limit => "NATIVE0008",
+            .invalid_import => "NATIVE0009",
+            .unsupported_feature => "NATIVE0010",
+            .internal => "NATIVE9999",
+        };
+    }
+};
+
+pub const SourceSpan = struct {
+    start: u32,
+    end: u32,
+};
+
+/// Zero-based line and UTF-16 code-unit column.
+pub const SourcePosition = struct {
+    line: u32,
+    column: u32,
+};
+
+pub const RelatedDiagnostic = struct {
+    source_name: []const u8,
+    span: SourceSpan,
+    start: SourcePosition,
+    end: SourcePosition,
+    label: []const u8,
+};
+
+/// Every slice is independently result-owned; source names are canonical
+/// local file URLs retained after the private compiler source table is gone.
+pub const Diagnostic = struct {
+    severity: DiagnosticSeverity,
+    code: DiagnosticCode,
+    source_name: []const u8,
+    span: SourceSpan,
+    start: SourcePosition,
+    end: SourcePosition,
+    message: []const u8,
+    related: []const RelatedDiagnostic,
+};
+
+pub const DependencyKind = enum {
+    import,
+    use,
+    forward,
+    reference,
+};
+
+/// Ordered, deduplicated local dependency fact. `url` is a canonical file URL
+/// and remains owned by the result after resolver teardown.
+pub const Dependency = struct {
+    kind: DependencyKind,
+    url: []const u8,
+};
+
 pub const Options = struct {
     syntax: Syntax,
     /// Borrowed canonical directory capabilities for this compilation only.
@@ -32,9 +114,8 @@ pub const Options = struct {
     /// Applies to the already-loaded entry bytes. Imported resources retain
     /// the shared resolver and language evaluator ceilings.
     max_input_bytes: usize = max_entry_input_bytes,
-    /// Retain an opaque snapshot of successfully loaded local inputs so the
-    /// native CLI can poll for watch invalidation without exposing dependency
-    /// identities through the still-pending result-facts route.
+    /// Retain an opaque content snapshot of successfully loaded local inputs
+    /// so the native CLI can poll for watch invalidation.
     watch: bool = false,
 };
 
@@ -195,11 +276,13 @@ fn mapWatchPathError(err: native_resolver.Error) Error {
     };
 }
 
-/// Move-only by convention. The CSS remains owned independently of all native
-/// parser, resolver, source-table, and evaluation transaction lifetimes.
+/// Move-only by convention. CSS and result facts remain owned independently of
+/// all native parser, resolver, source-table, and transaction lifetimes.
 pub const CompileResult = struct {
     result_allocator: std.mem.Allocator,
     css: []const u8,
+    diagnostics: []const Diagnostic,
+    dependencies: []const Dependency,
     watch_state: ?WatchState,
 
     pub fn take(self: *CompileResult) CompileResult {
@@ -212,11 +295,12 @@ pub const CompileResult = struct {
         const allocator = self.result_allocator;
         if (self.watch_state) |*watch_state| watch_state.deinit();
         if (self.css.len > 0) allocator.free(self.css);
+        releaseDiagnostics(allocator, self.diagnostics);
+        releaseDependencies(allocator, self.dependencies);
         self.* = empty(allocator);
     }
 
-    /// Reports only whether one previously loaded local input changed. File
-    /// identities and dependency facts remain private to the watch route.
+    /// Reports only whether one previously loaded local input changed.
     pub fn pollWatchInputs(self: *CompileResult) std.mem.Allocator.Error!bool {
         if (self.watch_state) |*watch_state| return watch_state.poll();
         return false;
@@ -233,7 +317,13 @@ pub const CompileResult = struct {
     }
 
     fn empty(allocator: std.mem.Allocator) CompileResult {
-        return .{ .result_allocator = allocator, .css = &.{}, .watch_state = null };
+        return .{
+            .result_allocator = allocator,
+            .css = &.{},
+            .diagnostics = &.{},
+            .dependencies = &.{},
+            .watch_state = null,
+        };
     }
 };
 
@@ -257,7 +347,7 @@ pub fn compile(
         return mapPathError(err);
     defer allocator.free(entry_url);
 
-    var compiled = native_compiler.compile(allocator, entry_url, input, .{
+    var outcome = native_compiler.compileReported(allocator, entry_url, input, .{
         .syntax = switch (options.syntax) {
             .scss => .scss,
             .sass => .sass,
@@ -278,25 +368,220 @@ pub fn compile(
             .stylus_evaluator = .{ .max_source_bytes = options.max_input_bytes },
         },
     }) catch |err| return mapCompileError(err);
-    defer compiled.deinit();
-
-    var watch_state = if (options.watch)
-        try WatchState.init(
-            allocator,
-            &compiled,
-            entry_url,
-            options.root_paths,
-            options.max_input_bytes,
-        )
-    else
-        null;
-    errdefer if (watch_state) |*state| state.deinit();
-    const css = try allocator.dupe(u8, compiled.css());
-    return .{
-        .result_allocator = allocator,
-        .css = css,
-        .watch_state = watch_state,
+    return switch (outcome) {
+        .success => |*compiled| success: {
+            defer compiled.deinit();
+            if (compiled.coreDiagnostics().len != 0) return error.CompilationFailed;
+            const diagnostics = try cloneDiagnostics(
+                allocator,
+                compiled.sourceTable(),
+                compiled.nativeDiagnostics(),
+            );
+            errdefer releaseDiagnostics(allocator, diagnostics);
+            const dependencies = try cloneDependencies(allocator, compiled.dependencies());
+            errdefer releaseDependencies(allocator, dependencies);
+            var watch_state = if (options.watch)
+                try WatchState.init(
+                    allocator,
+                    compiled,
+                    entry_url,
+                    options.root_paths,
+                    options.max_input_bytes,
+                )
+            else
+                null;
+            errdefer if (watch_state) |*state| state.deinit();
+            const css = try allocator.dupe(u8, compiled.css());
+            break :success .{
+                .result_allocator = allocator,
+                .css = css,
+                .diagnostics = diagnostics,
+                .dependencies = dependencies,
+                .watch_state = watch_state,
+            };
+        },
+        .failure => |*failure| failed: {
+            defer failure.deinit();
+            const diagnostics = try cloneDiagnostics(
+                allocator,
+                failure.sourceTable(),
+                failure.diagnostics(),
+            );
+            break :failed .{
+                .result_allocator = allocator,
+                .css = &.{},
+                .diagnostics = diagnostics,
+                .dependencies = &.{},
+                .watch_state = null,
+            };
+        },
     };
+}
+
+fn cloneDiagnostics(
+    allocator: std.mem.Allocator,
+    sources: *const native_compiler.SourceTable,
+    items: []const native_compiler.Diagnostic,
+) Error![]const Diagnostic {
+    if (items.len == 0) return &.{};
+    const cloned = try allocator.alloc(Diagnostic, items.len);
+    var initialized: usize = 0;
+    errdefer {
+        releaseDiagnosticFields(allocator, cloned[0..initialized]);
+        allocator.free(cloned);
+    }
+    for (items, 0..) |item, index| {
+        const source_file = sources.get(item.span.source) catch
+            return error.CompilationFailed;
+        const source_name = try allocator.dupe(u8, source_file.name);
+        errdefer if (source_name.len > 0) allocator.free(source_name);
+        const message = try allocator.dupe(u8, item.message);
+        errdefer if (message.len > 0) allocator.free(message);
+        const related = try cloneRelatedDiagnostics(allocator, sources, item.related);
+        errdefer releaseRelatedDiagnostics(allocator, related);
+        cloned[index] = .{
+            .severity = mapDiagnosticSeverity(item.severity),
+            .code = mapDiagnosticCode(item.code),
+            .source_name = source_name,
+            .span = .{ .start = item.span.start, .end = item.span.end },
+            .start = positionFor(sources, item.span.source, item.span.start) catch
+                return error.CompilationFailed,
+            .end = positionFor(sources, item.span.source, item.span.end) catch
+                return error.CompilationFailed,
+            .message = message,
+            .related = related,
+        };
+        initialized += 1;
+    }
+    return cloned;
+}
+
+fn cloneRelatedDiagnostics(
+    allocator: std.mem.Allocator,
+    sources: *const native_compiler.SourceTable,
+    items: []const native_compiler.Related,
+) Error![]const RelatedDiagnostic {
+    if (items.len == 0) return &.{};
+    const cloned = try allocator.alloc(RelatedDiagnostic, items.len);
+    var initialized: usize = 0;
+    errdefer {
+        releaseRelatedFields(allocator, cloned[0..initialized]);
+        allocator.free(cloned);
+    }
+    for (items, 0..) |item, index| {
+        const source_file = sources.get(item.span.source) catch
+            return error.CompilationFailed;
+        const source_name = try allocator.dupe(u8, source_file.name);
+        errdefer if (source_name.len > 0) allocator.free(source_name);
+        const label = try allocator.dupe(u8, item.label);
+        errdefer if (label.len > 0) allocator.free(label);
+        cloned[index] = .{
+            .source_name = source_name,
+            .span = .{ .start = item.span.start, .end = item.span.end },
+            .start = positionFor(sources, item.span.source, item.span.start) catch
+                return error.CompilationFailed,
+            .end = positionFor(sources, item.span.source, item.span.end) catch
+                return error.CompilationFailed,
+            .label = label,
+        };
+        initialized += 1;
+    }
+    return cloned;
+}
+
+fn positionFor(
+    sources: *const native_compiler.SourceTable,
+    source_id: native_compiler.SourceId,
+    offset: u32,
+) !SourcePosition {
+    const position = try sources.position(source_id, offset);
+    return .{ .line = position.line, .column = position.column };
+}
+
+fn mapDiagnosticSeverity(value: @FieldType(native_compiler.Diagnostic, "severity")) DiagnosticSeverity {
+    return switch (value) {
+        .err => .err,
+        .warning => .warning,
+        .note => .note,
+    };
+}
+
+fn mapDiagnosticCode(value: @FieldType(native_compiler.Diagnostic, "code")) DiagnosticCode {
+    return switch (value) {
+        .syntax => .syntax,
+        .undefined_variable => .undefined_variable,
+        .duplicate_binding => .duplicate_binding,
+        .type_mismatch => .type_mismatch,
+        .invalid_operation => .invalid_operation,
+        .call_limit => .call_limit,
+        .loop_limit => .loop_limit,
+        .resource_limit => .resource_limit,
+        .invalid_import => .invalid_import,
+        .unsupported_feature => .unsupported_feature,
+        .internal => .internal,
+    };
+}
+
+fn releaseDiagnostics(allocator: std.mem.Allocator, items: []const Diagnostic) void {
+    if (items.len == 0) return;
+    releaseDiagnosticFields(allocator, items);
+    allocator.free(items);
+}
+
+fn releaseDiagnosticFields(allocator: std.mem.Allocator, items: []const Diagnostic) void {
+    for (items) |item| {
+        if (item.source_name.len > 0) allocator.free(item.source_name);
+        if (item.message.len > 0) allocator.free(item.message);
+        releaseRelatedDiagnostics(allocator, item.related);
+    }
+}
+
+fn releaseRelatedDiagnostics(
+    allocator: std.mem.Allocator,
+    items: []const RelatedDiagnostic,
+) void {
+    if (items.len == 0) return;
+    releaseRelatedFields(allocator, items);
+    allocator.free(items);
+}
+
+fn releaseRelatedFields(allocator: std.mem.Allocator, items: []const RelatedDiagnostic) void {
+    for (items) |item| {
+        if (item.source_name.len > 0) allocator.free(item.source_name);
+        if (item.label.len > 0) allocator.free(item.label);
+    }
+}
+
+fn cloneDependencies(
+    allocator: std.mem.Allocator,
+    items: []const native_compiler.Dependency,
+) std.mem.Allocator.Error![]const Dependency {
+    if (items.len == 0) return &.{};
+    const cloned = try allocator.alloc(Dependency, items.len);
+    var initialized: usize = 0;
+    errdefer {
+        for (cloned[0..initialized]) |item| allocator.free(item.url);
+        allocator.free(cloned);
+    }
+    for (items, 0..) |item, index| {
+        cloned[index] = .{
+            .kind = switch (item.kind) {
+                .import => .import,
+                .use => .use,
+                .forward => .forward,
+                .reference => .reference,
+            },
+            .url = try allocator.dupe(u8, item.url),
+        };
+        initialized += 1;
+    }
+    return cloned;
+}
+
+fn releaseDependencies(allocator: std.mem.Allocator, items: []const Dependency) void {
+    if (items.len == 0) return;
+    for (items) |item| allocator.free(item.url);
+    allocator.free(items);
 }
 
 fn mapPathError(err: native_resolver.Error) Error {

@@ -530,8 +530,13 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'diagnostics-and-dependencies',
       releaseGapFamily: 'native-result-facts-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'external Zig API owns native diagnostics and dependency facts',
+        'external Zig API returns structured native failures without partial facts',
+        'binary CLI renders structured native diagnostics without partial output',
+        'javascript wrapper preserves native diagnostic streams and exit status',
+      ]),
     }),
     Object.freeze({
       id: 'source-maps',
@@ -1267,9 +1272,13 @@ function validateProductRouting(
                 ? cliTests
                 : route.id === 'watch'
                   ? `${zigApiTests}\n${cliTests}`
+                  : route.id === 'diagnostics-and-dependencies'
+                    ? `${zigApiTests}\n${cliTests}\n${nodeWrapperTests}`
                   : ''
       for (const evidenceTest of route.evidenceTests) {
-        const testDeclaration = route.id === 'javascript-wrapper'
+        const testDeclaration = route.id === 'javascript-wrapper' ||
+          (route.id === 'diagnostics-and-dependencies' &&
+            evidenceTest.startsWith('javascript wrapper '))
           ? `test('${evidenceTest}'`
           : `test "${evidenceTest}"`
         requireText(
@@ -1786,6 +1795,7 @@ function validateInternalReachability(implementations, buildFile, productionSour
   const libraryRoot = sourceByPath.get('src/lib.zig') ?? ''
   const nativeApi = sourceByPath.get('src/native_api.zig') ?? ''
   const binaryCli = sourceByPath.get('src/main.zig') ?? ''
+  const sassEvaluator = sourceByPath.get('src/preprocessor/sass_evaluator.zig') ?? ''
   requireText(
     libraryRoot,
     'pub const experimental_native = @import("native_api.zig");',
@@ -1812,8 +1822,6 @@ function validateInternalReachability(implementations, buildFile, productionSour
   for (const pendingResultSurface of [
     'compiled.sourceMap(',
     'compiled.frontendMap(',
-    'compiled.nativeDiagnostics(',
-    'compiled.coreDiagnostics(',
     'compiled.edges(',
   ]) {
     if (nativeApi.includes(pendingResultSurface)) {
@@ -1857,11 +1865,29 @@ function validateInternalReachability(implementations, buildFile, productionSour
     'pub fn readWatchInput(',
     'native Zig API confined watch entry surface',
   )
+  for (const [needle, label] of [
+    ['diagnostics: []const Diagnostic,', 'owned diagnostic result field'],
+    ['dependencies: []const Dependency,', 'owned dependency result field'],
+    ['native_compiler.compileReported(', 'structured compiler outcome'],
+    ['compiled.nativeDiagnostics(),', 'diagnostic promotion'],
+    ['cloneDependencies(allocator, compiled.dependencies())', 'dependency promotion'],
+    ['releaseDiagnostics(allocator, self.diagnostics);', 'diagnostic teardown'],
+    ['releaseDependencies(allocator, self.dependencies);', 'dependency teardown'],
+  ]) {
+    requireText(nativeApi, needle, `native Zig API ${label}`)
+  }
+  requireText(
+    sassEvaluator,
+    'parsed.url,\n            &configuration,\n            .forward,\n            node.span,',
+    'native Sass forward dependency kind',
+  )
+  requireText(
+    sassEvaluator,
+    'candidates,\n                dependency_kind,\n                "native Sass local module URL is ambiguous"',
+    'native Sass delegated dependency kind',
+  )
   for (const pendingPublicResultSurface of [
-    'pub fn dependencies(',
     'pub fn edges(',
-    'pub fn nativeDiagnostics(',
-    'pub fn coreDiagnostics(',
     'pub fn sourceMap(',
   ]) {
     if (nativeApi.includes(pendingPublicResultSurface)) {
@@ -1875,7 +1901,7 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     binaryCli,
-    'return native_api.compile(',
+    'var result = native_api.compile(',
     'native binary CLI shared API dispatch',
   )
   requireText(
@@ -1907,6 +1933,11 @@ function validateInternalReachability(implementations, buildFile, productionSour
     binaryCli,
     'file/stdin/parallel-batch/watch native route',
     'native binary CLI parallel help boundary',
+  )
+  requireText(
+    binaryCli,
+    'printNativeDiagnostics(result.diagnostics);',
+    'native binary CLI structured diagnostic rendering',
   )
   const nativeWatch = binaryCli.match(
     /fn watchNativeFile\([\s\S]*?\n}\n\nfn compileTask/,

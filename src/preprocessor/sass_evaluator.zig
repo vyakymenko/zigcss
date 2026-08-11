@@ -1889,6 +1889,7 @@ const Engine = struct {
                 node.span.source,
                 parsed.url,
                 &configuration,
+                .use,
                 node.span,
             ) };
         try self.validateModuleBinding(target, namespace, node.span);
@@ -1961,6 +1962,7 @@ const Engine = struct {
             node.span.source,
             parsed.url,
             &configuration,
+            .forward,
             node.span,
         );
         try self.forwardLocalModuleVariables(module_index, parsed, node.span);
@@ -2550,6 +2552,7 @@ const Engine = struct {
         parent_source_id: native_source.SourceId,
         module_url: []const u8,
         configuration: *const ModuleConfiguration,
+        dependency_kind: native_resolver.DependencyKind,
         span: native_source.Span,
     ) Error!usize {
         const parent = try self.sources.get(parent_source_id);
@@ -2569,7 +2572,7 @@ const Engine = struct {
                 session,
                 ancestry,
                 candidates,
-                .use,
+                dependency_kind,
                 "native Sass local module URL is ambiguous",
                 span,
             );
@@ -2588,7 +2591,7 @@ const Engine = struct {
                 session,
                 ancestry,
                 candidates,
-                .use,
+                dependency_kind,
                 "native Sass local module URL is ambiguous",
                 span,
             );

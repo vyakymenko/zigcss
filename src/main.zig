@@ -159,6 +159,48 @@ fn printDiagnostics(diagnostics: []const zigcss.Diagnostic) void {
     }
 }
 
+fn hasNativeErrorDiagnostics(diagnostics: []const native_api.Diagnostic) bool {
+    for (diagnostics) |diagnostic| {
+        if (diagnostic.severity == .err) return true;
+    }
+    return false;
+}
+
+fn nativeSeverityLabel(severity: native_api.DiagnosticSeverity) []const u8 {
+    return switch (severity) {
+        .err => "error",
+        .warning => "warning",
+        .note => "note",
+    };
+}
+
+fn printNativeDiagnostics(diagnostics: []const native_api.Diagnostic) void {
+    for (diagnostics) |diagnostic| {
+        std.debug.print(
+            "{s}:{d}:{d}: {s} {s}: {s}\n",
+            .{
+                diagnostic.source_name,
+                diagnostic.start.line,
+                diagnostic.start.column,
+                nativeSeverityLabel(diagnostic.severity),
+                diagnostic.code.label(),
+                diagnostic.message,
+            },
+        );
+        for (diagnostic.related) |related| {
+            std.debug.print(
+                "{s}:{d}:{d}: note: {s}\n",
+                .{
+                    related.source_name,
+                    related.start.line,
+                    related.start.column,
+                    related.label,
+                },
+            );
+        }
+    }
+}
+
 fn printProfile(metrics: zigcss.CompileMetrics) void {
     std.debug.print("\n=== Performance Profile ===\n", .{});
     std.debug.print("Timing (nanoseconds):\n", .{});
@@ -335,7 +377,7 @@ fn compileNativeLoadedSource(
     report_errors: bool,
 ) !native_api.CompileResult {
     const root_paths = [_][]const u8{root_path};
-    return native_api.compile(allocator, entry_path, input, .{
+    var result = native_api.compile(allocator, entry_path, input, .{
         .syntax = syntax,
         .root_paths = &root_paths,
         .format = if (minify) .minified else .pretty,
@@ -349,6 +391,9 @@ fn compileNativeLoadedSource(
         }
         return err;
     };
+    errdefer result.deinit();
+    if (report_errors) printNativeDiagnostics(result.diagnostics);
+    return result.take();
 }
 
 fn compileNativeSourceWithReporting(
@@ -449,6 +494,7 @@ fn compileNativeInput(
 ) !void {
     var result = try compileNativeSource(allocator, input_file, syntax, minify);
     defer result.deinit();
+    if (hasNativeErrorDiagnostics(result.diagnostics)) return error.CompileError;
     try commitNativeResult(input_file, output_file, &result);
 }
 
@@ -776,6 +822,11 @@ fn watchNativeFile(
                 continue;
             };
             errdefer next_result.deinit();
+            if (hasNativeErrorDiagnostics(next_result.diagnostics)) {
+                next_result.deinit();
+                std.Thread.sleep(500 * std.time.ns_per_ms);
+                continue;
+            }
             try commitNativeResult(input_file, output_file, &next_result);
 
             if (watched_result) |*result| result.deinit();
@@ -928,11 +979,17 @@ fn compileNativeTask(task: *NativeBatchTask) bool {
         task.state = .failed;
         return false;
     };
-    task.state = .succeeded;
-    return true;
+    task.state = if (hasNativeErrorDiagnostics(task.result.?.diagnostics)) .failed else .succeeded;
+    return task.state == .succeeded;
 }
 
 fn printNativeTaskFailure(task: *const NativeBatchTask) void {
+    if (task.result) |result| {
+        if (hasNativeErrorDiagnostics(result.diagnostics)) {
+            printNativeDiagnostics(result.diagnostics);
+            return;
+        }
+    }
     std.debug.print(
         "Error: native {s} compilation failed for {s}: {s}\n",
         .{
@@ -1029,6 +1086,7 @@ fn compileNativeFilesParallel(allocator: std.mem.Allocator, tasks: []NativeBatch
 
     for (tasks) |*task| {
         if (task.state != .succeeded) return error.CompileError;
+        printNativeDiagnostics(task.result.?.diagnostics);
         try writeOutputFile(task.output_file, task.result.?.css);
         std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
     }
