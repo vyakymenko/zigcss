@@ -145,8 +145,11 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'parallel',
       releaseGapFamily: 'native-parallel-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'binary CLI routes the finite native syntax set through the bounded parallel queue',
+        'binary CLI native parallel failure cancels queued work without partial output',
+      ],
     }, {
       id: 'diagnostics-and-dependencies',
       releaseGapFamily: 'native-result-facts-routing',
@@ -1272,7 +1275,7 @@ test('binds unavailable native rows and the pre-graduation product bridges', () 
   )
 })
 
-test('binds the finite native product routing inventory and verified first seven routes', () => {
+test('binds the finite native product routing inventory and verified first eight routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
@@ -1284,6 +1287,7 @@ test('binds the finite native product routing inventory and verified first seven
     routing => { routing.routes[4].state = 'pending' },
     routing => { routing.routes[5].state = 'pending' },
     routing => { routing.routes[6].state = 'pending' },
+    routing => { routing.routes[7].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1359,6 +1363,24 @@ test('binds the finite native product routing inventory and verified first seven
     }),
     /native product routing watch evidence.*missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native parallel failure cancels queued work without partial output"',
+        'test "missing native parallel rollback evidence"',
+      ),
+    }),
+    /native product routing parallel evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'const native_parallel_worker_cap = 8;',
+        'const native_parallel_worker_cap = 9;',
+      ),
+    }),
+    /native product routing parallel worker terminal.*missing/,
+  )
 
   const nodeWrapperTests = fs.readFileSync(
     path.join(repositoryRoot, 'scripts/verify-node-wrapper.test.mjs'),
@@ -1404,11 +1426,28 @@ test('binds the finite native product routing inventory and verified first seven
       productionSources: loadProductionSources().map(([relativePath, source]) => [
         relativePath,
         relativePath === 'src/main.zig'
-          ? source.replace('fn compileNativeBatch(', 'fn compileNativeBatch(/* std.Thread */')
+          ? source.replace(
+            'std.Thread.spawn(.{}, nativeBatchWorker, .{&queue})',
+            'missingNativeThreadSpawn(.{}, nativeBatchWorker, .{&queue})',
+          )
           : source,
       ]),
     }),
-    /native binary CLI batch route crossed the pending parallel boundary/,
+    /native binary CLI parallel thread spawn.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/main.zig'
+          ? source.replace(
+            'const NativeBatchTaskAllocator = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false });',
+            'const NativeBatchTaskAllocator = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true });',
+          )
+          : source,
+      ]),
+    }),
+    /native binary CLI parallel independent task allocator.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {

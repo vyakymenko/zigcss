@@ -4,6 +4,8 @@ const cli_options = @import("cli_options");
 
 const Child = std.process.Child;
 const allocator = std.testing.allocator;
+const native_parallel_worker_cap = 8;
+const native_parallel_queued_case_count = native_parallel_worker_cap + 1;
 
 const RouteCase = struct {
     syntax: []const u8,
@@ -645,6 +647,119 @@ test "binary CLI routes the finite native syntax set through deterministic batch
         const second_status = std.mem.indexOf(u8, first.stderr, "Compiled: " ++ case.second_filename) orelse
             return error.MissingSecondBatchStatus;
         try std.testing.expect(first_status < second_status);
+    }
+}
+
+test "binary CLI routes the finite native syntax set through the bounded parallel queue" {
+    inline for (route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+
+        var input_names: [native_parallel_queued_case_count][]u8 = undefined;
+        var initialized_names: usize = 0;
+        defer for (input_names[0..initialized_names]) |name| allocator.free(name);
+
+        const extension = std.fs.path.extension(case.filename);
+        for (&input_names, 0..) |*name, index| {
+            name.* = try std.fmt.allocPrint(allocator, "parallel-{d}{s}", .{ index, extension });
+            initialized_names += 1;
+            try tmp.dir.writeFile(.{ .sub_path = name.*, .data = case.input });
+        }
+
+        var argv: [native_parallel_queued_case_count + 7][]const u8 = undefined;
+        for (input_names, 0..) |name, index| argv[index] = name;
+        argv[native_parallel_queued_case_count..].* = .{
+            "-o",
+            "out",
+            "--output-dir",
+            "--experimental-native",
+            "--syntax",
+            case.syntax,
+            "--minify",
+        };
+
+        var first = try runInDir(tmp.dir, &argv);
+        defer deinitRun(&first);
+        var second = try runInDir(tmp.dir, &argv);
+        defer deinitRun(&second);
+        try expectExitCode(first, 0);
+        try expectExitCode(second, 0);
+        try std.testing.expectEqual(@as(usize, 0), first.stdout.len);
+        try std.testing.expectEqualStrings(first.stdout, second.stdout);
+        try std.testing.expectEqualStrings(first.stderr, second.stderr);
+
+        var previous_status: ?usize = null;
+        for (input_names) |name| {
+            const output_path = try std.fmt.allocPrint(
+                allocator,
+                "out/{s}.css",
+                .{std.fs.path.stem(name)},
+            );
+            defer allocator.free(output_path);
+            const output = try tmp.dir.readFileAlloc(allocator, output_path, 1024);
+            defer allocator.free(output);
+            try std.testing.expectEqualStrings(case.expected, output);
+
+            const status = try std.fmt.allocPrint(allocator, "Compiled: {s} ->", .{name});
+            defer allocator.free(status);
+            const status_index = std.mem.indexOf(u8, first.stderr, status) orelse
+                return error.MissingParallelBatchStatus;
+            if (previous_status) |prior| try std.testing.expect(prior < status_index);
+            previous_status = status_index;
+        }
+    }
+}
+
+test "binary CLI native parallel failure cancels queued work without partial output" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("out");
+
+    var input_names: [native_parallel_queued_case_count][]u8 = undefined;
+    var output_names: [native_parallel_queued_case_count][]u8 = undefined;
+    var sentinels: [native_parallel_queued_case_count][]u8 = undefined;
+    var initialized: usize = 0;
+    defer {
+        for (input_names[0..initialized]) |name| allocator.free(name);
+        for (output_names[0..initialized]) |name| allocator.free(name);
+        for (sentinels[0..initialized]) |sentinel| allocator.free(sentinel);
+    }
+
+    for (0..native_parallel_queued_case_count) |index| {
+        input_names[index] = try std.fmt.allocPrint(allocator, "input-{d}.scss", .{index});
+        output_names[index] = try std.fmt.allocPrint(allocator, "out/input-{d}.css", .{index});
+        sentinels[index] = try std.fmt.allocPrint(allocator, "sentinel-{d}", .{index});
+        initialized += 1;
+        try tmp.dir.writeFile(.{
+            .sub_path = input_names[index],
+            .data = if (index == 0) ".bad { color: $missing; }" else ".good { color: green; }",
+        });
+        try tmp.dir.writeFile(.{ .sub_path = output_names[index], .data = sentinels[index] });
+    }
+
+    var argv: [native_parallel_queued_case_count + 7][]const u8 = undefined;
+    for (input_names, 0..) |name, index| argv[index] = name;
+    argv[native_parallel_queued_case_count..].* = .{
+        "-o",
+        "out",
+        "--output-dir",
+        "--experimental-native",
+        "--syntax",
+        "scss",
+        "--minify",
+    };
+
+    var result = try runInDir(tmp.dir, &argv);
+    defer deinitRun(&result);
+    try expectExitCode(result, 1);
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "native SCSS compilation failed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Compiled:") == null);
+
+    for (output_names, sentinels) |output_name, sentinel| {
+        const output = try tmp.dir.readFileAlloc(allocator, output_name, 1024);
+        defer allocator.free(output);
+        try std.testing.expectEqualStrings(sentinel, output);
     }
 }
 

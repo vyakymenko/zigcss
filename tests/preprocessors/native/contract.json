@@ -501,8 +501,11 @@
       {
         "id": "parallel",
         "releaseGapFamily": "native-parallel-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "binary CLI routes the finite native syntax set through the bounded parallel queue",
+          "binary CLI native parallel failure cancels queued work without partial output"
+        ]
       },
       {
         "id": "diagnostics-and-dependencies",

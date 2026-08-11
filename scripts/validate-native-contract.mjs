@@ -521,8 +521,11 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'parallel',
       releaseGapFamily: 'native-parallel-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'binary CLI routes the finite native syntax set through the bounded parallel queue',
+        'binary CLI native parallel failure cancels queued work without partial output',
+      ]),
     }),
     Object.freeze({
       id: 'diagnostics-and-dependencies',
@@ -1260,7 +1263,7 @@ function validateProductRouting(
             ? cliTests
             : route.id === 'javascript-wrapper'
               ? nodeWrapperTests
-              : route.id === 'files-and-stdin' || route.id === 'batch'
+              : route.id === 'files-and-stdin' || route.id === 'batch' || route.id === 'parallel'
                 ? cliTests
                 : route.id === 'watch'
                   ? `${zigApiTests}\n${cliTests}`
@@ -1279,6 +1282,16 @@ function validateProductRouting(
       fail('product routing pending route drifted')
     }
   }
+  requireText(
+    cliTests,
+    'const native_parallel_worker_cap = 8;',
+    'native product routing parallel worker terminal',
+  )
+  requireText(
+    cliTests,
+    'const native_parallel_queued_case_count = native_parallel_worker_cap + 1;',
+    'native product routing parallel queued over-boundary',
+  )
   requireText(
     nodeWrapperSource,
     "if (args.includes('--experimental-native')) return false;",
@@ -1890,6 +1903,11 @@ function validateInternalReachability(implementations, buildFile, productionSour
     'Watch one input and its confined local imports',
     'native binary CLI watch help boundary',
   )
+  requireText(
+    binaryCli,
+    'file/stdin/parallel-batch/watch native route',
+    'native binary CLI parallel help boundary',
+  )
   const nativeWatch = binaryCli.match(
     /fn watchNativeFile\([\s\S]*?\n}\n\nfn compileTask/,
   )
@@ -1925,26 +1943,48 @@ function validateInternalReachability(implementations, buildFile, productionSour
   if (!nativeBatch) fail('native binary CLI batch route is missing')
   requireText(
     nativeBatch[0],
-    'task.result = compileNativeSource(',
-    'native binary CLI batch native dispatch',
+    'try compileNativeFilesParallel(allocator, tasks.items);',
+    'native binary CLI bounded parallel dispatch',
   )
   requireText(
     nativeBatch[0],
     'try findOutputCollision(allocator, input_files, planned_outputs)',
     'native binary CLI batch collision planning',
   )
-  requireText(
-    nativeBatch[0],
-    'try writeOutputFile(task.output_file, task.result.?.css);',
-    'native binary CLI batch ordered commit',
+  const nativeParallel = binaryCli.match(
+    /fn compileNativeFilesParallel\([\s\S]*?\n}\n\nconst CompileError/,
   )
-  if (nativeBatch[0].indexOf('task.result = compileNativeSource(') >
-      nativeBatch[0].indexOf('try writeOutputFile(task.output_file, task.result.?.css);')) {
-    fail('native binary CLI batch writes before every input compiles')
+  if (!nativeParallel) fail('native binary CLI parallel route is missing')
+  const nativeTask = binaryCli.match(
+    /const NativeBatchTask = struct \{[\s\S]*?\n};\n\nfn setTaskError/,
+  )
+  if (!nativeTask) fail('native binary CLI parallel task ownership is missing')
+  for (const [needle, label] of [
+    ['allocator_state: NativeBatchTaskAllocator = .{},', 'allocator state'],
+    ['const allocator_check = self.allocator_state.deinit();', 'allocator teardown'],
+    ['std.debug.assert(allocator_check == .ok);', 'allocator leak check'],
+  ]) {
+    requireText(nativeTask[0], needle, `native binary CLI parallel ${label}`)
   }
-  if (nativeBatch[0].includes('std.Thread') ||
-      nativeBatch[0].includes('compileFilesParallel(')) {
-    fail('native binary CLI batch route crossed the pending parallel boundary')
+  for (const [needle, label] of [
+    ['const max_batch_workers = 8;', 'worker terminal'],
+    ['const NativeBatchTaskAllocator = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false });', 'independent task allocator'],
+    ['const NativeBatchWorkQueue = struct', 'bounded work queue'],
+    ['task.result = compileNativeSourceQuiet(', 'quiet native task dispatch'],
+    ['queue.cancelForFailure();', 'failure cancellation'],
+    ['const worker_count = batchWorkerCount(tasks.len, cpu_count);', 'worker cap'],
+    ['std.Thread.spawn(.{}, nativeBatchWorker, .{&queue})', 'thread spawn'],
+    ['for (threads[0..spawned]) |thread| thread.join();', 'thread join'],
+    ['queue.markPendingCancelled();', 'pending cancellation'],
+    ['if (queue.failed)', 'transaction failure'],
+    ['try writeOutputFile(task.output_file, task.result.?.css);', 'ordered commit'],
+  ]) {
+    requireText(binaryCli, needle, `native binary CLI parallel ${label}`)
+  }
+  const joinIndex = nativeParallel[0].indexOf('for (threads[0..spawned]) |thread| thread.join();')
+  const writeIndex = nativeParallel[0].indexOf('try writeOutputFile(task.output_file, task.result.?.css);')
+  if (joinIndex < 0 || writeIndex < 0 || joinIndex > writeIndex) {
+    fail('native binary CLI parallel route writes before every worker joins')
   }
   if (binaryCli.includes('std.process.Child')) {
     fail('native binary CLI introduced a provider child-process path')

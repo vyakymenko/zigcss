@@ -31,6 +31,7 @@ const CompileConfig = struct {
 };
 
 const CompileTaskAllocator = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false });
+const NativeBatchTaskAllocator = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false });
 
 const CompileTaskState = enum {
     pending,
@@ -69,11 +70,22 @@ const CompileTask = struct {
 const NativeBatchTask = struct {
     input_file: []const u8,
     output_file: []const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
     result: ?native_api.CompileResult = null,
+    err: ?anyerror = null,
+    state: CompileTaskState = .pending,
+    allocator_state: NativeBatchTaskAllocator = .{},
 
-    fn deinit(self: *NativeBatchTask, allocator: std.mem.Allocator) void {
+    fn allocator(self: *NativeBatchTask) std.mem.Allocator {
+        return self.allocator_state.allocator();
+    }
+
+    fn deinit(self: *NativeBatchTask, planning_allocator: std.mem.Allocator) void {
         if (self.result) |*result| result.deinit();
-        allocator.free(self.output_file);
+        const allocator_check = self.allocator_state.deinit();
+        std.debug.assert(allocator_check == .ok);
+        planning_allocator.free(self.output_file);
     }
 };
 
@@ -320,6 +332,7 @@ fn compileNativeLoadedSource(
     syntax: native_api.Syntax,
     minify: bool,
     watch: bool,
+    report_errors: bool,
 ) !native_api.CompileResult {
     const root_paths = [_][]const u8{root_path};
     return native_api.compile(allocator, entry_path, input, .{
@@ -328,23 +341,26 @@ fn compileNativeLoadedSource(
         .format = if (minify) .minified else .pretty,
         .watch = watch,
     }) catch |err| {
-        std.debug.print(
-            "Error: native {s} compilation failed: {s}\n",
-            .{ nativeSyntaxLabel(syntax), @errorName(err) },
-        );
+        if (report_errors) {
+            std.debug.print(
+                "Error: native {s} compilation failed: {s}\n",
+                .{ nativeSyntaxLabel(syntax), @errorName(err) },
+            );
+        }
         return err;
     };
 }
 
-fn compileNativeSource(
+fn compileNativeSourceWithReporting(
     allocator: std.mem.Allocator,
     input_file: []const u8,
     syntax: native_api.Syntax,
     minify: bool,
+    report_errors: bool,
 ) !native_api.CompileResult {
     const stdin_root = if (isStdioPath(input_file))
         std.fs.cwd().realpathAlloc(allocator, ".") catch |err| {
-            std.debug.print("Error: failed to resolve stdin root: {s}\n", .{@errorName(err)});
+            if (report_errors) std.debug.print("Error: failed to resolve stdin root: {s}\n", .{@errorName(err)});
             return err;
         }
     else
@@ -355,14 +371,14 @@ fn compileNativeSource(
         try std.fs.path.join(allocator, &.{ root, nativeStdinEntryName(syntax) })
     else
         std.fs.cwd().realpathAlloc(allocator, input_file) catch |err| {
-            std.debug.print("Error: failed to resolve {s}: {s}\n", .{ input_file, @errorName(err) });
+            if (report_errors) std.debug.print("Error: failed to resolve {s}: {s}\n", .{ input_file, @errorName(err) });
             return err;
         };
     defer allocator.free(entry_path);
 
     const read_path = if (stdin_root != null) input_file else entry_path;
     const input = readInput(allocator, read_path) catch |err| {
-        std.debug.print("Error: failed to read {s}: {s}\n", .{ inputDisplayName(input_file), @errorName(err) });
+        if (report_errors) std.debug.print("Error: failed to read {s}: {s}\n", .{ inputDisplayName(input_file), @errorName(err) });
         return err;
     };
     defer allocator.free(input);
@@ -379,7 +395,26 @@ fn compileNativeSource(
         syntax,
         minify,
         false,
+        report_errors,
     );
+}
+
+fn compileNativeSource(
+    allocator: std.mem.Allocator,
+    input_file: []const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+) !native_api.CompileResult {
+    return compileNativeSourceWithReporting(allocator, input_file, syntax, minify, true);
+}
+
+fn compileNativeSourceQuiet(
+    allocator: std.mem.Allocator,
+    input_file: []const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+) !native_api.CompileResult {
+    return compileNativeSourceWithReporting(allocator, input_file, syntax, minify, false);
 }
 
 fn commitNativeResult(
@@ -734,6 +769,7 @@ fn watchNativeFile(
                 syntax,
                 minify,
                 true,
+                true,
             ) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 std.Thread.sleep(500 * std.time.ns_per_ms);
@@ -870,6 +906,124 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
         for (tasks) |*task| {
             if (taskFailed(task)) printTaskFailure(task);
         }
+        return error.CompileError;
+    }
+
+    for (tasks) |*task| {
+        if (task.state != .succeeded) return error.CompileError;
+        try writeOutputFile(task.output_file, task.result.?.css);
+        std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
+    }
+}
+
+fn compileNativeTask(task: *NativeBatchTask) bool {
+    const allocator = task.allocator();
+    task.result = compileNativeSourceQuiet(
+        allocator,
+        task.input_file,
+        task.syntax,
+        task.minify,
+    ) catch |err| {
+        task.err = err;
+        task.state = .failed;
+        return false;
+    };
+    task.state = .succeeded;
+    return true;
+}
+
+fn printNativeTaskFailure(task: *const NativeBatchTask) void {
+    std.debug.print(
+        "Error: native {s} compilation failed for {s}: {s}\n",
+        .{
+            nativeSyntaxLabel(task.syntax),
+            task.input_file,
+            @errorName(task.err orelse error.CompileError),
+        },
+    );
+}
+
+const NativeBatchWorkQueue = struct {
+    tasks: []NativeBatchTask,
+    mutex: std.Thread.Mutex = .{},
+    next_index: usize = 0,
+    cancelled: bool = false,
+    failed: bool = false,
+
+    fn claim(self: *NativeBatchWorkQueue) ?*NativeBatchTask {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.cancelled or self.next_index >= self.tasks.len) return null;
+
+        const task = &self.tasks[self.next_index];
+        self.next_index += 1;
+        std.debug.assert(task.state == .pending);
+        task.state = .running;
+        return task;
+    }
+
+    fn cancel(self: *NativeBatchWorkQueue) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.cancelled = true;
+    }
+
+    fn cancelForFailure(self: *NativeBatchWorkQueue) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.failed = true;
+        self.cancelled = true;
+    }
+
+    fn markPendingCancelled(self: *NativeBatchWorkQueue) void {
+        for (self.tasks) |*task| {
+            if (task.state == .pending) task.state = .cancelled;
+        }
+    }
+};
+
+fn nativeBatchWorker(queue: *NativeBatchWorkQueue) void {
+    while (queue.claim()) |task| {
+        if (!compileNativeTask(task)) {
+            queue.cancelForFailure();
+            return;
+        }
+    }
+}
+
+fn compileNativeFilesParallel(allocator: std.mem.Allocator, tasks: []NativeBatchTask) !void {
+    if (tasks.len == 0) return;
+    const cpu_count = std.Thread.getCpuCount() catch 4;
+    const worker_count = batchWorkerCount(tasks.len, cpu_count);
+    const threads = try allocator.alloc(std.Thread, worker_count);
+    defer allocator.free(threads);
+
+    var queue = NativeBatchWorkQueue{ .tasks = tasks };
+    var spawned: usize = 0;
+    var spawn_error: ?anyerror = null;
+    while (spawned < worker_count) {
+        threads[spawned] = std.Thread.spawn(.{}, nativeBatchWorker, .{&queue}) catch |err| {
+            queue.cancel();
+            spawn_error = err;
+            break;
+        };
+        spawned += 1;
+    }
+    for (threads[0..spawned]) |thread| thread.join();
+    queue.markPendingCancelled();
+
+    if (spawn_error) |err| return err;
+    if (queue.failed) {
+        var allocation_failed = false;
+        for (tasks) |*task| {
+            if (task.state == .failed) {
+                printNativeTaskFailure(task);
+                if (task.err) |err| {
+                    if (err == error.OutOfMemory) allocation_failed = true;
+                }
+            }
+        }
+        if (allocation_failed) return error.OutOfMemory;
         return error.CompileError;
     }
 
@@ -1100,7 +1254,7 @@ fn printUsage() !void {
             "  -o, --output <path|->    Output file/stdout, or directory with --output-dir\n" ++
             "  --output-dir             Require batch output under the -o directory\n" ++
             "  --syntax <syntax>        Select CSS (default), or a gated native syntax\n" ++
-            "  --experimental-native   Enable the pre-graduation file/stdin/batch/watch native route\n" ++
+            "  --experimental-native   Enable the pre-graduation file/stdin/parallel-batch/watch native route\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
             "  --watch                  Watch one input and its confined local imports\n" ++
@@ -1257,6 +1411,8 @@ fn compileNativeBatch(
         tasks.append(allocator, .{
             .input_file = input_file,
             .output_file = output_file,
+            .syntax = syntax,
+            .minify = minify,
         }) catch |err| {
             allocator.free(output_file);
             return err;
@@ -1273,21 +1429,7 @@ fn compileNativeBatch(
         return error.BatchUsageError;
     }
 
-    for (tasks.items) |*task| {
-        task.result = compileNativeSource(
-            allocator,
-            task.input_file,
-            syntax,
-            minify,
-        ) catch |err| {
-            if (err == error.OutOfMemory) return err;
-            return error.CompileError;
-        };
-    }
-    for (tasks.items) |*task| {
-        try writeOutputFile(task.output_file, task.result.?.css);
-        std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
-    }
+    try compileNativeFilesParallel(allocator, tasks.items);
 }
 
 fn experimentalFormatName(filename: []const u8) ?[]const u8 {
