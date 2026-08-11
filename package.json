@@ -167,7 +167,7 @@
     "brace-expansion": "5.0.9"
   },
   "devDependencies": {
-    "@mdn/browser-compat-data": "8.0.0",
+    "@mdn/browser-compat-data": "8.0.10",
     "esbuild": "0.28.1",
     "image-size": "0.5.5",
     "less": "4.6.7",
