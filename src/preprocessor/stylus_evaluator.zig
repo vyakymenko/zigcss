@@ -16064,14 +16064,21 @@ fn stylusColorTokenPrefixEnd(input: []const u8) ?usize {
     while (hex_digits + 1 < input.len and std.ascii.isHex(input[hex_digits + 1])) {
         hex_digits += 1;
     }
-    if (hex_digits + 1 != input.len) return null;
+    if (hex_digits == 0) return null;
 
     // Stylus 0.64.0 tries its exact color token widths in this order and does
-    // not require an identifier boundary. A nonterminal hex run therefore
-    // becomes the longest admitted color followed by another expression item.
+    // not require an identifier boundary. Preserve the existing uninterrupted
+    // over-width split and the provider's adjacent hyphenated-identifier value
+    // shape; other punctuation still belongs to its dedicated expression path.
+    const suffix = input[hex_digits + 1 ..];
+    const has_identifier_suffix = suffix.len > 1 and suffix[0] == '-' and
+        validVariableName(suffix);
+    if (suffix.len != 0 and !has_identifier_suffix) return null;
     const provider_widths = [_]usize{ 8, 6, 4, 3, 2, 1 };
     for (provider_widths) |width| {
-        if (hex_digits > width) return width + 1;
+        if (hex_digits > width or (has_identifier_suffix and hex_digits == width)) {
+            return width + 1;
+        }
     }
     return null;
 }

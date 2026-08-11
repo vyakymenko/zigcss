@@ -590,6 +590,18 @@ const maximal_color_prefix_input =
 const maximal_color_prefix_css =
     ".foo{color:#000fff A}.foo .bar{color:#f00}";
 
+const color_identifier_boundary_input =
+    \\#fea-ca
+    \\  padding 5px
+    \\
+    \\#ffffff
+    \\  padding 5px
+    \\  foo #fea-ca
+;
+
+const color_identifier_boundary_css =
+    "#fea-ca{padding:5px}#ffffff{padding:5px;foo:#fea -ca}";
+
 const media_bubble_input =
     \\@media (max-width: 640px), (max-height: 320px)
     \\  .logo
@@ -6306,6 +6318,51 @@ test "native Stylus maximal color prefix owns the finite lexical contract" {
     );
 }
 
+test "native Stylus color tokens keep finite selector and expression boundaries" {
+    const lower_input =
+        \\#fea-ca
+        \\  foo #fea
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.values.max_collection_items = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("#fea-ca{foo:#fea}", lower.css());
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.values.max_collection_items = 4;
+    var first = try compile(
+        std.testing.allocator,
+        color_identifier_boundary_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        color_identifier_boundary_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(color_identifier_boundary_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.values.max_collection_items = 3;
+    try expectSemanticRejectionWithLimits(
+        color_identifier_boundary_input,
+        over_limit,
+        error.ValueLimitExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, color_identifier_boundary_input, "#fea-ca").?),
+    );
+}
+
 test "native Stylus media bubbling owns the finite query product contract" {
     const lower_input =
         \\@media (min-width: 1px)
@@ -7602,6 +7659,14 @@ fn exerciseMaximalColorPrefixAllocationFailures(allocator: std.mem.Allocator) !v
     try std.testing.expectEqualStrings(maximal_color_prefix_css, result.css());
 }
 
+fn exerciseColorIdentifierBoundaryAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.values.max_collection_items = 4;
+    var result = try compile(allocator, color_identifier_boundary_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(color_identifier_boundary_css, result.css());
+}
+
 fn exerciseMediaBubbleAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_selectors = 2;
@@ -8211,6 +8276,14 @@ test "native Stylus maximal color prefixes handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMaximalColorPrefixAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus color identifier boundaries handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseColorIdentifierBoundaryAllocationFailures,
         .{},
     );
 }
