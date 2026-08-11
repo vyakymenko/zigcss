@@ -23,10 +23,16 @@ function runtimeTraceFixture(temporary) {
   fs.writeFileSync(path.join(temporary, checksums), 'manifest fixture')
   fs.writeFileSync(trace, '')
   const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
-  const native = process.platform === 'win32'
+  const nativeInput = process.platform === 'win32'
     ? process.env.ComSpec
     : '/bin/sh'
-  assert.equal(typeof native, 'string')
+  assert.equal(typeof nativeInput, 'string')
+  const native = path.join(temporary, process.platform === 'win32' ? 'native-fixture.exe' : 'sh')
+  fs.copyFileSync(fs.realpathSync(nativeInput), native)
+  if (process.platform !== 'win32') fs.chmodSync(native, 0o700)
+  const nativeStat = fs.lstatSync(native)
+  assert.equal(nativeStat.isFile(), true)
+  assert.equal(nativeStat.isSymbolicLink(), false)
   const nativeArgs = process.platform === 'win32'
     ? ['/d', '/s', '/c', 'exit 0']
     : ['-c', 'exit 0']
