@@ -950,6 +950,33 @@ const media_complex_css =
     "@media (min-width: 67.5em) and (min-height: 43.875em){.foo{font-size:0.9em}}" ++
     "@media (min-width: 75em) and (min-height: 48.75em){.foo{font-size:1em}}";
 
+const supports_condition_input =
+    \\feature = flex
+    \\cond = '(display: flex)'
+    \\obj = { cond: cond }
+    \\@supports ((transition-property color !important))
+    \\  body
+    \\    color blue
+    \\@supports not ( {'dis' + 'play'}: feature )
+    \\  body
+    \\    color green
+    \\@supports obj.cond
+    \\  body
+    \\    color yellow
+    \\@supports ( (background-blend-mode: normal) and ( not ( mask-type: alpha) ) )
+    \\  select
+    \\    padding 9px 16px 9px 10px
+    \\@supports (display: flex)
+    \\  // comment-only blocks do not produce a wrapper
+;
+
+const supports_condition_css =
+    "@supports ((transition-property: color !important)){body{color:#00f}}" ++
+    "@supports not (display: flex){body{color:#008000}}" ++
+    "@supports (display: flex){body{color:#ff0}}" ++
+    "@supports ((background-blend-mode: normal) and (not (mask-type: alpha)))" ++
+    "{select{padding:9px 16px 9px 10px}}";
+
 const mixin_caller_scope_input =
     \\global = 12
     \\inner(value = global)
@@ -7701,6 +7728,86 @@ test "native Stylus complex media expressions own the finite semantic contract" 
     );
 }
 
+test "native Stylus supports conditions own the finite semantic contract" {
+    const lower_input =
+        \\@supports (display flex)
+        \\  body
+        \\    color red
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_source_bytes = lower_input.len;
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "@supports (display: flex){body{color:#f00}}",
+        lower.css(),
+    );
+    var compressed = try compileWithOptions(
+        std.testing.allocator,
+        lower_input,
+        .{ .output_style = .compressed },
+        lower_limits,
+    );
+    defer compressed.deinit();
+    try std.testing.expectEqualStrings(
+        "@supports (display:flex){body{color:#f00}}",
+        compressed.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = supports_condition_input.len;
+    terminal.max_selectors = 4;
+    var first = try compile(std.testing.allocator, supports_condition_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, supports_condition_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(supports_condition_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_selectors = terminal;
+    over_selectors.max_selectors = 3;
+    try expectSemanticRejectionWithLimits(
+        supports_condition_input,
+        over_selectors,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, supports_condition_input, "select").?),
+    );
+
+    var over_source = terminal;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        supports_condition_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+
+    const deep_input =
+        \\@supports (((display flex)))
+        \\  body
+        \\    color red
+    ;
+    var over_depth = stylus_evaluator.Limits{};
+    over_depth.max_expression_depth = 2;
+    try expectSemanticRejectionWithLimits(
+        deep_input,
+        over_depth,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        0,
+    );
+}
+
 test "native Stylus nested mixins own the finite caller scope contract" {
     const lower_input =
         \\inner()
@@ -8998,6 +9105,15 @@ fn exerciseMediaComplexAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(media_complex_css, result.css());
 }
 
+fn exerciseSupportsConditionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = supports_condition_input.len;
+    terminal.max_selectors = 4;
+    var result = try compile(allocator, supports_condition_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(supports_condition_css, result.css());
+}
+
 fn exerciseMixinCallerScopeAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 2;
@@ -9760,6 +9876,14 @@ test "native Stylus complex media expressions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMediaComplexAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus supports conditions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseSupportsConditionAllocationFailures,
         .{},
     );
 }

@@ -4989,9 +4989,12 @@ const Engine = struct {
         }
         const raw_is_media = raw_header.len > "@media".len and
             std.ascii.eqlIgnoreCase(raw_header[0.."@media".len], "@media");
+        const raw_is_supports = startsWordAscii(raw_header, "@supports");
         const header_owned = if (header_override == null)
             if (raw_is_media)
                 try self.renderMediaHeaderOwned(at_rule.text.?, raw_header, parent_scope)
+            else if (raw_is_supports)
+                try self.renderSupportsHeaderOwned(at_rule.text.?, raw_header, parent_scope)
             else
                 try self.renderTextOwned(at_rule.text.?, parent_scope, .interpolation, 0)
         else
@@ -5048,6 +5051,7 @@ const Engine = struct {
         defer if (spaced_media_header) |owned| self.allocator.free(owned);
         const final_header = spaced_media_header orelse emitted_header;
         const is_keyframes = isKeyframesHeader(final_header);
+        const is_supports = startsWordAscii(final_header, "@supports");
         if (is_media and self.active_media_bubbles != null) {
             const combined_header = (try self.mergeMediaHeadersOwned(
                 at_rule.text.?,
@@ -5089,7 +5093,8 @@ const Engine = struct {
             parent_selector
         else
             null;
-        const content_checkpoint = if ((is_media or is_keyframes) and self.mode == .emit)
+        const content_checkpoint = if ((is_media or is_keyframes or is_supports) and
+            self.mode == .emit)
             try self.transaction.stagingCheckpoint()
         else
             null;
@@ -13400,6 +13405,167 @@ const Engine = struct {
         return output.toOwnedSlice(self.allocator);
     }
 
+    fn renderSupportsHeaderOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw_header: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error![]u8 {
+        const rendered = try self.renderRawOwned(
+            span,
+            raw_header,
+            scope,
+            .interpolation,
+            0,
+        );
+        defer self.allocator.free(rendered);
+        const body = supportsHeaderBody(rendered) orelse return error.InvalidDocument;
+        const condition = try self.normalizeSupportsConditionOwned(span, body);
+        defer self.allocator.free(condition);
+        if (condition.len == 0) return error.InvalidDocument;
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, "@supports ");
+        try self.appendTemporary(&output, span, condition);
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn normalizeSupportsConditionOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+    ) Error![]u8 {
+        var spaced: std.ArrayList(u8) = .empty;
+        defer spaced.deinit(self.allocator);
+        var cursor: usize = 0;
+        var quote: u8 = 0;
+        var escaped = false;
+        var pending_space = false;
+        while (cursor < raw.len) : (cursor += 1) {
+            const byte = raw[cursor];
+            if (quote != 0) {
+                try self.appendTemporary(&spaced, span, raw[cursor .. cursor + 1]);
+                if (escaped) {
+                    escaped = false;
+                } else if (byte == '\\') {
+                    escaped = true;
+                } else if (byte == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                const previous = if (spaced.items.len > 0)
+                    spaced.items[spaced.items.len - 1]
+                else
+                    0;
+                if (pending_space and previous != '(' and
+                    !((previous == ',' or previous == ':') and
+                        self.options.output_style == .compressed))
+                {
+                    try self.appendTemporary(&spaced, span, " ");
+                }
+                pending_space = false;
+                quote = byte;
+                try self.appendTemporary(&spaced, span, raw[cursor .. cursor + 1]);
+                continue;
+            }
+            if (std.ascii.isWhitespace(byte)) {
+                pending_space = spaced.items.len > 0;
+                continue;
+            }
+            if (byte == ')' or byte == ',' or byte == ':') {
+                pending_space = false;
+            } else if (pending_space and spaced.items.len > 0 and
+                spaced.items[spaced.items.len - 1] != '(' and
+                !((spaced.items[spaced.items.len - 1] == ',' or
+                    spaced.items[spaced.items.len - 1] == ':') and
+                    self.options.output_style == .compressed))
+            {
+                try self.appendTemporary(&spaced, span, " ");
+                pending_space = false;
+            } else {
+                pending_space = false;
+            }
+            try self.appendTemporary(&spaced, span, raw[cursor .. cursor + 1]);
+            if (byte == ',') pending_space = self.options.output_style == .expanded;
+        }
+        if (quote != 0 or escaped) return error.InvalidDocument;
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendSupportsConditionSegment(&output, span, spaced.items, 0);
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn appendSupportsConditionSegment(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        span: native_source.Span,
+        raw: []const u8,
+        depth: u16,
+    ) Error!void {
+        var cursor: usize = 0;
+        while (cursor < raw.len) {
+            if (raw[cursor] == '\'' or raw[cursor] == '"') {
+                const closing = closingQuote(raw, cursor) orelse
+                    return error.InvalidDocument;
+                try self.appendTemporary(output, span, raw[cursor .. closing + 1]);
+                cursor = closing + 1;
+                continue;
+            }
+            if (raw[cursor] != '(') {
+                try self.appendTemporary(output, span, raw[cursor .. cursor + 1]);
+                cursor += 1;
+                continue;
+            }
+            const closing = matchingParen(raw, cursor) orelse
+                return error.InvalidDocument;
+            if (supportsOpeningIsFunction(raw, cursor)) {
+                try self.appendTemporary(output, span, raw[cursor .. closing + 1]);
+                cursor = closing + 1;
+                continue;
+            }
+            if (depth >= self.limits.max_expression_depth) {
+                try self.reportExpressionDepth(span);
+                return error.ExpressionDepthExceeded;
+            }
+
+            const inner = raw[cursor + 1 .. closing];
+            try self.appendTemporary(output, span, "(");
+            if (supportsFeatureSeparator(inner)) |separator| {
+                try self.appendSupportsConditionSegment(
+                    output,
+                    span,
+                    inner[0..separator],
+                    depth + 1,
+                );
+                try self.appendTemporary(
+                    output,
+                    span,
+                    if (self.options.output_style == .expanded) ": " else ":",
+                );
+                var value_start = separator;
+                while (value_start < inner.len and
+                    std.ascii.isWhitespace(inner[value_start]))
+                {
+                    value_start += 1;
+                }
+                try self.appendSupportsConditionSegment(
+                    output,
+                    span,
+                    inner[value_start..],
+                    depth + 1,
+                );
+            } else {
+                try self.appendSupportsConditionSegment(output, span, inner, depth + 1);
+            }
+            try self.appendTemporary(output, span, ")");
+            cursor = closing + 1;
+        }
+    }
+
     fn renderMediaQueryListBodyOwned(
         self: *Engine,
         span: native_source.Span,
@@ -14890,6 +15056,35 @@ fn mediaHeaderBody(header: []const u8) ?[]const u8 {
     if (!startsWordAscii(trimmed, "@media")) return null;
     const body = std.mem.trim(u8, trimmed["@media".len..], " \t\r\n\x0c;");
     return if (body.len > 0) body else null;
+}
+
+fn supportsHeaderBody(header: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, header, " \t\r\n\x0c;");
+    if (!startsWordAscii(trimmed, "@supports")) return null;
+    const body = std.mem.trim(u8, trimmed["@supports".len..], " \t\r\n\x0c;");
+    return if (body.len > 0) body else null;
+}
+
+fn supportsOpeningIsFunction(raw: []const u8, opening: usize) bool {
+    if (opening == 0) return false;
+    const previous = raw[opening - 1];
+    return std.ascii.isAlphanumeric(previous) or previous == '_' or previous == '-';
+}
+
+fn supportsFeatureSeparator(raw: []const u8) ?usize {
+    if (raw.len == 0 or raw[0] == '(' or !isNameStart(raw, 0)) return null;
+    const name_end = nameEnd(raw, 0);
+    if (std.ascii.eqlIgnoreCase(raw[0..name_end], "not") or
+        name_end == raw.len or raw[name_end] == ':' or raw[name_end] == '(' or
+        !std.ascii.isWhitespace(raw[name_end]))
+    {
+        return null;
+    }
+    var value_start = name_end;
+    while (value_start < raw.len and std.ascii.isWhitespace(raw[value_start])) {
+        value_start += 1;
+    }
+    return if (value_start < raw.len) name_end else null;
 }
 
 fn isCssLiteralHeader(raw: []const u8) bool {
