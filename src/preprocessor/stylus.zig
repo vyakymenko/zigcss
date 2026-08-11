@@ -1558,7 +1558,7 @@ fn trimAscii(bytes: []const u8) []const u8 {
 
 fn isComment(raw: []const u8) bool {
     return std.mem.startsWith(u8, raw, "//") or
-        std.mem.startsWith(u8, raw, "/*") or raw[0] == '*';
+        std.mem.startsWith(u8, raw, "/*");
 }
 
 fn isSilentComment(raw: []const u8) bool {

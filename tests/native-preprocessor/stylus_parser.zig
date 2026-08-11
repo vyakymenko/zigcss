@@ -706,6 +706,94 @@ test "native Stylus parser owns the finite multiline media query list" {
     try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
 }
 
+test "native Stylus parser preserves adjacent root media rules" {
+    const lower_input =
+        \\@media print
+        \\  *
+        \\    display none
+    ;
+    var lower_sources = source.Table.init(std.testing.allocator, .{});
+    defer lower_sources.deinit();
+    const lower_source_id = try lower_sources.add("universal-media-lower.styl", lower_input);
+    var lower_limits = stylus.Limits{};
+    lower_limits.max_statements = 3;
+    var lower_parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &lower_sources,
+        lower_source_id,
+        lower_limits,
+        .{},
+    );
+    defer lower_parser.deinit();
+    var lower_document = try lower_parser.parse();
+    defer lower_document.deinit();
+    const lower_root = try lower_document.children(lower_document.root);
+    const lower_at_rule = try lower_document.children(lower_root[0]);
+    const lower_block = try lower_document.children(lower_at_rule[lower_at_rule.len - 1]);
+    try std.testing.expectEqual(@as(usize, 1), lower_block.len);
+    try std.testing.expectEqual(
+        syntax.Kind.rule,
+        (try lower_document.get(lower_block[0])).kind,
+    );
+
+    const input =
+        \\@media only screen and (width-max: 767px)
+        \\  article > div
+        \\    width 192px
+        \\
+        \\@media print
+        \\  * .no-print
+        \\    display none
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("adjacent-root-media.styl", input);
+    var terminal_limits = stylus.Limits{};
+    terminal_limits.max_statements = 6;
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        terminal_limits,
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root.len);
+    for (root) |statement_id| {
+        try std.testing.expectEqual(
+            syntax.Kind.at_rule,
+            (try document.get(statement_id)).kind,
+        );
+    }
+    const second_at_rule = try document.children(root[1]);
+    const second_block = try document.children(second_at_rule[second_at_rule.len - 1]);
+    try std.testing.expectEqual(@as(usize, 1), second_block.len);
+    const universal_rule = try document.get(second_block[0]);
+    try std.testing.expectEqual(syntax.Kind.rule, universal_rule.kind);
+    const universal_children = try document.children(second_block[0]);
+    try std.testing.expectEqualStrings(
+        "* .no-print",
+        try sources.slice((try document.get(universal_children[0])).text.?),
+    );
+
+    var over_limit = terminal_limits;
+    over_limit.max_statements = 5;
+    var limited = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        over_limit,
+        .{},
+    );
+    defer limited.deinit();
+    try std.testing.expectError(error.StatementLimitExceeded, limited.parse());
+    try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
+}
+
 test "native Stylus parser owns the finite comma-led multiline declaration value" {
     const lower_input =
         \\.lower
@@ -1966,6 +2054,32 @@ fn exerciseCommentedSelectorGroupAllocationFailures(allocator: std.mem.Allocator
     try std.testing.expectEqual(@as(usize, 2), children.len);
 }
 
+fn exerciseAdjacentRootMediaAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@media only screen and (width-max: 767px)
+        \\  article > div
+        \\    width 192px
+        \\
+        \\@media print
+        \\  * .no-print
+        \\    display none
+    ;
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("adjacent-root-media.styl", input);
+    var limits = stylus.Limits{};
+    limits.max_statements = 6;
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, limits, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root.len);
+    const second_at_rule = try document.children(root[1]);
+    const second_block = try document.children(second_at_rule[second_at_rule.len - 1]);
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(second_block[0])).kind);
+}
+
 fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !void {
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
@@ -2228,6 +2342,14 @@ test "native Stylus commented selector group handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCommentedSelectorGroupAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus adjacent root media handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseAdjacentRootMediaAllocationFailures,
         .{},
     );
 }
