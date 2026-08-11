@@ -602,6 +602,17 @@ const color_identifier_boundary_input =
 const color_identifier_boundary_css =
     "#fea-ca{padding:5px}#ffffff{padding:5px;foo:#fea -ca}";
 
+const empty_statement_call_input =
+    \\body
+    \\  noop()
+    \\
+    \\body
+    \\  padding-{opposite-position(left)} 0
+    \\  float opposite-position(left)
+;
+
+const empty_statement_call_css = "body{padding-right:0;float:right}";
+
 const pseudo_selector_group_input =
     \\body
     \\  :nth-child(2)
@@ -5418,6 +5429,62 @@ test "native Stylus JSON preserves resolver byte limits" {
     );
 }
 
+test "native Stylus empty statement calls preserve the bounded provider no-op" {
+    const lower_input =
+        \\body
+        \\  noop()
+        \\  color red
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{color:#f00}", lower.css());
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = empty_statement_call_input.len;
+    var first = try compile(
+        std.testing.allocator,
+        empty_statement_call_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        empty_statement_call_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(empty_statement_call_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const argument_call =
+        \\body
+        \\  noop(1)
+    ;
+    try expectSemanticRejection(
+        argument_call,
+        error.UndefinedCallable,
+        .invalid_operation,
+        "native Stylus callable is undefined",
+        @intCast(std.mem.indexOf(u8, argument_call, "noop").?),
+    );
+
+    var over_limit = terminal_limits;
+    over_limit.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        empty_statement_call_input,
+        over_limit,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus callable control slice fails closed with exact diagnostics" {
     const missing =
         \\.a
@@ -7763,6 +7830,14 @@ fn exerciseColorIdentifierBoundaryAllocationFailures(allocator: std.mem.Allocato
     try std.testing.expectEqualStrings(color_identifier_boundary_css, result.css());
 }
 
+fn exerciseEmptyStatementCallAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = empty_statement_call_input.len;
+    var result = try compile(allocator, empty_statement_call_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(empty_statement_call_css, result.css());
+}
+
 fn exercisePseudoSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !void {
     var limits = stylus_evaluator.Limits{};
     limits.max_selectors = 16;
@@ -8388,6 +8463,14 @@ test "native Stylus color identifier boundaries handle every allocation failure"
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseColorIdentifierBoundaryAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus empty statement calls handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseEmptyStatementCallAllocationFailures,
         .{},
     );
 }

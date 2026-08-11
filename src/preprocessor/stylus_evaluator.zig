@@ -6307,6 +6307,11 @@ const Engine = struct {
                 _ = try self.evaluateValue(text, expression, scope.*, 0);
                 return;
             }
+            if (call.parenthesized and std.mem.trim(
+                u8,
+                expression[call.arguments.start..call.arguments.end],
+                " \t\r\n\x0c",
+            ).len == 0) return;
             try self.reportUndefinedCallable(text);
             return error.UndefinedCallable;
         }
