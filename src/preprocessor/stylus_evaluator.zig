@@ -8705,6 +8705,11 @@ const Engine = struct {
         right: *const native_value.Value,
         operator: u8,
     ) Error!*const native_value.Value {
+        // Stylus Expression multiplication dispatches through its first node,
+        // and Unit multiplication likewise coerces the right expression's
+        // first node. Keep that coercion local to numeric multiplication.
+        const numeric_left = if (operator == '*') stylusFirstValue(left) else left;
+        const numeric_right = if (operator == '*') stylusFirstValue(right) else right;
         // Stylus Unit.coerce() follows JavaScript parseFloat() when the right
         // operand is a quoted string and retains the left number's unit.
         if (left.* == .number and right.* == .string and
@@ -8780,12 +8785,12 @@ const Engine = struct {
             }
             return self.ownValue(span, .{ .color = quantizeColor(result, .nearest) catch return error.InvalidOperation });
         }
-        if (left.* == .number and right.* == .number) {
-            const left_numeric = native_numeric.Numeric.fromNumber(left.number) catch {
+        if (numeric_left.* == .number and numeric_right.* == .number) {
+            const left_numeric = native_numeric.Numeric.fromNumber(numeric_left.number) catch {
                 try self.reportInvalidOperation(span);
                 return error.InvalidOperation;
             };
-            const right_numeric = native_numeric.Numeric.fromNumber(right.number) catch {
+            const right_numeric = native_numeric.Numeric.fromNumber(numeric_right.number) catch {
                 try self.reportInvalidOperation(span);
                 return error.InvalidOperation;
             };
@@ -15557,6 +15562,14 @@ fn unwrapStylusExpression(value: *const native_value.Value) *const native_value.
     while (current.* == .list and !current.list.preserve and
         current.list.items.len == 1 and current.list.items[0] == .list)
     {
+        current = &current.list.items[0];
+    }
+    return current;
+}
+
+fn stylusFirstValue(value: *const native_value.Value) *const native_value.Value {
+    var current = value;
+    while (current.* == .list and current.list.items.len > 0) {
         current = &current.list.items[0];
     }
     return current;
