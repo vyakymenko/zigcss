@@ -3658,7 +3658,25 @@ const Engine = struct {
                         }
                         break :blk try self.ownValue(span, selected orelse .{ .null_value = {} });
                     },
-                    else => return null,
+                    else => blk: {
+                        if (index_value.* == .list) {
+                            const singleton = [_]native_value.Value{current.*};
+                            break :blk (try self.selectListMembers(
+                                span,
+                                .{
+                                    .items = &singleton,
+                                    .separator = .space,
+                                },
+                                index_value.list,
+                            )) orelse return null;
+                        }
+                        const index = integerScalar(index_value.*) orelse
+                            break :blk try self.ownValue(span, .{ .null_value = {} });
+                        const normalized = normalizeIndex(index, 1) orelse
+                            break :blk try self.ownValue(span, .{ .null_value = {} });
+                        std.debug.assert(normalized == 0);
+                        break :blk try self.ownValue(span, current.*);
+                    },
                 };
                 cursor = closing + 1;
                 continue;
@@ -5052,6 +5070,7 @@ const Engine = struct {
         const final_header = spaced_media_header orelse emitted_header;
         const is_keyframes = isKeyframesHeader(final_header);
         const is_supports = startsWordAscii(final_header, "@supports");
+        const is_apply = startsWordAscii(final_header, "@apply");
         if (is_media and self.active_media_bubbles != null) {
             const combined_header = (try self.mergeMediaHeadersOwned(
                 at_rule.text.?,
@@ -5102,11 +5121,21 @@ const Engine = struct {
             self.transaction.restoreStaging(checkpoint_value) catch {};
         };
         if (is_media and block_id == null) return;
-        try self.emitMapped(at_rule.text.?, null, final_header);
         if (block_id == null) {
+            if (is_apply and parent_selector != null) {
+                const selector = self.active_rule_selector orelse parent_selector.?;
+                if (selector.len == 0) return;
+                try self.emitMapped(at_rule.text.?, null, selector);
+                try self.emit("{");
+                try self.emitMapped(at_rule.text.?, null, final_header);
+                try self.emit(";}");
+                return;
+            }
+            try self.emitMapped(at_rule.text.?, null, final_header);
             try self.emit(";");
             return;
         }
+        try self.emitMapped(at_rule.text.?, null, final_header);
 
         var scope = self.environment.push(parent_scope) catch |failure| {
             try self.reportResource(at_rule.span, "native Stylus lexical scope limit exceeded");
@@ -12559,7 +12588,9 @@ const Engine = struct {
                     }
                     if (opening < raw.len and raw[opening] == '(') {
                         const bound = try self.lookupBinding(scope, name);
-                        if (bound != null and bound.?.* == .callable) {
+                        if ((bound != null and bound.?.* == .callable) or
+                            nameEql(name, "alpha"))
+                        {
                             const closing = matchingParen(raw, opening) orelse
                                 return error.InvalidDocument;
                             const call_span = try self.relativeSpan(span, .{

@@ -246,6 +246,7 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     var exact_case_id_hash = std.hash.Wyhash.init(0);
     var target_exclusion_case_id_hash = std.hash.Wyhash.init(0);
     var prior_exact_case_id_hash = std.hash.Wyhash.init(0);
+    var pre_variables_case_id_hash = std.hash.Wyhash.init(0);
     var pre_supports_case_id_hash = std.hash.Wyhash.init(0);
     var pre_selectors_nested_case_id_hash = std.hash.Wyhash.init(0);
     var pre_selectors_complex_case_id_hash = std.hash.Wyhash.init(0);
@@ -341,19 +342,28 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
             include_css_exact_count += @intFromBool(case.providerOptions.includeCss);
             exact_case_id_hash.update(case.id);
             exact_case_id_hash.update("\x00");
-            const is_supports = std.mem.eql(
+            const is_variables = std.mem.eql(
                 u8,
                 case.id,
-                "stylus-official-supports",
+                "stylus-official-variables",
             );
-            if (!is_supports) {
+            if (!is_variables) {
                 target_exclusion_case_id_hash.update(case.id);
                 target_exclusion_case_id_hash.update("\x00");
             }
-            const became_exact_with_supports = is_supports;
-            if (!became_exact_with_supports) {
+            const became_exact_with_variables = is_variables;
+            if (!became_exact_with_variables) {
                 prior_exact_case_id_hash.update(case.id);
                 prior_exact_case_id_hash.update("\x00");
+            }
+            const became_exact_with_supports = std.mem.eql(
+                u8,
+                case.id,
+                "stylus-official-supports",
+            ) or became_exact_with_variables;
+            if (!became_exact_with_supports) {
+                pre_variables_case_id_hash.update(case.id);
+                pre_variables_case_id_hash.update("\x00");
             }
             const became_exact_with_selectors_nested = std.mem.eql(
                 u8,
@@ -744,8 +754,8 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
 
     const exact_hash = exact_case_id_hash.final();
-    if (exact_success_count != 325 or nonconforming_count != 1 or
-        exact_hash != 0x4c6285fa03b40abb)
+    if (exact_success_count != 326 or nonconforming_count != 0 or
+        exact_hash != 0x3b55c78d94378874)
     {
         std.debug.print(
             "\nnative Stylus exact inventory: {d} exact, {d} nonconforming, " ++
@@ -762,16 +772,20 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     try std.testing.expectEqual(@as(usize, 7), include_css_success_count);
     try std.testing.expectEqual(@as(usize, 7), include_css_exact_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 325), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 1), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0x4c6285fa03b40abb), exact_hash);
+    try std.testing.expectEqual(@as(usize, 326), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 0), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0x3b55c78d94378874), exact_hash);
     try std.testing.expectEqual(
-        @as(u64, 0x9acbddef87ac2e02),
+        @as(u64, 0x4c6285fa03b40abb),
         target_exclusion_case_id_hash.final(),
     );
     try std.testing.expectEqual(
-        @as(u64, 0x9acbddef87ac2e02),
+        @as(u64, 0x4c6285fa03b40abb),
         prior_exact_case_id_hash.final(),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x9acbddef87ac2e02),
+        pre_variables_case_id_hash.final(),
     );
     try std.testing.expectEqual(
         @as(u64, 0x6fa4f5ba730b584c),
@@ -949,10 +963,7 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
         @as(u64, 0x9c8106b53217cf87),
         pre_media_bubble_case_id_hash.final(),
     );
-    try std.testing.expectEqualStrings(
-        "stylus-official-variables",
-        first_nonconforming_id.?,
-    );
+    try std.testing.expect(first_nonconforming_id == null);
 }
 
 test "native Stylus closes the finite arithmetic conformance family" {
@@ -5539,6 +5550,79 @@ test "native Stylus closes the finite supports conformance family" {
 
     var over_limit = terminal;
     over_limit.max_selectors = 15;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compileNativeWithLimits(allocator, case, input, over_limit),
+    );
+
+    over_limit = terminal;
+    over_limit.max_source_bytes -= 1;
+    try std.testing.expectError(
+        error.SourceLimitExceeded,
+        compileNativeWithLimits(allocator, case, input, over_limit),
+    );
+}
+
+test "native Stylus closes the finite variables conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(
+        parsed.value.cases,
+        "stylus-official-variables",
+    );
+    try std.testing.expectEqualStrings("variables", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+    try std.testing.expectEqualStrings("expanded", case.style);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = input.len;
+    terminal.max_selectors = 25;
+    var first = try compileNativeWithLimits(allocator, case, input, terminal);
+    defer first.deinit();
+    var second = try compileNativeWithLimits(allocator, case, input, terminal);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print(
+            "\nnative Stylus variables mismatch\nexpected: {s}\nactual:   {s}\n",
+            .{ expected_css.css(), first.css() },
+        );
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), first.edges().len);
+    try expectDependencyDeterminism(&first, &second);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 24;
     try std.testing.expectError(
         error.SelectorLimitExceeded,
         compileNativeWithLimits(allocator, case, input, over_limit),

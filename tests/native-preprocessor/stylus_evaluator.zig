@@ -1425,6 +1425,42 @@ const unitful_mixin_condition_input =
 const unitful_mixin_condition_css =
     "body{result:above;result:below;result:zero}";
 
+const scalar_subscript_input =
+    \\scalar = 10px
+    \\obj = { scalar: 20px }
+    \\.direct
+    \\  zero scalar[0]
+    \\  negative scalar[-1]
+    \\  missing scalar[1]
+    \\.member
+    \\  zero obj.scalar[0]
+    \\  negative obj.scalar[-1]
+    \\  missing obj.scalar[1]
+;
+
+const scalar_subscript_css =
+    ".direct{zero:10px;negative:10px;missing:}" ++
+    ".member{zero:20px;negative:20px;missing:}";
+
+const nested_literal_builtin_input =
+    \\primary = #fff
+    \\secondary = #ff00ff
+    \\body
+    \\  background linear-gradient(alpha(primary, 0) 0%, secondary 90%)
+;
+
+const nested_literal_builtin_css =
+    "body{background:linear-gradient(rgba(255,255,255,0) 0%, #f0f 90%)}";
+
+const apply_property_input =
+    \\.base
+    \\  color red
+    \\.classB
+    \\  @apply classA
+;
+
+const apply_property_css = ".base{color:#f00}.classB{@apply classA;}";
+
 const nested_object_member_input =
     \\root = { branch: { leaf: {} } }
     \\root['branch']['leaf']['settings'] = {
@@ -3970,6 +4006,137 @@ test "native Stylus nested object members own the finite mutation depth contract
         .resource_limit,
         "native Stylus value limit exceeded",
         @intCast(std.mem.indexOf(u8, nested_object_member_input, "root['branch']").?),
+    );
+}
+
+test "native Stylus scalar subscripts own the finite single-value expression contract" {
+    const lower_input =
+        \\value = 10px
+        \\body
+        \\  selected value[0]
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{selected:10px}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = scalar_subscript_input.len;
+    terminal.max_selectors = 2;
+    var first = try compile(std.testing.allocator, scalar_subscript_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, scalar_subscript_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(scalar_subscript_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 1;
+    try expectSemanticRejectionWithLimits(
+        scalar_subscript_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, scalar_subscript_input, ".member").?),
+    );
+
+    over_limit = terminal;
+    over_limit.max_source_bytes -= 1;
+    try std.testing.expectError(
+        error.SourceLimitExceeded,
+        compile(std.testing.allocator, scalar_subscript_input, over_limit),
+    );
+}
+
+test "native Stylus literal CSS calls evaluate the finite nested built-in contract" {
+    const lower_input =
+        \\body
+        \\  color alpha(#fff, 0)
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{color:rgba(255,255,255,0)}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = nested_literal_builtin_input.len;
+    terminal.max_selectors = 1;
+    var first = try compileWithOptions(
+        std.testing.allocator,
+        nested_literal_builtin_input,
+        .{ .output_style = .expanded },
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compileWithOptions(
+        std.testing.allocator,
+        nested_literal_builtin_input,
+        .{ .output_style = .expanded },
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(nested_literal_builtin_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    terminal.max_source_bytes -= 1;
+    try std.testing.expectError(
+        error.SourceLimitExceeded,
+        compile(std.testing.allocator, nested_literal_builtin_input, terminal),
+    );
+}
+
+test "native Stylus apply properties retain the finite selector-local contract" {
+    const lower_input =
+        \\.classB
+        \\  @apply classA
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".classB{@apply classA;}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = apply_property_input.len;
+    terminal.max_selectors = 2;
+    var first = try compile(std.testing.allocator, apply_property_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, apply_property_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(apply_property_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 1;
+    try expectSemanticRejectionWithLimits(
+        apply_property_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, apply_property_input, ".classB").?),
+    );
+
+    over_limit = terminal;
+    over_limit.max_source_bytes -= 1;
+    try std.testing.expectError(
+        error.SourceLimitExceeded,
+        compile(std.testing.allocator, apply_property_input, over_limit),
     );
 }
 
@@ -9257,6 +9424,38 @@ fn exerciseNestedObjectMemberAllocationFailures(allocator: std.mem.Allocator) !v
     try std.testing.expectEqualStrings(nested_object_member_css, result.css());
 }
 
+fn exerciseScalarSubscriptAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = scalar_subscript_input.len;
+    terminal.max_selectors = 2;
+    var result = try compile(allocator, scalar_subscript_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(scalar_subscript_css, result.css());
+}
+
+fn exerciseNestedLiteralBuiltinAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = nested_literal_builtin_input.len;
+    terminal.max_selectors = 1;
+    var result = try compileWithOptions(
+        allocator,
+        nested_literal_builtin_input,
+        .{ .output_style = .expanded },
+        terminal,
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(nested_literal_builtin_css, result.css());
+}
+
+fn exerciseApplyPropertyAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_source_bytes = apply_property_input.len;
+    terminal.max_selectors = 2;
+    var result = try compile(allocator, apply_property_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(apply_property_css, result.css());
+}
+
 fn exerciseObjectMixinAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_selectors = 3;
@@ -9900,6 +10099,30 @@ test "native Stylus nested object members handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseNestedObjectMemberAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus scalar subscripts handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseScalarSubscriptAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus nested literal built-ins handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseNestedLiteralBuiltinAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus apply properties handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseApplyPropertyAllocationFailures,
         .{},
     );
 }

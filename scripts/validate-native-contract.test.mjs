@@ -254,8 +254,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     ownerPackage: 'NSTYLUS-012',
     releaseGapFamily: 'native-stylus-conformance',
     convergenceState: 'closed',
-    state: 'in-progress',
-    packageState: 'in-progress',
+    state: 'closed',
+    packageState: 'verified',
     oracle: {
       id: 'stylus',
       package: 'stylus',
@@ -264,15 +264,15 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       manifest: 'tests/preprocessors/stylus/corpus/manifest.json',
       caseCount: 346,
     },
-    completedCaseCount: 345,
-    remainingCaseCount: 1,
+    completedCaseCount: 346,
+    remainingCaseCount: 0,
     terminalContract: {
       selectionDerived: true,
       successCaseCount: 326,
       errorCaseCount: 20,
-      exactSuccessCount: 325,
-      nonconformingSuccessCount: 1,
-      exactSuccessCaseIdWyhash: '4c6285fa03b40abb',
+      exactSuccessCount: 326,
+      nonconformingSuccessCount: 0,
+      exactSuccessCaseIdWyhash: '3b55c78d94378874',
       deterministicRunsPerSuccessCase: 2,
       fuzzMutationsPerCase: 3,
       maxConcurrentCompilations: 4,
@@ -388,6 +388,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
         'native Stylus closes the finite complex selectors conformance family',
         'native Stylus closes the finite nested selectors conformance family',
         'native Stylus closes the finite supports conformance family',
+        'native Stylus closes the finite variables conformance family',
         'native Stylus rejects the finite pinned error corpus deterministically',
         'native Stylus parser owns finite resource and cancellation boundaries',
         'native Stylus compilation is deterministic under bounded concurrency',
@@ -396,7 +397,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       ],
     },
     gates: {
-      corpusDifferential: 'in-progress',
+      corpusDifferential: 'verified',
       negativeAndResource: 'verified',
       deterministicConcurrency: 'verified',
       fuzz: 'verified',
@@ -751,7 +752,7 @@ test('rejects widened, unpinned, or unevidenced native Stylus conformance progre
     contract => { contract.stylusConformance.terminalContract.nonconformingSuccessCount = 134 },
     contract => { contract.stylusConformance.terminalContract.exactSuccessCaseIdWyhash = '7146b1a62ee0a431' },
     contract => { contract.stylusConformance.terminalContract.evidenceTests.pop() },
-    contract => { contract.stylusConformance.gates.corpusDifferential = 'verified' },
+    contract => { contract.stylusConformance.gates.corpusDifferential = 'in-progress' },
   ]) {
     const changed = clone(loadContract())
     mutate(changed)
