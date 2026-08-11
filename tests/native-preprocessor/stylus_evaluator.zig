@@ -686,6 +686,14 @@ const pseudo_selector_group_css =
     "body foo,body bar,body baz{display:none}" ++
     "body foo,body :nth-child(2),body bar{display:none}";
 
+const commented_selector_group_input =
+    "foo[bar],\n" ++
+    "// ,\n" ++
+    "baz\n" ++
+    "  test: test\n";
+
+const commented_selector_group_css = "foo[bar],baz{test:test}";
+
 const media_bubble_input =
     \\@media (max-width: 640px), (max-height: 320px)
     \\  .logo
@@ -6686,6 +6694,65 @@ test "native Stylus pseudo selectors own finite newline-group disambiguation" {
     );
 }
 
+test "native Stylus silent selector comments own the finite group contract" {
+    const lower_input =
+        \\alpha,
+        \\// ignored
+        \\beta
+        \\  value one
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("alpha,beta{value:one}", lower.css());
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_source_bytes = commented_selector_group_input.len;
+    terminal_limits.max_selectors = 2;
+    var first = try compile(
+        std.testing.allocator,
+        commented_selector_group_input,
+        terminal_limits,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        commented_selector_group_input,
+        terminal_limits,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(commented_selector_group_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_selectors = terminal_limits;
+    over_selectors.max_selectors = 1;
+    try expectSemanticRejectionWithLimits(
+        commented_selector_group_input,
+        over_selectors,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        0,
+    );
+
+    var over_source = terminal_limits;
+    over_source.max_source_bytes -= 1;
+    try expectSemanticRejectionWithLimits(
+        commented_selector_group_input,
+        over_source,
+        error.SourceLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator source limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus media bubbling owns the finite query product contract" {
     const lower_input =
         \\@media (min-width: 1px)
@@ -8027,6 +8094,15 @@ fn exercisePseudoSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !
     try std.testing.expectEqualStrings(pseudo_selector_group_css, result.css());
 }
 
+fn exerciseCommentedSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_source_bytes = commented_selector_group_input.len;
+    limits.max_selectors = 2;
+    var result = try compile(allocator, commented_selector_group_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(commented_selector_group_css, result.css());
+}
+
 fn exerciseMediaBubbleAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_selectors = 2;
@@ -8676,6 +8752,14 @@ test "native Stylus pseudo selector groups handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exercisePseudoSelectorGroupAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus silent selector comments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCommentedSelectorGroupAllocationFailures,
         .{},
     );
 }

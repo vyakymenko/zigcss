@@ -1282,6 +1282,70 @@ test "native Stylus parser preserves comma-led multiline descendant selector gro
     );
 }
 
+test "native Stylus parser keeps silent comments transparent inside selector groups" {
+    const input =
+        \\foo[bar],
+        \\// ,
+        \\baz
+        \\  test test
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("commented-selector-group.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const rule = try document.get(root_children[0]);
+    try std.testing.expectEqual(syntax.Kind.rule, rule.kind);
+    const rule_children = try document.children(root_children[0]);
+    try std.testing.expectEqual(@as(usize, 2), rule_children.len);
+    try std.testing.expectEqualStrings(
+        "foo[bar],\n// ,\nbaz",
+        try sources.slice((try document.get(rule_children[0])).text.?),
+    );
+    const declarations = try document.children(rule_children[rule_children.len - 1]);
+    try std.testing.expectEqual(@as(usize, 1), declarations.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(declarations[0])).kind,
+    );
+
+    const boundary_source_id = try sources.add(
+        "standalone-comment-boundary.styl",
+        "// not a selector\nbody\n  color red\n",
+    );
+    var boundary_parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        boundary_source_id,
+        .{},
+        .{},
+    );
+    defer boundary_parser.deinit();
+    var boundary_document = try boundary_parser.parse();
+    defer boundary_document.deinit();
+    const boundary_root = try boundary_document.children(boundary_document.root);
+    try std.testing.expectEqual(@as(usize, 2), boundary_root.len);
+    try std.testing.expectEqual(
+        syntax.Kind.comment,
+        (try boundary_document.get(boundary_root[0])).kind,
+    );
+    try std.testing.expectEqual(
+        syntax.Kind.rule,
+        (try boundary_document.get(boundary_root[1])).kind,
+    );
+}
+
 test "native Stylus parser lets a pseudo selector disambiguate a newline group" {
     const input =
         \\body
@@ -1885,6 +1949,23 @@ fn exerciseSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, 1), (try document.children(document.root)).len);
 }
 
+fn exerciseCommentedSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "commented-selector-group.styl",
+        "foo[bar],\n// ,\nbaz\n  test: test\n",
+    );
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root.len);
+    const children = try document.children(root[0]);
+    try std.testing.expectEqual(@as(usize, 2), children.len);
+}
+
 fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !void {
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
@@ -2139,6 +2220,14 @@ test "native Stylus comma-led selector group handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseSelectorGroupAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus commented selector group handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCommentedSelectorGroupAllocationFailures,
         .{},
     );
 }

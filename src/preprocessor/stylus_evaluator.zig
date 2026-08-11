@@ -12351,7 +12351,11 @@ const Engine = struct {
                 index += 1;
                 continue;
             }
-            if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '/') break;
+            if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '/') {
+                if (context != .selector) break;
+                index = std.mem.indexOfAnyPos(u8, raw, index + 2, "\r\n") orelse raw.len;
+                continue;
+            }
             if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '*') {
                 const relative = std.mem.indexOfPos(u8, raw, index + 2, "*/") orelse
                     return error.InvalidDocument;
@@ -13103,6 +13107,25 @@ const Engine = struct {
         errdefer output.deinit(self.allocator);
         var cursor: usize = 0;
         while (cursor < selector.len) {
+            if (std.mem.startsWith(u8, selector[cursor..], "//")) {
+                const newline = std.mem.indexOfAnyPos(u8, selector, cursor + 2, "\r\n") orelse {
+                    cursor = selector.len;
+                    continue;
+                };
+                cursor = newline + 1;
+                if (selector[newline] == '\r' and cursor < selector.len and
+                    selector[cursor] == '\n')
+                {
+                    cursor += 1;
+                }
+                while (cursor < selector.len and
+                    (selector[cursor] == ' ' or selector[cursor] == '\t' or
+                        selector[cursor] == '\x0c'))
+                {
+                    cursor += 1;
+                }
+                continue;
+            }
             const newline = std.mem.indexOfAnyPos(u8, selector, cursor, "\r\n") orelse {
                 try self.appendTemporary(&output, span, selector[cursor..]);
                 break;

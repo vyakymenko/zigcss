@@ -1095,10 +1095,27 @@ pub const Parser = struct {
         }
         const candidates = lines[start .. end + 1];
         const comma_led = blk: {
-            if (endsWithSignificant(self.lineBytes(candidates[candidates.len - 1]), ',')) {
+            if (isSilentComment(self.lineBytes(candidates[0])) or
+                isSilentComment(self.lineBytes(candidates[candidates.len - 1])))
+            {
                 break :blk false;
             }
-            for (candidates[0 .. candidates.len - 1]) |candidate| {
+            var last_selector = candidates.len;
+            while (last_selector > 0) {
+                last_selector -= 1;
+                if (!isSilentComment(self.lineBytes(candidates[last_selector]))) break;
+            }
+            var selector_count: usize = 0;
+            for (candidates) |candidate| {
+                selector_count += @intFromBool(!isSilentComment(self.lineBytes(candidate)));
+            }
+            if (selector_count < 2 or
+                endsWithSignificant(self.lineBytes(candidates[last_selector]), ','))
+            {
+                break :blk false;
+            }
+            for (candidates[0..last_selector]) |candidate| {
+                if (isSilentComment(self.lineBytes(candidate))) continue;
                 if (!endsWithSignificant(self.lineBytes(candidate), ',')) break :blk false;
             }
             break :blk true;
@@ -1112,6 +1129,7 @@ pub const Parser = struct {
         }
         for (candidates, 0..) |candidate, index| {
             const raw = self.lineBytes(candidate);
+            if (isSilentComment(raw) and comma_led) continue;
             const bare_selector = std.mem.indexOfAny(u8, raw, " \t(){}=;") == null;
             const ancestry_selector = std.mem.startsWith(u8, raw, "^[");
             const pseudo_selector = startsPseudoSelector(raw);
@@ -1541,6 +1559,10 @@ fn trimAscii(bytes: []const u8) []const u8 {
 fn isComment(raw: []const u8) bool {
     return std.mem.startsWith(u8, raw, "//") or
         std.mem.startsWith(u8, raw, "/*") or raw[0] == '*';
+}
+
+fn isSilentComment(raw: []const u8) bool {
+    return std.mem.startsWith(u8, raw, "//");
 }
 
 fn startsDirective(raw: []const u8, expected: []const u8) bool {
