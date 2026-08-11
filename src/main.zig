@@ -312,6 +312,30 @@ fn nativeStdinEntryName(syntax: native_api.Syntax) []const u8 {
     };
 }
 
+fn compileNativeLoadedSource(
+    allocator: std.mem.Allocator,
+    entry_path: []const u8,
+    root_path: []const u8,
+    input: []const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+    watch: bool,
+) !native_api.CompileResult {
+    const root_paths = [_][]const u8{root_path};
+    return native_api.compile(allocator, entry_path, input, .{
+        .syntax = syntax,
+        .root_paths = &root_paths,
+        .format = if (minify) .minified else .pretty,
+        .watch = watch,
+    }) catch |err| {
+        std.debug.print(
+            "Error: native {s} compilation failed: {s}\n",
+            .{ nativeSyntaxLabel(syntax), @errorName(err) },
+        );
+        return err;
+    };
+}
+
 fn compileNativeSource(
     allocator: std.mem.Allocator,
     input_file: []const u8,
@@ -347,31 +371,22 @@ fn compileNativeSource(
         root
     else
         std.fs.path.dirname(entry_path) orelse return error.InvalidSourcePath;
-    const root_paths = [_][]const u8{root_path};
-
-    return native_api.compile(allocator, entry_path, input, .{
-        .syntax = syntax,
-        .root_paths = &root_paths,
-        .format = if (minify) .minified else .pretty,
-    }) catch |err| {
-        std.debug.print(
-            "Error: native {s} compilation failed: {s}\n",
-            .{ nativeSyntaxLabel(syntax), @errorName(err) },
-        );
-        return err;
-    };
+    return compileNativeLoadedSource(
+        allocator,
+        entry_path,
+        root_path,
+        input,
+        syntax,
+        minify,
+        false,
+    );
 }
 
-fn compileNativeInput(
-    allocator: std.mem.Allocator,
+fn commitNativeResult(
     input_file: []const u8,
     output_file: ?[]const u8,
-    syntax: native_api.Syntax,
-    minify: bool,
+    result: *const native_api.CompileResult,
 ) !void {
-    var result = try compileNativeSource(allocator, input_file, syntax, minify);
-    defer result.deinit();
-
     if (output_file) |out| {
         if (isStdioPath(out)) {
             writeStdout(result.css) catch |err| {
@@ -388,6 +403,18 @@ fn compileNativeInput(
             return err;
         };
     }
+}
+
+fn compileNativeInput(
+    allocator: std.mem.Allocator,
+    input_file: []const u8,
+    output_file: ?[]const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+) !void {
+    var result = try compileNativeSource(allocator, input_file, syntax, minify);
+    defer result.deinit();
+    try commitNativeResult(input_file, output_file, &result);
 }
 
 fn computeFileHash(content: []const u8) u64 {
@@ -647,6 +674,77 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
             );
             watched_dependencies.deinit();
             watched_dependencies = next_dependencies;
+        }
+
+        std.Thread.sleep(500 * std.time.ns_per_ms);
+    }
+}
+
+fn watchNativeFile(
+    allocator: std.mem.Allocator,
+    input_file: []const u8,
+    output_file: ?[]const u8,
+    syntax: native_api.Syntax,
+    minify: bool,
+) !void {
+    const entry_path = std.fs.cwd().realpathAlloc(allocator, input_file) catch |err| {
+        std.debug.print("Error: failed to resolve {s}: {s}\n", .{ input_file, @errorName(err) });
+        return err;
+    };
+    defer allocator.free(entry_path);
+    const root_path = std.fs.path.dirname(entry_path) orelse return error.InvalidSourcePath;
+
+    std.debug.print("Watching {s} for changes... (Press Ctrl+C to stop)\n", .{input_file});
+    var tracker = WatchTracker{};
+    var watched_result: ?native_api.CompileResult = null;
+    defer if (watched_result) |*result| result.deinit();
+
+    while (true) {
+        const input = (if (watched_result) |*result|
+            result.readWatchInput(allocator)
+        else
+            std.fs.cwd().readFileAlloc(allocator, entry_path, max_input_bytes)) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            const source_changed = tracker.observeSource(.{ .unavailable = err });
+            if (watched_result) |*result| _ = try result.pollWatchInputs();
+            if (source_changed) {
+                std.debug.print("Error: failed to read {s}: {s}\n", .{ input_file, @errorName(err) });
+            }
+            std.Thread.sleep(500 * std.time.ns_per_ms);
+            continue;
+        };
+        defer allocator.free(input);
+
+        const first_attempt = tracker.last_source == null;
+        const dependency_changed = if (watched_result) |*result|
+            try result.pollWatchInputs()
+        else
+            false;
+        if (tracker.shouldCompile(
+            .{ .contents = computeFileHash(input) },
+            dependency_changed,
+        )) {
+            if (!first_attempt) std.debug.print("Source or dependency changed, recompiling...\n", .{});
+
+            var next_result = compileNativeLoadedSource(
+                allocator,
+                entry_path,
+                root_path,
+                input,
+                syntax,
+                minify,
+                true,
+            ) catch |err| {
+                if (err == error.OutOfMemory) return err;
+                std.Thread.sleep(500 * std.time.ns_per_ms);
+                continue;
+            };
+            errdefer next_result.deinit();
+            try commitNativeResult(input_file, output_file, &next_result);
+
+            if (watched_result) |*result| result.deinit();
+            watched_result = next_result.take();
+            next_result.deinit();
         }
 
         std.Thread.sleep(500 * std.time.ns_per_ms);
@@ -1002,10 +1100,10 @@ fn printUsage() !void {
             "  -o, --output <path|->    Output file/stdout, or directory with --output-dir\n" ++
             "  --output-dir             Require batch output under the -o directory\n" ++
             "  --syntax <syntax>        Select CSS (default), or a gated native syntax\n" ++
-            "  --experimental-native   Enable the pre-graduation file/stdin/batch native route\n" ++
+            "  --experimental-native   Enable the pre-graduation file/stdin/batch/watch native route\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
-            "  --watch                  Watch one input and its local CSS imports\n" ++
+            "  --watch                  Watch one input and its confined local imports\n" ++
             "  --profile                Report API stages and requested memory bytes\n" ++
             "  --lsp                    Start the experimental LSP server\n" ++
             "  -V, --version            Show the package version\n" ++
@@ -1346,9 +1444,9 @@ pub fn main() !void {
         if (!experimental_native_flag) {
             exitWithCliError("unsupported syntax: {s}; the native route requires --experimental-native", .{@tagName(selected)});
         }
-        if (watch_flag or optimize_flag or profile_flag) {
+        if (optimize_flag or profile_flag) {
             exitWithCliError(
-                "watch, optimize, and profile are unavailable for the pre-graduation native CLI",
+                "optimize and profile are unavailable for the pre-graduation native CLI",
                 .{},
             );
         }
@@ -1405,7 +1503,17 @@ pub fn main() !void {
     }
 
     if (native_syntax) |selected| {
-        if (input_files.items.len == 1) {
+        if (watch_flag) {
+            watchNativeFile(
+                allocator,
+                input_files.items[0],
+                output_file,
+                selected,
+                minify_flag,
+            ) catch {
+                std.process.exit(exit_compile_failure);
+            };
+        } else if (input_files.items.len == 1) {
             compileNativeInput(
                 allocator,
                 input_files.items[0],

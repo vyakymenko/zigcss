@@ -135,8 +135,13 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     }, {
       id: 'watch',
       releaseGapFamily: 'native-watch-routing',
-      state: 'pending',
-      evidenceTests: [],
+      state: 'verified',
+      evidenceTests: [
+        'external Zig API owns opaque watch snapshots and detects one transition',
+        'binary CLI native watch invalidates the finite syntax dependency set',
+        'binary CLI native watch failures retain output and recover once',
+        'binary CLI native watch rejects entry link substitution and recovers',
+      ],
     }, {
       id: 'parallel',
       releaseGapFamily: 'native-parallel-routing',
@@ -1267,7 +1272,7 @@ test('binds unavailable native rows and the pre-graduation product bridges', () 
   )
 })
 
-test('binds the finite native product routing inventory and verified first six routes', () => {
+test('binds the finite native product routing inventory and verified first seven routes', () => {
   for (const mutate of [
     routing => routing.terminalContract.surfaces.reverse(),
     routing => routing.terminalContract.adapters.pop(),
@@ -1278,6 +1283,7 @@ test('binds the finite native product routing inventory and verified first six r
     routing => { routing.routes[3].state = 'pending' },
     routing => { routing.routes[4].state = 'pending' },
     routing => { routing.routes[5].state = 'pending' },
+    routing => { routing.routes[6].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1344,6 +1350,15 @@ test('binds the finite native product routing inventory and verified first six r
     }),
     /native product routing batch evidence.*missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native watch failures retain output and recover once"',
+        'test "missing native watch recovery evidence"',
+      ),
+    }),
+    /native product routing watch evidence.*missing/,
+  )
 
   const nodeWrapperTests = fs.readFileSync(
     path.join(repositoryRoot, 'scripts/verify-node-wrapper.test.mjs'),
@@ -1394,6 +1409,59 @@ test('binds the finite native product routing inventory and verified first six r
       ]),
     }),
     /native binary CLI batch route crossed the pending parallel boundary/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/native_api.zig'
+          ? source.replace(
+            'const bytes = dependencySourceBytes(compiled, dependency.url)',
+            'const bytes = duplicateDependencyRead(dependency.url)',
+          )
+          : source,
+      ]),
+    }),
+    /watch snapshot compiler-owned bytes.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/native_api.zig'
+          ? source.replace(
+            'var loaded = session.load(item.url,',
+            'const loaded = std.fs.cwd().readFileAlloc(item.url,',
+          )
+          : source,
+      ]),
+    }),
+    /confined watch polling.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/native_api.zig'
+          ? source.replace(
+            'var loaded = session.load(self.entry_url,',
+            'const loaded = std.fs.cwd().readFileAlloc(self.entry_url,',
+          )
+          : source,
+      ]),
+    }),
+    /confined watch entry reload.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/main.zig'
+          ? source.replace('fn watchNativeFile(', 'fn watchNativeFile(/* std.Thread.spawn */')
+          : source,
+      ]),
+    }),
+    /native binary CLI watch crossed a duplicate-read or pending parallel boundary/,
   )
 })
 

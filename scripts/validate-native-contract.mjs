@@ -510,8 +510,13 @@ const expectedProductRouting = Object.freeze({
     Object.freeze({
       id: 'watch',
       releaseGapFamily: 'native-watch-routing',
-      state: 'pending',
-      evidenceTests: Object.freeze([]),
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'external Zig API owns opaque watch snapshots and detects one transition',
+        'binary CLI native watch invalidates the finite syntax dependency set',
+        'binary CLI native watch failures retain output and recover once',
+        'binary CLI native watch rejects entry link substitution and recovers',
+      ]),
     }),
     Object.freeze({
       id: 'parallel',
@@ -1257,7 +1262,9 @@ function validateProductRouting(
               ? nodeWrapperTests
               : route.id === 'files-and-stdin' || route.id === 'batch'
                 ? cliTests
-                : ''
+                : route.id === 'watch'
+                  ? `${zigApiTests}\n${cliTests}`
+                  : ''
       for (const evidenceTest of route.evidenceTests) {
         const testDeclaration = route.id === 'javascript-wrapper'
           ? `test('${evidenceTest}'`
@@ -1794,11 +1801,58 @@ function validateInternalReachability(implementations, buildFile, productionSour
     'compiled.frontendMap(',
     'compiled.nativeDiagnostics(',
     'compiled.coreDiagnostics(',
-    'compiled.dependencies(',
     'compiled.edges(',
   ]) {
     if (nativeApi.includes(pendingResultSurface)) {
       fail('native Zig API crossed a pending result-fact or source-map route')
+    }
+  }
+  const nativeWatchState = nativeApi.match(
+    /const WatchState = struct \{[\s\S]*?\n\};\n\nfn contentHash/,
+  )
+  if (!nativeWatchState) fail('native Zig API opaque watch state is missing')
+  requireText(
+    nativeWatchState[0],
+    'const dependencies = compiled.dependencies();',
+    'native Zig API opaque watch dependency snapshot',
+  )
+  requireText(
+    nativeApi,
+    'const bytes = dependencySourceBytes(compiled, dependency.url)',
+    'native Zig API watch snapshot compiler-owned bytes',
+  )
+  requireText(
+    nativeWatchState[0],
+    'var loaded = session.load(item.url,',
+    'native Zig API confined watch polling',
+  )
+  requireText(
+    nativeWatchState[0],
+    'var loaded = session.load(self.entry_url,',
+    'native Zig API confined watch entry reload',
+  )
+  if (nativeWatchState[0].includes('readFileAlloc(')) {
+    fail('native Zig API watch polling bypassed the confined resolver')
+  }
+  requireText(
+    nativeApi,
+    'pub fn pollWatchInputs(self: *CompileResult)',
+    'native Zig API opaque watch polling',
+  )
+  requireText(
+    nativeApi,
+    'pub fn readWatchInput(',
+    'native Zig API confined watch entry surface',
+  )
+  for (const pendingPublicResultSurface of [
+    'pub fn dependencies(',
+    'pub fn edges(',
+    'pub fn nativeDiagnostics(',
+    'pub fn coreDiagnostics(',
+    'pub fn sourceMap(',
+  ]) {
+    if (nativeApi.includes(pendingPublicResultSurface)) {
+      fail('native Zig API exposed a pending result-fact or source-map route')
     }
   }
   requireText(
@@ -1828,9 +1882,43 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     binaryCli,
-    '"watch, optimize, and profile are unavailable for the pre-graduation native CLI"',
+    '"optimize and profile are unavailable for the pre-graduation native CLI"',
     'native binary CLI pending execution-mode boundary',
   )
+  requireText(
+    binaryCli,
+    'Watch one input and its confined local imports',
+    'native binary CLI watch help boundary',
+  )
+  const nativeWatch = binaryCli.match(
+    /fn watchNativeFile\([\s\S]*?\n}\n\nfn compileTask/,
+  )
+  if (!nativeWatch) fail('native binary CLI watch route is missing')
+  requireText(
+    nativeWatch[0],
+    'compileNativeLoadedSource(',
+    'native binary CLI watch loaded-source dispatch',
+  )
+  requireText(
+    nativeWatch[0],
+    'try result.pollWatchInputs()',
+    'native binary CLI watch opaque dependency polling',
+  )
+  requireText(
+    nativeWatch[0],
+    'result.readWatchInput(allocator)',
+    'native binary CLI retained entry authority',
+  )
+  requireText(
+    nativeWatch[0],
+    'try commitNativeResult(input_file, output_file, &next_result);',
+    'native binary CLI watch atomic result commit',
+  )
+  if (nativeWatch[0].includes('compileNativeSource(') ||
+      nativeWatch[0].includes('std.Thread.spawn') ||
+      nativeWatch[0].includes('compileFilesParallel(')) {
+    fail('native binary CLI watch crossed a duplicate-read or pending parallel boundary')
+  }
   const nativeBatch = binaryCli.match(
     /fn compileNativeBatch\([\s\S]*?\n}\n\nfn experimentalFormatName/,
   )

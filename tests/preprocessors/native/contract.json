@@ -490,8 +490,13 @@
       {
         "id": "watch",
         "releaseGapFamily": "native-watch-routing",
-        "state": "pending",
-        "evidenceTests": []
+        "state": "verified",
+        "evidenceTests": [
+          "external Zig API owns opaque watch snapshots and detects one transition",
+          "binary CLI native watch invalidates the finite syntax dependency set",
+          "binary CLI native watch failures retain output and recover once",
+          "binary CLI native watch rejects entry link substitution and recovers"
+        ]
       },
       {
         "id": "parallel",

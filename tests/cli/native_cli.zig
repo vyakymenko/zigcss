@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const cli_options = @import("cli_options");
 
 const Child = std.process.Child;
@@ -12,6 +13,12 @@ const RouteCase = struct {
     second_filename: []const u8,
     second_input: []const u8,
     second_expected: []const u8,
+    watch_input: []const u8,
+    watch_dependency: []const u8,
+    watch_dependency_before: []const u8,
+    watch_dependency_after: []const u8,
+    watch_expected_before: []const u8,
+    watch_expected_after: []const u8,
 };
 
 const route_cases = [_]RouteCase{
@@ -23,6 +30,12 @@ const route_cases = [_]RouteCase{
         .second_filename = "second.scss",
         .second_input = ".b { color: red; }",
         .second_expected = ".b{color:red}",
+        .watch_input = "@use \"tokens\"; .card { color: tokens.$color; }",
+        .watch_dependency = "_tokens.scss",
+        .watch_dependency_before = "$color: red;",
+        .watch_dependency_after = "$color: blue;",
+        .watch_expected_before = ".card{color:red}",
+        .watch_expected_after = ".card{color:blue}",
     },
     .{
         .syntax = "sass",
@@ -32,6 +45,12 @@ const route_cases = [_]RouteCase{
         .second_filename = "second.sass",
         .second_input = ".b\n  color: red\n",
         .second_expected = ".b{color:red}",
+        .watch_input = "@use \"tokens\"\n.card\n  color: tokens.$color\n",
+        .watch_dependency = "_tokens.sass",
+        .watch_dependency_before = "$color: red\n",
+        .watch_dependency_after = "$color: blue\n",
+        .watch_expected_before = ".card{color:red}",
+        .watch_expected_after = ".card{color:blue}",
     },
     .{
         .syntax = "less",
@@ -41,6 +60,12 @@ const route_cases = [_]RouteCase{
         .second_filename = "second.less",
         .second_input = ".b { color: red; }",
         .second_expected = ".b{color:red}",
+        .watch_input = "@import \"tokens\"; .card { color: @color; }",
+        .watch_dependency = "tokens.less",
+        .watch_dependency_before = "@color: red;",
+        .watch_dependency_after = "@color: blue;",
+        .watch_expected_before = ".card{color:red}",
+        .watch_expected_after = ".card{color:blue}",
     },
     .{
         .syntax = "stylus",
@@ -50,8 +75,67 @@ const route_cases = [_]RouteCase{
         .second_filename = "second.styl",
         .second_input = ".b\n  color red\n",
         .second_expected = ".b{color:#f00}",
+        .watch_input = "@import \"tokens\"\n.card\n  color color\n",
+        .watch_dependency = "tokens.styl",
+        .watch_dependency_before = "color = red\n",
+        .watch_dependency_after = "color = blue\n",
+        .watch_expected_before = ".card{color:#f00}",
+        .watch_expected_after = ".card{color:#00f}",
     },
 };
+
+const OutputStamp = struct {
+    inode: std.fs.File.INode,
+    mtime: i128,
+    ctime: i128,
+
+    fn eql(left: OutputStamp, right: OutputStamp) bool {
+        return left.inode == right.inode and left.mtime == right.mtime and left.ctime == right.ctime;
+    }
+};
+
+fn outputStamp(dir: std.fs.Dir, path: []const u8) !OutputStamp {
+    const stat = try dir.statFile(path);
+    return .{ .inode = stat.inode, .mtime = stat.mtime, .ctime = stat.ctime };
+}
+
+fn waitForOutputContents(
+    dir: std.fs.Dir,
+    path: []const u8,
+    expected: []const u8,
+) !OutputStamp {
+    for (0..100) |_| {
+        const contents = dir.readFileAlloc(allocator, path, 1024) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.Thread.sleep(50 * std.time.ns_per_ms);
+                continue;
+            },
+            else => return err,
+        };
+        defer allocator.free(contents);
+        if (std.mem.eql(u8, expected, contents)) return outputStamp(dir, path);
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
+    return error.WatchTimeout;
+}
+
+fn replaceFileAtomically(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !void {
+    var buffer: [4096]u8 = undefined;
+    var atomic_file = try dir.atomicFile(path, .{ .write_buffer = &buffer });
+    defer atomic_file.deinit();
+    try atomic_file.file_writer.interface.writeAll(bytes);
+    try atomic_file.finish();
+}
+
+fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
+    var count: usize = 0;
+    var offset: usize = 0;
+    while (std.mem.indexOfPos(u8, haystack, offset, needle)) |index| {
+        count += 1;
+        offset = index + needle.len;
+    }
+    return count;
+}
 
 fn runInDir(dir: std.fs.Dir, argv_tail: []const []const u8) !Child.RunResult {
     const argv = try allocator.alloc([]const u8, argv_tail.len + 1);
@@ -208,7 +292,7 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
     try std.testing.expectEqual(@as(usize, 0), unknown.stdout.len);
     try std.testing.expect(std.mem.indexOf(u8, unknown.stderr, "unsupported syntax: scss-next") != null);
 
-    const pending_modes = [_][]const u8{ "--watch", "--optimize", "--profile" };
+    const pending_modes = [_][]const u8{ "--optimize", "--profile" };
     inline for (pending_modes) |mode| {
         var result = try runCompilerNamed("input.scss", input, &.{
             "--experimental-native",
@@ -221,6 +305,191 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
         try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
         try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unavailable for the pre-graduation native CLI") != null);
     }
+}
+
+test "binary CLI native watch invalidates the finite syntax dependency set" {
+    inline for (route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.watch_input });
+        try tmp.dir.writeFile(.{
+            .sub_path = case.watch_dependency,
+            .data = case.watch_dependency_before,
+        });
+
+        const argv = [_][]const u8{
+            cli_options.compiler_path,
+            case.filename,
+            "-o",
+            "output.css",
+            "--experimental-native",
+            "--syntax",
+            case.syntax,
+            "--watch",
+            "--minify",
+        };
+        var child = Child.init(&argv, allocator);
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Ignore;
+        child.cwd_dir = tmp.dir;
+        try child.spawn();
+        var running = true;
+        defer {
+            if (running) _ = child.kill() catch {};
+        }
+
+        _ = try waitForOutputContents(tmp.dir, "output.css", case.watch_expected_before);
+        try replaceFileAtomically(
+            tmp.dir,
+            case.watch_dependency,
+            case.watch_dependency_after,
+        );
+        const changed = try waitForOutputContents(
+            tmp.dir,
+            "output.css",
+            case.watch_expected_after,
+        );
+        std.Thread.sleep(1200 * std.time.ns_per_ms);
+        try std.testing.expect(changed.eql(try outputStamp(tmp.dir, "output.css")));
+
+        _ = try child.kill();
+        running = false;
+    }
+}
+
+test "binary CLI native watch failures retain output and recover once" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const case = route_cases[0];
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.watch_input });
+    try tmp.dir.writeFile(.{
+        .sub_path = case.watch_dependency,
+        .data = case.watch_dependency_before,
+    });
+
+    const argv = [_][]const u8{
+        cli_options.compiler_path,
+        case.filename,
+        "-o",
+        "output.css",
+        "--experimental-native",
+        "--syntax",
+        case.syntax,
+        "--watch",
+        "--minify",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer {
+        if (running) _ = child.kill() catch {};
+    }
+
+    const captured_handle = try std.posix.dup(child.stderr.?.handle);
+    var captured = std.fs.File{ .handle = captured_handle };
+    defer captured.close();
+
+    _ = try waitForOutputContents(tmp.dir, "output.css", case.watch_expected_before);
+    try tmp.dir.deleteFile(case.watch_dependency);
+    std.Thread.sleep(1300 * std.time.ns_per_ms);
+    const retained = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(retained);
+    try std.testing.expectEqualStrings(case.watch_expected_before, retained);
+
+    try replaceFileAtomically(
+        tmp.dir,
+        case.watch_dependency,
+        case.watch_dependency_after,
+    );
+    _ = try waitForOutputContents(tmp.dir, "output.css", case.watch_expected_after);
+    _ = try child.kill();
+    running = false;
+
+    const stderr = try captured.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        countOccurrences(stderr, "native SCSS compilation failed"),
+    );
+    try std.testing.expectEqual(@as(usize, 2), countOccurrences(stderr, "Compiled:"));
+}
+
+test "binary CLI native watch rejects entry link substitution and recovers" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const case = route_cases[0];
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    var root = try tmp.dir.openDir("root", .{});
+    defer root.close();
+    try root.writeFile(.{ .sub_path = case.filename, .data = case.watch_input });
+    try root.writeFile(.{
+        .sub_path = case.watch_dependency,
+        .data = case.watch_dependency_before,
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "escaped.scss",
+        .data = ".card { color: blue; }",
+    });
+
+    const argv = [_][]const u8{
+        cli_options.compiler_path,
+        "root/input.scss",
+        "-o",
+        "root/output.css",
+        "--experimental-native",
+        "--syntax",
+        case.syntax,
+        "--watch",
+        "--minify",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer {
+        if (running) _ = child.kill() catch {};
+    }
+
+    const captured_handle = try std.posix.dup(child.stderr.?.handle);
+    var captured = std.fs.File{ .handle = captured_handle };
+    defer captured.close();
+
+    _ = try waitForOutputContents(root, "output.css", case.watch_expected_before);
+    try root.deleteFile(case.filename);
+    try root.symLink("../escaped.scss", case.filename, .{});
+    std.Thread.sleep(1300 * std.time.ns_per_ms);
+    const retained = try root.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(retained);
+    try std.testing.expectEqualStrings(case.watch_expected_before, retained);
+
+    try replaceFileAtomically(
+        root,
+        case.filename,
+        ".card { color: green; }",
+    );
+    _ = try waitForOutputContents(root, "output.css", ".card{color:green}");
+    _ = try child.kill();
+    running = false;
+
+    const stderr = try captured.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        countOccurrences(stderr, "failed to read root/input.scss"),
+    );
+    try std.testing.expectEqual(@as(usize, 2), countOccurrences(stderr, "Compiled:"));
 }
 
 test "binary CLI routes the finite native syntax set from stdin" {
