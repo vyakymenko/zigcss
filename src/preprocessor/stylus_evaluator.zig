@@ -6826,13 +6826,19 @@ const Engine = struct {
         );
         for (argument_values.items) |argument| all_arguments.appendAssumeCapacity(argument.*);
         all_arguments.appendSliceAssumeCapacity(default_argument_values.items);
-        const arguments_value = try self.ownValue(span, .{ .list = .{
-            .items = all_arguments.items,
-            .separator = if (arguments.items.len > 1 and call.parenthesized)
-                .comma
-            else
-                .space,
-        } });
+        // Stylus exposes a sole expression through `arguments` without an
+        // additional one-item wrapper, including its authored list separator.
+        const arguments_value = if (all_arguments.items.len == 1 and
+            all_arguments.items[0] == .list)
+            try self.ownValue(span, all_arguments.items[0])
+        else
+            try self.ownValue(span, .{ .list = .{
+                .items = all_arguments.items,
+                .separator = if (arguments.items.len > 1 and call.parenthesized)
+                    .comma
+                else
+                    .space,
+            } });
         call_scope = try self.setBinding(call_scope, "arguments", arguments_value, span);
         if (!resolved_callable.anonymous) {
             const current_property = (try self.currentPropertyValue(span, caller_scope)) orelse
@@ -7833,20 +7839,29 @@ const Engine = struct {
                 return error.InvalidArguments;
             }
         }
-        const grouped_ternary_input = stripOuterParentheses(source_input);
-        if (grouped_ternary_input.len != source_input.len and
-            (parseGenericTernary(grouped_ternary_input) != null or
-                isDefinedExpression(grouped_ternary_input)))
+        const grouped_input = stripOuterParentheses(source_input);
+        // Resolve grouped calls before raw interpolation can rewrite a call
+        // name through a same-named local value binding.
+        const grouped_binary_owns_call = if (findGenericBinary(grouped_input)) |binary|
+            parseCall(grouped_input[binary.left.start..binary.left.end]) != null or
+                parseCall(grouped_input[binary.right.start..binary.right.end]) != null
+        else
+            false;
+        if (grouped_input.len != source_input.len and grouped_input.len != 0 and
+            (parseGenericTernary(grouped_input) != null or
+                isDefinedExpression(grouped_input) or
+                parseCall(grouped_input) != null or
+                grouped_binary_owns_call))
         {
-            const start = @intFromPtr(grouped_ternary_input.ptr) -
+            const start = @intFromPtr(grouped_input.ptr) -
                 @intFromPtr(source_input.ptr);
             const range = ByteRange{
                 .start = start,
-                .end = start + grouped_ternary_input.len,
+                .end = start + grouped_input.len,
             };
             return self.evaluateValue(
                 try self.relativeSpan(span, range),
-                grouped_ternary_input,
+                grouped_input,
                 scope,
                 depth + 1,
             );
@@ -12790,6 +12805,18 @@ const Engine = struct {
     ) Error![]u8 {
         var branches = try splitTopLevel(self.allocator, child_selector, ',');
         defer branches.deinit(self.allocator);
+        const source_selector = std.mem.trim(
+            u8,
+            try self.sources.slice(span),
+            " \t\r\n\x0c",
+        );
+        // A slash owns every comma branch produced by one interpolated source
+        // selector, while authored literal comma branches keep independent scope.
+        const absolute_interpolation_group =
+            std.mem.startsWith(u8, source_selector, "/") and
+            !std.mem.startsWith(u8, source_selector, "/deep") and
+            findTopLevelScalar(source_selector, ',') == null and
+            std.mem.indexOfScalar(u8, source_selector, '{') != null;
         var owns_special_branch = false;
         for (branches.items) |range| {
             const branch = std.mem.trim(
@@ -12817,7 +12844,9 @@ const Engine = struct {
                 " \t\r\n\x0c",
             );
             if (branch.len == 0) return error.InvalidDocument;
-            const resolved = if (selectorBranchNeedsResolution(branch))
+            const resolved = if (absolute_interpolation_group)
+                try self.absoluteSelectorBranchOwned(span, branch)
+            else if (selectorBranchNeedsResolution(branch))
                 try self.resolveSelectorBranchOwned(span, branch)
             else
                 try self.combineSelectorsLiteral(parent_selector, branch, span);
@@ -12829,21 +12858,32 @@ const Engine = struct {
         return output.toOwnedSlice(self.allocator);
     }
 
+    fn absoluteSelectorBranchOwned(
+        self: *Engine,
+        span: native_source.Span,
+        branch: []const u8,
+    ) Error![]u8 {
+        const absolute = if (branch[0] == '/' and !std.mem.startsWith(u8, branch, "/deep"))
+            std.mem.trimLeft(u8, branch[1..], " \t\r\n\x0c")
+        else
+            branch;
+        if (absolute.len == 0) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, absolute);
+        return output.toOwnedSlice(self.allocator);
+    }
+
     fn resolveSelectorBranchOwned(
         self: *Engine,
         span: native_source.Span,
         branch: []const u8,
     ) Error![]u8 {
         if (branch[0] == '/' and !std.mem.startsWith(u8, branch, "/deep")) {
-            const absolute = std.mem.trimLeft(u8, branch[1..], " \t\r\n\x0c");
-            if (absolute.len == 0) {
-                try self.reportInvalidOperation(span);
-                return error.InvalidOperation;
-            }
-            var output: std.ArrayList(u8) = .empty;
-            errdefer output.deinit(self.allocator);
-            try self.appendTemporary(&output, span, absolute);
-            return output.toOwnedSlice(self.allocator);
+            return self.absoluteSelectorBranchOwned(span, branch);
         }
 
         var relative_cursor: usize = 0;

@@ -527,6 +527,27 @@ const function_arguments_css = "body{padding:15;padding:1 2}" ++
     ".defaults{p0:4px;p1:5px}.opaque{color:#000}" ++
     ".translucent{color:rgba(0,0,0,0.5)}img{width:auto!important}";
 
+const forwarded_selector_arguments_terminal_input =
+    \\modernize(features, support)
+    \\  selector = support ? '' : ('.no-js ' + selector())
+    \\  for feature in features
+    \\    selector += support ? ('.' + feature) : (', .no-' + feature + ' ' + selector())
+    \\  selector += (' ' + selector()) if support
+    \\  /{selector}
+    \\    color red
+    \\yep()
+    \\  modernize(arguments, true)
+    \\nope()
+    \\  modernize(arguments, false)
+    \\.test
+    \\  yep(alpha beta)
+    \\  nope(alpha beta)
+;
+
+const forwarded_selector_arguments_terminal_css =
+    ".alpha.beta .test{color:#f00}" ++
+    ".no-js .test,.no-alpha .test,.no-beta .test{color:#f00}";
+
 const keyword_arguments_input =
     \\pad-y(top, bottom)
     \\  padding-top top
@@ -2723,6 +2744,77 @@ test "native Stylus reflects composes and lists selector identity" {
         .type_mismatch,
         "native Stylus callable arguments are invalid",
         @intCast(std.mem.indexOf(u8, invalid, "selector").?),
+    );
+}
+
+test "native Stylus forwards space-list arguments through selector shadowing boundaries" {
+    const lower_input =
+        \\modernize(features)
+        \\  selector = ''
+        \\  for feature in features
+        \\    selector += '.' + feature
+        \\  selector += ' ' + selector()
+        \\  /{selector}
+        \\    color red
+        \\forward()
+        \\  modernize(arguments)
+        \\.lower
+        \\  forward(alpha beta)
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 2;
+    lower_limits.max_loop_iterations = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".alpha.beta .lower{color:#f00}", lower.css());
+
+    const literal_branch_input =
+        \\.host
+        \\  /.absolute, .relative
+        \\    color red
+    ;
+    var literal_branches = try compile(std.testing.allocator, literal_branch_input, .{});
+    defer literal_branches.deinit();
+    try std.testing.expectEqualStrings(
+        ".absolute,.host .relative{color:#f00}",
+        literal_branches.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    terminal.max_loop_iterations = 4;
+    var first = try compile(
+        std.testing.allocator,
+        forwarded_selector_arguments_terminal_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        forwarded_selector_arguments_terminal_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(forwarded_selector_arguments_terminal_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 3;
+    try expectSemanticRejectionWithLimits(
+        forwarded_selector_arguments_terminal_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(
+            u8,
+            forwarded_selector_arguments_terminal_input,
+            "for feature",
+        ).?),
     );
 }
 
@@ -7796,6 +7888,19 @@ fn exerciseFunctionArgumentsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(function_arguments_css, result.css());
 }
 
+fn exerciseForwardedSelectorArgumentsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    terminal.max_loop_iterations = 4;
+    var result = try compile(
+        allocator,
+        forwarded_selector_arguments_terminal_input,
+        terminal,
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(forwarded_selector_arguments_terminal_css, result.css());
+}
+
 fn exerciseKeywordArgumentsAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(allocator, keyword_arguments_input, .{});
     defer result.deinit();
@@ -8423,6 +8528,14 @@ test "native Stylus function arguments handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseFunctionArgumentsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus forwarded selector arguments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseForwardedSelectorArgumentsAllocationFailures,
         .{},
     );
 }
