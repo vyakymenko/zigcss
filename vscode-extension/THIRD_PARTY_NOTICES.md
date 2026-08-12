@@ -12,7 +12,7 @@ The bundled extension runtime contains the following exact dependencies from
 | `vscode-jsonrpc` | 9.0.1 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
 | `minimatch` | 10.2.6 | BlueOak-1.0.0 | <https://github.com/isaacs/minimatch> |
 | `semver` | 7.8.5 | ISC | <https://github.com/npm/node-semver> |
-| `brace-expansion` | 5.0.8 | MIT | <https://github.com/juliangruber/brace-expansion> |
+| `brace-expansion` | 5.0.9 | MIT | <https://github.com/juliangruber/brace-expansion> |
 | `balanced-match` | 4.0.4 | MIT | <https://github.com/juliangruber/balanced-match> |
 
 ## Microsoft LSP libraries — MIT

@@ -37,7 +37,7 @@ async function compile(overrides = {}, signal = new AbortController().signal) {
   return await createDartSassProvider().compile(request(overrides), { signal })
 }
 
-test('binds the graduated package rows and lockfile to exact Dart Sass 1.101.0', () => {
+test('binds the development oracle rows and lockfile to exact Dart Sass 1.101.0', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -53,10 +53,11 @@ test('binds the graduated package rows and lockfile to exact Dart Sass 1.101.0',
   )
 
   assert.equal(DART_SASS_VERSION, '1.101.0')
-  assert.equal(manifest.dependencies.sass, DART_SASS_VERSION)
-  assert.equal(manifest.devDependencies?.sass, undefined)
-  assert.equal(manifest.files.includes('preprocessor/providers/dart-sass.mjs'), true)
-  assert.equal(lock.packages[''].dependencies.sass, DART_SASS_VERSION)
+  assert.equal(manifest.dependencies?.sass, undefined)
+  assert.equal(manifest.devDependencies.sass, DART_SASS_VERSION)
+  assert.equal(manifest.files.includes('preprocessor/providers/dart-sass.mjs'), false)
+  assert.equal(lock.packages[''].dependencies?.sass, undefined)
+  assert.equal(lock.packages[''].devDependencies.sass, DART_SASS_VERSION)
   assert.equal(lock.packages['node_modules/sass'].version, DART_SASS_VERSION)
   assert.equal(installed.version, DART_SASS_VERSION)
   assert.equal(installed.license, 'MIT')
@@ -83,6 +84,7 @@ test('locks and license-reviews the complete Dart Sass dependency closure', () =
     if (seen.has(name)) continue
     const entry = lock.packages[`node_modules/${name}`]
     assert.notEqual(entry, undefined, name)
+    assert.equal(entry.dev, true, `${name}:dev`)
     seen.add(name)
     pending.push(...Object.keys({
       ...(entry.dependencies ?? {}),

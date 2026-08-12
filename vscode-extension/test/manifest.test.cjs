@@ -38,7 +38,7 @@ test('extension identity and dependency versions are synchronized and exact', ()
   }
 
   const notices = read('THIRD_PARTY_NOTICES.md')
-  for (const name of [
+  const noticePackages = [
     'vscode-languageclient',
     'vscode-languageserver-protocol',
     'vscode-languageserver-textdocument',
@@ -48,10 +48,14 @@ test('extension identity and dependency versions are synchronized and exact', ()
     'semver',
     'brace-expansion',
     'balanced-match',
-  ]) {
-    const version = lock.packages[`node_modules/${name}`].version
-    assert.ok(notices.includes(`| \`${name}\` | ${version} |`))
-  }
+  ]
+  const expectedNotices = noticePackages.map(name => ({
+    name,
+    version: lock.packages[`node_modules/${name}`].version,
+  }))
+  const actualNotices = [...notices.matchAll(/^\| `([^`]+)` \| ([^ |]+) \|/gm)]
+    .map(([, name, version]) => ({ name, version }))
+  assert.deepEqual(actualNotices, expectedNotices)
 })
 
 test('manifest activates only the supported CSS surface and is trust-bounded', () => {

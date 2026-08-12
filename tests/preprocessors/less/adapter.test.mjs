@@ -60,7 +60,7 @@ async function withFixture(run) {
   }
 }
 
-test('binds the graduated package row and lockfile to exact Less 4.6.7', () => {
+test('binds the development oracle row and lockfile to exact Less 4.6.7', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -76,12 +76,15 @@ test('binds the graduated package row and lockfile to exact Less 4.6.7', () => {
   )
 
   assert.equal(LESS_VERSION, '4.6.7')
-  assert.equal(manifest.dependencies.less, LESS_VERSION)
-  assert.equal(manifest.dependencies['image-size'], '0.5.5')
-  assert.equal(manifest.devDependencies?.less, undefined)
-  assert.equal(manifest.files.includes('preprocessor/providers/less.mjs'), true)
-  assert.equal(lock.packages[''].dependencies.less, LESS_VERSION)
-  assert.equal(lock.packages[''].dependencies['image-size'], '0.5.5')
+  assert.equal(manifest.dependencies?.less, undefined)
+  assert.equal(manifest.dependencies?.['image-size'], undefined)
+  assert.equal(manifest.devDependencies.less, LESS_VERSION)
+  assert.equal(manifest.devDependencies['image-size'], '0.5.5')
+  assert.equal(manifest.files.includes('preprocessor/providers/less.mjs'), false)
+  assert.equal(lock.packages[''].dependencies?.less, undefined)
+  assert.equal(lock.packages[''].dependencies?.['image-size'], undefined)
+  assert.equal(lock.packages[''].devDependencies.less, LESS_VERSION)
+  assert.equal(lock.packages[''].devDependencies['image-size'], '0.5.5')
   assert.equal(lock.packages['node_modules/less'].version, LESS_VERSION)
   assert.equal(
     lock.packages['node_modules/less'].integrity,
@@ -217,6 +220,7 @@ test('locks and license-reviews the complete Less dependency closure', () => {
     assert.notEqual(entry, undefined, name)
     assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//)
     assert.match(entry.integrity, /^sha512-[A-Za-z0-9+/]+=*$/)
+    assert.equal(entry.dev, true, `${name}:dev`)
     seen.add(name)
     pending.push(...Object.keys({
       ...(entry.dependencies ?? {}),

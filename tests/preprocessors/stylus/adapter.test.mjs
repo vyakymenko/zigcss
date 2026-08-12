@@ -84,7 +84,7 @@ function stylusClosure(lock) {
   return [...seen].sort()
 }
 
-test('binds the graduated package row and lockfile to exact Stylus 0.64.0', () => {
+test('binds the development oracle row and lockfile to exact Stylus 0.64.0', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -104,10 +104,11 @@ test('binds the graduated package row and lockfile to exact Stylus 0.64.0', () =
   )
 
   assert.equal(STYLUS_VERSION, '0.64.0')
-  assert.equal(manifest.dependencies.stylus, STYLUS_VERSION)
-  assert.equal(manifest.devDependencies?.stylus, undefined)
-  assert.equal(manifest.files.includes('preprocessor/providers/stylus.mjs'), true)
-  assert.equal(lock.packages[''].dependencies.stylus, STYLUS_VERSION)
+  assert.equal(manifest.dependencies?.stylus, undefined)
+  assert.equal(manifest.devDependencies.stylus, STYLUS_VERSION)
+  assert.equal(manifest.files.includes('preprocessor/providers/stylus.mjs'), false)
+  assert.equal(lock.packages[''].dependencies?.stylus, undefined)
+  assert.equal(lock.packages[''].devDependencies.stylus, STYLUS_VERSION)
   assert.equal(lock.packages['node_modules/stylus'].version, STYLUS_VERSION)
   assert.equal(
     lock.packages['node_modules/stylus'].integrity,
@@ -194,6 +195,7 @@ test('locks and license-reviews the complete Stylus dependency closure', () => {
     const entry = lock.packages[packagePath]
     assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//)
     assert.match(entry.integrity, /^sha512-[A-Za-z0-9+/]+=*$/)
+    assert.equal(entry.dev, true, `${packagePath}:dev`)
     assert.equal(['BSD-3-Clause', 'BlueOak-1.0.0', 'ISC', 'MIT'].includes(entry.license), true)
     const installed = JSON.parse(
       fs.readFileSync(path.join(repositoryRoot, packagePath, 'package.json'), 'utf8'),
@@ -205,13 +207,13 @@ test('locks and license-reviews the complete Stylus dependency closure', () => {
   })
   const inventory = `${rows.join('\n')}\n`
 
-  assert.equal(lock.packages['node_modules/brace-expansion'].version, '5.0.8')
+  assert.equal(lock.packages['node_modules/brace-expansion'].version, '5.0.9')
   assert.equal(lock.packages['node_modules/balanced-match'].version, '4.0.4')
   assert.equal(closure.length, 47)
   assert.equal(Buffer.byteLength(inventory), 6514)
   assert.equal(
     createHash('sha256').update(inventory).digest('hex'),
-    'a42370579c7c3acc2302116700ba7666b1a68a46d14b4f616aa1071e08355162',
+    'ef1d2b0d844fef0d588c6df560fa54ee5627fcf18a3e8c5b8da47fedc32867f3',
   )
 })
 
