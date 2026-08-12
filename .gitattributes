@@ -1,7 +1,16 @@
 # Official Sass-spec fixtures intentionally exercise trailing and blank-line whitespace.
 tests/preprocessors/sass/corpus/cases/** -whitespace
 
-# Native Stylus conformance preserves authored text bytes across every checkout host.
+# Native conformance preserves authored text-fixture bytes across every checkout host.
+tests/preprocessors/sass/corpus/cases/**/*.css text eol=lf
+tests/preprocessors/sass/corpus/cases/**/*.sass text eol=lf
+tests/preprocessors/sass/corpus/cases/**/*.scss text eol=lf
+tests/preprocessors/sass/corpus/cases/**/error text eol=lf
+tests/preprocessors/sass/corpus/cases/**/warning text eol=lf
+tests/preprocessors/less/corpus/files/**/*.css text eol=lf
+tests/preprocessors/less/corpus/files/**/*.json text eol=lf
+tests/preprocessors/less/corpus/files/**/*.less text eol=lf
+tests/preprocessors/less/corpus/files/**/*.txt text eol=lf
 tests/preprocessors/stylus/corpus/files/**/*.css text eol=lf
 tests/preprocessors/stylus/corpus/files/**/*.json text eol=lf
 tests/preprocessors/stylus/corpus/files/**/*.styl text eol=lf

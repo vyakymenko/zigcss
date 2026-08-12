@@ -196,7 +196,16 @@ export const zigTestSuitePolicy = Object.freeze({
   }),
 })
 
-export const stylusCorpusCheckoutAttributes = Object.freeze([
+export const nativeCorpusCheckoutAttributes = Object.freeze([
+  'tests/preprocessors/sass/corpus/cases/**/*.css text eol=lf',
+  'tests/preprocessors/sass/corpus/cases/**/*.sass text eol=lf',
+  'tests/preprocessors/sass/corpus/cases/**/*.scss text eol=lf',
+  'tests/preprocessors/sass/corpus/cases/**/error text eol=lf',
+  'tests/preprocessors/sass/corpus/cases/**/warning text eol=lf',
+  'tests/preprocessors/less/corpus/files/**/*.css text eol=lf',
+  'tests/preprocessors/less/corpus/files/**/*.json text eol=lf',
+  'tests/preprocessors/less/corpus/files/**/*.less text eol=lf',
+  'tests/preprocessors/less/corpus/files/**/*.txt text eol=lf',
   'tests/preprocessors/stylus/corpus/files/**/*.css text eol=lf',
   'tests/preprocessors/stylus/corpus/files/**/*.json text eol=lf',
   'tests/preprocessors/stylus/corpus/files/**/*.styl text eol=lf',
@@ -270,17 +279,20 @@ export function validateZigTestSuiteRunner() {
   }
 }
 
-export function validateStylusCorpusCheckoutAttributes(source) {
+export function validateNativeCorpusCheckoutAttributes(source) {
   if (source.includes('\r')) fail('.gitattributes must use LF line endings')
   const actual = source
     .split('\n')
-    .filter(line => line.startsWith('tests/preprocessors/stylus/corpus/files/'))
-  if (!same(actual, stylusCorpusCheckoutAttributes)) {
-    fail(`Stylus corpus checkout attributes changed: expected ${JSON.stringify(stylusCorpusCheckoutAttributes)}, received ${JSON.stringify(actual)}`)
+    .filter(line => /^tests\/preprocessors\/(?:sass|less|stylus)\/corpus\/.* text eol=lf$/.test(line))
+  if (!same(actual, nativeCorpusCheckoutAttributes)) {
+    fail(`native corpus checkout attributes changed: expected ${JSON.stringify(nativeCorpusCheckoutAttributes)}, received ${JSON.stringify(actual)}`)
   }
   return {
-    patterns: stylusCorpusCheckoutAttributes.length,
-    extensions: stylusCorpusCheckoutAttributes.map(line => line.match(/\.([a-z]+) text eol=lf$/)[1]),
+    patterns: nativeCorpusCheckoutAttributes.length,
+    patternsByLanguage: Object.fromEntries(['sass', 'less', 'stylus'].map(language => [
+      language,
+      nativeCorpusCheckoutAttributes.filter(line => line.startsWith(`tests/preprocessors/${language}/`)).length,
+    ])),
   }
 }
 
@@ -698,7 +710,7 @@ export function validateWorkflows(root = repositoryRoot) {
   const result = validateWorkflowSources(readWorkflowSources(root))
   validateSetupZigAction(root)
   validateBuildTestGraph(fs.readFileSync(path.join(root, 'build.zig'), 'utf8'))
-  validateStylusCorpusCheckoutAttributes(fs.readFileSync(path.join(root, '.gitattributes'), 'utf8'))
+  validateNativeCorpusCheckoutAttributes(fs.readFileSync(path.join(root, '.gitattributes'), 'utf8'))
   return result
 }
 

@@ -12,7 +12,7 @@ import {
   validateBuildTestGraph,
   validateSetupZigAction,
   validateSetupZigWorkflowContract,
-  validateStylusCorpusCheckoutAttributes,
+  validateNativeCorpusCheckoutAttributes,
   validateWorkflowSources,
   validateWorkflows,
   validateZigTestSuiteRunner,
@@ -30,33 +30,51 @@ test('all workflow jobs use explicit least privilege and immutable reviewed acti
   })
 })
 
-test('Windows checkout preserves the finite Stylus text-fixture surface as LF', () => {
+test('Windows checkout preserves the finite native conformance text-fixture surface as LF', () => {
   const attributes = fs.readFileSync('.gitattributes', 'utf8')
-  assert.deepEqual(validateStylusCorpusCheckoutAttributes(attributes), {
-    patterns: 4,
-    extensions: ['css', 'json', 'styl', 'svg'],
+  assert.deepEqual(validateNativeCorpusCheckoutAttributes(attributes), {
+    patterns: 13,
+    patternsByLanguage: {
+      sass: 5,
+      less: 4,
+      stylus: 4,
+    },
   })
 
   assert.throws(
-    () => validateStylusCorpusCheckoutAttributes(attributes.replace(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace(
+      'tests/preprocessors/sass/corpus/cases/**/*.scss text eol=lf\n',
+      '',
+    )),
+    /native corpus checkout attributes changed/i,
+  )
+  assert.throws(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace(
+      'tests/preprocessors/less/corpus/files/**/*.less text eol=lf',
+      'tests/preprocessors/less/corpus/files/**/*.less text',
+    )),
+    /native corpus checkout attributes changed/i,
+  )
+  assert.throws(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace(
       'tests/preprocessors/stylus/corpus/files/**/*.styl text eol=lf\n',
       '',
     )),
-    /Stylus corpus checkout attributes changed/,
+    /native corpus checkout attributes changed/i,
   )
   assert.throws(
-    () => validateStylusCorpusCheckoutAttributes(attributes.replace(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace(
       'tests/preprocessors/stylus/corpus/files/**/*.css text eol=lf',
       'tests/preprocessors/stylus/corpus/files/**/*.css text',
     )),
-    /Stylus corpus checkout attributes changed/,
+    /native corpus checkout attributes changed/i,
   )
   assert.throws(
-    () => validateStylusCorpusCheckoutAttributes(attributes.replace(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace(
       'tests/preprocessors/stylus/corpus/files/**/*.json text eol=lf',
       'tests/preprocessors/stylus/corpus/files/** text eol=lf',
     )),
-    /Stylus corpus checkout attributes changed/,
+    /native corpus checkout attributes changed/i,
   )
 })
 
