@@ -1,0 +1,30 @@
+name: Setup Zig 0.15.2
+description: Install the checksum-bound Zig 0.15.2 host toolchain and preserve bounded compiler caches.
+
+inputs:
+  version:
+    description: Exact Zig release version; this action admits only 0.15.2.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Restore exact Zig archive
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ runner.temp }}/zigcss-zig-tool-archive
+        key: zigcss-zig-archive-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+
+    - name: Restore Zig compilation cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ${{ github.workspace }}/.zig-cache
+        key: zigcss-zig-build-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          zigcss-zig-build-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-
+
+    - name: Install checksum-bound Zig
+      shell: bash
+      env:
+        ZIGCSS_SETUP_VERSION: ${{ inputs.version }}
+      run: node "${{ github.action_path }}/setup-zig.mjs" --install

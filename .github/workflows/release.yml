@@ -92,15 +92,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
-        with:
-          version: ${{ matrix.zig-version }}
-
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20.19.0'
+
+      - name: Setup Zig
+        uses: ./.github/actions/setup-zig
+        with:
+          version: ${{ matrix.zig-version }}
 
       - name: Verify synchronized release version
         shell: bash
@@ -226,6 +226,10 @@ jobs:
           path: release-assets/*
           if-no-files-found: error
           retention-days: 7
+
+      - name: Bound Zig cache
+        if: always()
+        run: node .github/actions/setup-zig/setup-zig.mjs --prune-cache
 
   create-release:
     name: Create Release

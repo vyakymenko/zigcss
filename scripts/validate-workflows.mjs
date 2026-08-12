@@ -1,10 +1,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  artifactRecords as setupZigArtifactRecords,
+  maximumArchiveEntries as setupZigMaximumArchiveEntries,
+  maximumCacheBytes as setupZigMaximumCacheBytes,
+  zigVersion as setupZigVersion,
+} from '../.github/actions/setup-zig/setup-zig.mjs'
 import { failureTailBytes, suiteArguments } from './run-zig-test-suite.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
+export const setupZigAction = './.github/actions/setup-zig'
 
 // Each commit was resolved from the named tag in the action's official repository.
 // Dependabot owns reviewed updates to these immutable references.
@@ -14,10 +21,10 @@ export const actionPins = Object.freeze({
     version: 'v7.0.1',
     runtime: 'node24',
   }),
-  'mlugg/setup-zig': Object.freeze({
-    sha: 'd1434d08867e3ee9daa34448df10607b98908d29',
-    version: 'v2.2.1',
-    runtime: 'node20',
+  'actions/cache': Object.freeze({
+    sha: '27d5ce7f107fe9357f9df03efb73ab90386fccae',
+    version: 'v5.0.5',
+    runtime: 'node24',
   }),
   'actions/upload-artifact': Object.freeze({
     sha: 'ea165f8d65b6e75b540449e92b4886f43607fa02',
@@ -51,8 +58,8 @@ export const actionPins = Object.freeze({
 })
 
 // Public Build annotations define this exact finite migration inventory. The
-// official GitHub actions have tagged Node 24 releases; setup-zig remains on
-// its latest immutable tag until its separate terminal replacement slice.
+// two official workflow actions have tagged Node 24 releases. The sole tagged
+// setup-zig remainder is retired in favor of the repository-owned composite.
 export const actionRuntimeMigration = Object.freeze({
   requiredRuntime: 'node24',
   terminalActions: Object.freeze([
@@ -60,7 +67,8 @@ export const actionRuntimeMigration = Object.freeze({
     'actions/setup-node',
     'mlugg/setup-zig',
   ]),
-  pendingActions: Object.freeze(['mlugg/setup-zig']),
+  replacedActions: Object.freeze(['mlugg/setup-zig']),
+  pendingActions: Object.freeze([]),
 })
 
 export const workflowPolicy = Object.freeze({
@@ -69,8 +77,8 @@ export const workflowPolicy = Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
       actions: Object.freeze([
         'actions/checkout',
-        'mlugg/setup-zig',
         'actions/setup-node',
+        setupZigAction,
         'actions/upload-artifact',
       ]),
     }),
@@ -78,7 +86,7 @@ export const workflowPolicy = Object.freeze({
   'build.yml': Object.freeze({
     build: Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
-      actions: Object.freeze(['actions/checkout', 'mlugg/setup-zig', 'actions/setup-node', 'actions/upload-artifact']),
+      actions: Object.freeze(['actions/checkout', 'actions/setup-node', setupZigAction, 'actions/upload-artifact']),
     }),
     'native-package-evidence': Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
@@ -91,7 +99,7 @@ export const workflowPolicy = Object.freeze({
     }),
     test: Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
-      actions: Object.freeze(['actions/checkout', 'mlugg/setup-zig', 'actions/setup-node']),
+      actions: Object.freeze(['actions/checkout', 'actions/setup-node', setupZigAction]),
     }),
   }),
   'docs.yml': Object.freeze({
@@ -113,8 +121,8 @@ export const workflowPolicy = Object.freeze({
       permissions: Object.freeze({ attestations: 'write', contents: 'read', 'id-token': 'write' }),
       actions: Object.freeze([
         'actions/checkout',
-        'mlugg/setup-zig',
         'actions/setup-node',
+        setupZigAction,
         'actions/attest',
         'actions/attest',
         'actions/upload-artifact',
@@ -193,19 +201,26 @@ function sortedRecord(record) {
 
 export function validateActionRuntimeMigration() {
   const node24Actions = []
+  const replacedActions = []
   const pendingActions = []
   for (const name of actionRuntimeMigration.terminalActions) {
     const pin = actionPins[name]
-    if (pin === undefined) fail(`action runtime migration includes unknown action ${name}`)
-    if (pin.runtime === actionRuntimeMigration.requiredRuntime) {
+    if (pin?.runtime === actionRuntimeMigration.requiredRuntime) {
       node24Actions.push(name)
       continue
     }
-    if (actionRuntimeMigration.pendingActions.includes(name) && pin.runtime === 'node20') {
+    if (actionRuntimeMigration.replacedActions.includes(name) && pin === undefined) {
+      replacedActions.push(name)
+      continue
+    }
+    if (actionRuntimeMigration.pendingActions.includes(name) && pin?.runtime === 'node20') {
       pendingActions.push(name)
       continue
     }
-    fail(`${name} has unreviewed action runtime ${pin.runtime ?? 'missing'}`)
+    fail(`${name} has unreviewed action runtime ${pin?.runtime ?? 'missing'}`)
+  }
+  if (!same(replacedActions, actionRuntimeMigration.replacedActions)) {
+    fail(`action runtime migration replacement inventory changed: expected ${actionRuntimeMigration.replacedActions.join(', ')}, received ${replacedActions.join(', ')}`)
   }
   if (!same(pendingActions, actionRuntimeMigration.pendingActions)) {
     fail(`action runtime migration pending inventory changed: expected ${actionRuntimeMigration.pendingActions.join(', ')}, received ${pendingActions.join(', ')}`)
@@ -213,6 +228,7 @@ export function validateActionRuntimeMigration() {
   return {
     actions: actionRuntimeMigration.terminalActions.length,
     node24Actions,
+    replacedActions,
     pendingActions,
   }
 }
@@ -295,6 +311,12 @@ function parseActions(lines, filename, job) {
   const actions = []
   for (const line of lines) {
     if (!/^\s+(?:-\s+)?(?:["']?uses["']?)\s*:/.test(line)) continue
+    const local = line.match(/^\s+(?:-\s+)?uses: (\.\/\.github\/actions\/[A-Za-z0-9_.-]+)$/)
+    if (local !== null) {
+      if (local[1] !== setupZigAction) fail(`${filename} job ${job} uses unreviewed local action ${local[1]}`)
+      actions.push(local[1])
+      continue
+    }
     const match = line.match(/^\s+(?:-\s+)?uses: ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@([0-9a-f]{40}) # (v[0-9]+(?:\.[0-9]+){0,2})$/)
     if (match === null) {
       fail(`${filename} job ${job} must pin every action to a full lowercase commit SHA with an exact version comment`)
@@ -349,6 +371,156 @@ function validateSelfGate(buildWorkflow) {
   if (setup === -1 || gate <= setup || command <= gate || install <= command) {
     fail('build.yml must test and check workflow policy after Node setup and before npm installation')
   }
+}
+
+const setupZigArtifacts = Object.freeze({
+  'aarch64-macos': '50635984:3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b',
+  'x86_64-macos': '55800460:375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f',
+  'aarch64-linux': '49471996:958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f',
+  'x86_64-linux': '53733924:02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239',
+  'x86_64-windows': '92614574:3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c',
+})
+
+export function validateSetupZigAction(root = repositoryRoot) {
+  const directory = path.join(root, '.github', 'actions', 'setup-zig')
+  let directoryStat
+  try {
+    directoryStat = fs.lstatSync(directory)
+  } catch (error) {
+    fail(`repository-owned Zig setup action is unavailable: ${error.message}`)
+  }
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+    fail('repository-owned Zig setup action must be a regular non-symlink directory')
+  }
+  const entries = fs.readdirSync(directory).sort()
+  if (!same(entries, ['action.yml', 'setup-zig.mjs'])) {
+    fail(`repository-owned Zig setup inventory changed: received ${entries.join(', ')}`)
+  }
+  for (const entry of entries) {
+    const stat = fs.lstatSync(path.join(directory, entry))
+    if (!stat.isFile() || stat.isSymbolicLink()) fail(`repository-owned Zig setup ${entry} must be a regular file`)
+    if (stat.size > 64 * 1024) fail(`repository-owned Zig setup ${entry} exceeds 64 KiB`)
+  }
+
+  const manifest = fs.readFileSync(path.join(directory, 'action.yml'), 'utf8')
+  if (manifest.includes('\t') || /(?:^|\s)(?:&|\*)[A-Za-z0-9_-]+|^\s*<<\s*:/m.test(manifest)) {
+    fail('repository-owned Zig setup manifest must not use tabs, anchors, aliases, or merge keys')
+  }
+  const cachePin = actionPins['actions/cache']
+  if (cachePin.runtime !== actionRuntimeMigration.requiredRuntime) {
+    fail(`actions/cache must use the ${actionRuntimeMigration.requiredRuntime} runtime`)
+  }
+  const expectedCacheUse = `      uses: actions/cache@${cachePin.sha} # ${cachePin.version}`
+  if (manifest.split(expectedCacheUse).length !== 3) {
+    fail('repository-owned Zig setup must use exactly two immutable reviewed cache actions')
+  }
+  const lexicalUses = manifest.split('\n').filter(line => /\buses\s*:/.test(line))
+  if (!same(lexicalUses, [expectedCacheUse, expectedCacheUse])) {
+    fail('repository-owned Zig setup contains an indirect or unreviewed action reference')
+  }
+  for (const required of [
+    'name: Setup Zig 0.15.2',
+    '  using: composite',
+    '    required: true',
+    'path: ${{ runner.temp }}/zigcss-zig-tool-archive',
+    'key: zigcss-zig-archive-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}',
+    'path: ${{ github.workspace }}/.zig-cache',
+    'key: zigcss-zig-build-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}',
+    '          zigcss-zig-build-v1-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}-\n',
+    'ZIGCSS_SETUP_VERSION: ${{ inputs.version }}',
+    'run: node "${{ github.action_path }}/setup-zig.mjs" --install',
+  ]) {
+    if (manifest.split(required).length !== 2) fail(`repository-owned Zig setup manifest is missing exact contract ${JSON.stringify(required)}`)
+  }
+  if (/mlugg\/setup-zig|node20/.test(manifest)) fail('repository-owned Zig setup retains the retired Node 20 action')
+
+  const implementation = fs.readFileSync(path.join(directory, 'setup-zig.mjs'), 'utf8')
+  for (const required of [
+    'https://ziglang.org/download/${zigVersion}/${filename}',
+    "redirect: 'error'",
+    'signal: AbortSignal.timeout(downloadTimeoutMilliseconds)',
+    'await verifyArchive(destination, artifact)',
+    'validateArchiveEntries(entries, artifact.root)',
+    "await runBounded('tar', ['-tf', archive], maximumArchiveListingBytes)",
+    "await runBounded('tar', ['-xf', archive, '-C', extractionParent], 256 * 1024)",
+    'await inspectExtractedTree(toolDirectory)',
+    "version.stdout.trim() !== zigVersion || version.stderr.trim() !== ''",
+    'const cache = await prepareCache(workspace)',
+    'await appendCommand(githubPath, toolDirectory)',
+    'await appendCommand(githubEnvironment, `ZIG_GLOBAL_CACHE_DIR=${cache.globalDirectory}`)',
+    'await appendCommand(githubEnvironment, `ZIG_LOCAL_CACHE_DIR=${cache.localDirectory}`)',
+    "if (process.argv[2] === '--install') await install()",
+    'else await pruneCache()',
+  ]) {
+    if (!implementation.includes(required)) {
+      fail(`repository-owned Zig setup implementation is missing integrity contract ${JSON.stringify(required)}`)
+    }
+  }
+  if (/http:\/\/|shell\s*:\s*true|\beval\s*\(|\bexecSync\s*\(/.test(implementation)) {
+    fail('repository-owned Zig setup implementation contains an unsafe execution or transport primitive')
+  }
+
+  const artifacts = Object.fromEntries(setupZigArtifactRecords.map(record => [
+    record.target,
+    `${record.size}:${record.sha256}`,
+  ]))
+  if (
+    setupZigVersion !== '0.15.2'
+    || !same(artifacts, setupZigArtifacts)
+    || setupZigMaximumArchiveEntries !== 25_000
+    || setupZigMaximumCacheBytes !== 2 * 1024 * 1024 * 1024
+  ) {
+    fail('repository-owned Zig setup version, host archive, or resource terminal changed')
+  }
+  return {
+    cacheActions: 2,
+    cacheRuntime: cachePin.runtime,
+    files: entries.length,
+    hosts: setupZigArtifactRecords.length,
+    maximumArchiveEntries: setupZigMaximumArchiveEntries,
+    maximumCacheBytes: setupZigMaximumCacheBytes,
+    version: setupZigVersion,
+  }
+}
+
+export function validateSetupZigWorkflowContract(sources) {
+  const placements = [
+    { filename: 'benchmarks.yml', job: 'benchmark', version: '0.15.2' },
+    { filename: 'build.yml', job: 'build', version: '${{ matrix.zig-version }}' },
+    { filename: 'build.yml', job: 'test', version: '0.15.2' },
+    { filename: 'release.yml', job: 'release', version: '${{ matrix.zig-version }}' },
+  ]
+  for (const placement of placements) {
+    const job = splitJobs(sources.get(placement.filename), placement.filename).get(placement.job).join('\n')
+    const setupBlock = [
+      '      - name: Setup Zig',
+      `        uses: ${setupZigAction}`,
+      '        with:',
+      `          version: ${placement.version}`,
+    ].join('\n')
+    if (job.split(setupBlock).length !== 2) {
+      fail(`${placement.filename} job ${placement.job} must use the exact repository-owned Zig ${setupZigVersion} setup`)
+    }
+    const node = job.indexOf('      - name: Setup Node.js')
+    const zig = job.indexOf(setupBlock)
+    if (node === -1 || zig <= node) {
+      fail(`${placement.filename} job ${placement.job} must provide its pinned Node runtime before repository-owned Zig setup`)
+    }
+    const pruneBlock = [
+      '      - name: Bound Zig cache',
+      '        if: always()',
+      '        run: node .github/actions/setup-zig/setup-zig.mjs --prune-cache',
+    ].join('\n')
+    if (job.split(pruneBlock).length !== 2 || !job.trimEnd().endsWith(pruneBlock)) {
+      fail(`${placement.filename} job ${placement.job} must bound the Zig cache in its terminal always step`)
+    }
+  }
+  const source = [...sources.values()].join('\n')
+  if (source.includes('mlugg/setup-zig')) fail('workflow inventory retains the retired mlugg/setup-zig action')
+  if (source.split(`uses: ${setupZigAction}`).length !== placements.length + 1) {
+    fail(`workflow inventory must contain exactly ${placements.length} repository-owned Zig setup placements`)
+  }
+  return { placements: placements.length, pruners: placements.length, version: setupZigVersion }
 }
 
 function parseJobTimeout(lines, job) {
@@ -448,6 +620,7 @@ export function validateWorkflowSources(sources) {
     actions += result.actions
   }
   validateActionRuntimeMigration()
+  validateSetupZigWorkflowContract(sources)
   validateZigTestSuiteRunner()
   validateSelfGate(sources.get('build.yml'))
   validateBuildThroughput(sources.get('build.yml'))
@@ -468,6 +641,7 @@ export function readWorkflowSources(root = repositoryRoot) {
 
 export function validateWorkflows(root = repositoryRoot) {
   const result = validateWorkflowSources(readWorkflowSources(root))
+  validateSetupZigAction(root)
   validateBuildTestGraph(fs.readFileSync(path.join(root, 'build.zig'), 'utf8'))
   return result
 }

@@ -2668,7 +2668,7 @@ export function validateContract(
   if (manifest.scripts?.['test:native-package-evidence'] !== 'node --test scripts/validate-native-package-evidence.test.mjs') {
     fail('package script test:native-package-evidence is missing or changed')
   }
-  if (manifest.scripts?.['test:workflows'] !== 'node --test scripts/run-zig-test-suite.test.mjs scripts/validate-workflows.test.mjs') {
+  if (manifest.scripts?.['test:workflows'] !== 'node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/validate-workflows.test.mjs') {
     fail('package script test:workflows must retain the Zig suite runner contract')
   }
 

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import {
   actionPins,
@@ -8,6 +10,8 @@ import {
   validateActionRuntimeMigration,
   validateBuildThroughput,
   validateBuildTestGraph,
+  validateSetupZigAction,
+  validateSetupZigWorkflowContract,
   validateWorkflowSources,
   validateWorkflows,
   validateZigTestSuiteRunner,
@@ -29,8 +33,70 @@ test('the hosted action runtime migration has a finite reviewed terminal', () =>
   assert.deepEqual(validateActionRuntimeMigration(), {
     actions: 3,
     node24Actions: ['actions/checkout', 'actions/setup-node'],
-    pendingActions: ['mlugg/setup-zig'],
+    replacedActions: ['mlugg/setup-zig'],
+    pendingActions: [],
   })
+})
+
+test('all four Zig setup placements use the repository-owned terminal and retain bounded cache cleanup', t => {
+  const sources = cloneSources()
+  const workflowText = [...sources.values()].join('\n')
+  assert.equal(workflowText.split('uses: ./.github/actions/setup-zig').length - 1, 4)
+  assert.equal(
+    workflowText.split('node .github/actions/setup-zig/setup-zig.mjs --prune-cache').length - 1,
+    4,
+  )
+  assert.doesNotMatch(workflowText, /mlugg\/setup-zig/)
+  assert.deepEqual(validateSetupZigWorkflowContract(sources), {
+    placements: 4,
+    pruners: 4,
+    version: '0.15.2',
+  })
+  assert.deepEqual(validateSetupZigAction(), {
+    cacheActions: 2,
+    cacheRuntime: 'node24',
+    files: 2,
+    hosts: 5,
+    maximumArchiveEntries: 25_000,
+    maximumCacheBytes: 2 * 1024 * 1024 * 1024,
+    version: '0.15.2',
+  })
+
+  const stale = cloneSources()
+  stale.set('build.yml', stale.get('build.yml').replace(
+    'uses: ./.github/actions/setup-zig',
+    'uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1',
+  ))
+  assert.throws(() => validateWorkflowSources(stale), /unreviewed action|action inventory|repository-owned Zig/)
+
+  const unbounded = cloneSources()
+  unbounded.set('release.yml', unbounded.get('release.yml').replace(
+    '      - name: Bound Zig cache\n        if: always()\n        run: node .github/actions/setup-zig/setup-zig.mjs --prune-cache\n',
+    '',
+  ))
+  assert.throws(() => validateWorkflowSources(unbounded), /terminal always step/)
+
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-workflow-policy-'))
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
+  const actionDirectory = path.join(temporary, '.github', 'actions', 'setup-zig')
+  fs.mkdirSync(actionDirectory, { recursive: true })
+  for (const filename of ['action.yml', 'setup-zig.mjs']) {
+    fs.copyFileSync(path.join('.github', 'actions', 'setup-zig', filename), path.join(actionDirectory, filename))
+  }
+  const actionManifest = path.join(actionDirectory, 'action.yml')
+  fs.writeFileSync(actionManifest, fs.readFileSync(actionManifest, 'utf8').replace(
+    actionPins['actions/cache'].sha,
+    '0000000000000000000000000000000000000000',
+  ))
+  assert.throws(() => validateSetupZigAction(temporary), /exactly two immutable reviewed cache actions/)
+
+  fs.copyFileSync(path.join('.github', 'actions', 'setup-zig', 'action.yml'), actionManifest)
+  const actionImplementation = path.join(actionDirectory, 'setup-zig.mjs')
+  fs.writeFileSync(actionImplementation, fs.readFileSync(actionImplementation, 'utf8').replace(
+    "redirect: 'error'",
+    "redirect: 'follow'",
+  ))
+  assert.throws(() => validateSetupZigAction(temporary), /missing integrity contract/)
 })
 
 test('mutable, malformed, unknown, and stale action references fail closed', () => {

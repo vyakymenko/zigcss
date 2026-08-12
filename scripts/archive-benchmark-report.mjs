@@ -278,6 +278,7 @@ export function validateBenchmarkArchiveWorkflowSource(benchmarkWorkflow, buildW
       '- name: Seal and verify benchmark archive',
       '- name: Upload benchmark archive',
       '- name: Clean benchmark archive directory',
+      '- name: Bound Zig cache',
     ],
     'scheduled workflow collection, archival, or cleanup order drifted',
   )
@@ -298,11 +299,10 @@ export function validateBenchmarkArchiveWorkflowSource(benchmarkWorkflow, buildW
       `scheduled workflow is missing archive ${mode}`,
     )
   }
-  requireContains(benchmarkWorkflow, 'if: always()', 'scheduled workflow cleanup must run unconditionally')
   requireContains(
     benchmarkWorkflow,
-    'rm -rf -- "$BENCHMARK_ARCHIVE_DIR"',
-    'scheduled workflow cleanup command drifted',
+    '- name: Clean benchmark archive directory\n        if: always()\n        shell: bash\n        env:\n          BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive\n        run: rm -rf -- "$BENCHMARK_ARCHIVE_DIR"',
+    'scheduled workflow cleanup must remain exact and unconditional',
   )
 
   const statistics = buildWorkflow.indexOf('- name: Validate benchmark statistics')

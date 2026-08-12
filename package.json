@@ -50,7 +50,7 @@
     "check:benchmark-publication": "node scripts/publish-benchmark-report.mjs --check",
     "test:benchmark-publication": "node --test scripts/publish-benchmark-report.test.mjs",
     "check:workflows": "node scripts/validate-workflows.mjs --check",
-    "test:workflows": "node --test scripts/run-zig-test-suite.test.mjs scripts/validate-workflows.test.mjs",
+    "test:workflows": "node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/validate-workflows.test.mjs",
     "check:version": "node scripts/validate-release-version.mjs --check",
     "test:version": "node --test scripts/validate-release-version.test.mjs",
     "check:release-metadata": "node scripts/generate-release-metadata.mjs --check-workflow",
