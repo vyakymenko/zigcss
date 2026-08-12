@@ -106,4 +106,7 @@ autodevelop_state_set last-pushed-branch "$BRANCH"
 if [ -n "$REMOTE_MAIN_HEAD" ]; then
   autodevelop_state_set last-pushed-main-head "$REMOTE_MAIN_HEAD"
 fi
+if [ "$MODE" = --recovery-only ] && autodevelop_prime_terminal_integration "$HEAD"; then
+  autodevelop_log INFO "terminal validation handoff primed for supervisor-owned main integration"
+fi
 autodevelop_log INFO "push verified remote=$REMOTE branch=$BRANCH main=$INCLUDE_MAIN head=${HEAD%????????????????????????????????}"

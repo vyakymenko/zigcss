@@ -153,9 +153,13 @@ assert_equal "$(autodevelop_main_batch_advance)" 'RECOVERY 3' 'third green pass 
 assert_equal "$(autodevelop_main_batch_advance)" 'INTEGRATE 4' 'fourth green pass requires main integration'
 autodevelop_state_set main-batch-count 0
 assert_equal "$(autodevelop_state_get main-batch-count)" 0 'successful main integration can reset its batch'
-assert_equal "$(if autodevelop_should_integrate_main RECOVERY NSASS-011; then printf yes; else printf no; fi)" no 'ordinary early batch stays recovery-only'
-assert_equal "$(if autodevelop_should_integrate_main INTEGRATE NSASS-011; then printf yes; else printf no; fi)" yes 'batch threshold integrates main'
-assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-009; then printf yes; else printf no; fi)" yes 'native release validation integrates main immediately'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NSASS-011 native-sass-evaluation CLOSED; then printf yes; else printf no; fi)" no 'ordinary early batch stays recovery-only'
+assert_equal "$(if autodevelop_should_integrate_main INTEGRATE NSASS-011 native-sass-evaluation CLOSED; then printf yes; else printf no; fi)" yes 'batch threshold integrates main'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-009 native-release-evidence REDUCED; then printf yes; else printf no; fi)" yes 'native release validation integrates main immediately'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-007 native-five-target-ci-throughput CLOSED; then printf yes; else printf no; fi)" yes 'native hosted-validation terminal integrates main immediately'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-007 native-five-target-ci-throughput REDUCED; then printf yes; else printf no; fi)" no 'incomplete native hosted-validation family stays batched'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-007 native-zero-dependency-package CLOSED; then printf yes; else printf no; fi)" no 'ordinary native package family stays batched'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NSASS-012 native-five-target-ci-throughput CLOSED; then printf yes; else printf no; fi)" no 'terminal family cannot widen immediate integration to another package'
 
 FAKE_CODEX="$TMP/fake-codex"
 FAKE_ARGS="$TMP/fake-args"
@@ -217,6 +221,19 @@ PUSH_HEAD="$(git -C "$PUSH_REPO" rev-parse HEAD)"
 assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/vale/selftest)" "$PUSH_HEAD" 'green checkpoint pushed to recovery branch'
 assert_equal "$(if git --git-dir="$PUSH_REMOTE" show-ref --verify --quiet refs/heads/main; then printf present; else printf absent; fi)" absent 'recovery-only push does not trigger main'
 assert_equal "$(cat "$PUSH_STATE/state/last-pushed-head")" "$PUSH_HEAD" 'recovery-only head recorded'
+
+{
+  printf 'CLASS=PROGRESS\n'
+  printf 'GAP_PACKAGE=NATIVE-007\n'
+  printf 'GAP_FAMILY=native-five-target-ci-throughput\n'
+  printf 'GAP_RESULT=CLOSED\n'
+  printf 'AFTER_HEAD=%s\n' "$PUSH_HEAD"
+} > "$PUSH_STATE/state/last-run.env"
+printf '2' > "$PUSH_STATE/state/main-batch-count"
+ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$PUSH_STATE" \
+  bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" --recovery-only > "$TMP/terminal-recovery-push.log" 2>&1
+assert_equal "$(cat "$PUSH_STATE/state/main-batch-count")" 3 'validated hosted terminal primes the existing integration decision'
+assert_equal "$(if git --git-dir="$PUSH_REMOTE" show-ref --verify --quiet refs/heads/main; then printf present; else printf absent; fi)" absent 'terminal recovery push leaves main integration supervisor-owned'
 
 ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$PUSH_STATE" \
   bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" > "$TMP/push.log" 2>&1

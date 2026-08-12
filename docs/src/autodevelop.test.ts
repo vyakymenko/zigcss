@@ -58,6 +58,7 @@ describe('autonomous development operations', () => {
     expect(protocol).toContain('finite release-gap inventory')
     expect(protocol).toContain('After four consecutive reductions')
     expect(protocol).toContain('integrates `main` after four green passes')
+    expect(protocol).toContain('closed `NATIVE-007` five-target hosted-validation terminal')
   })
 
   test('single-lane supervisor pins the model and passes hermetic control tests', () => {
@@ -73,7 +74,7 @@ describe('autonomous development operations', () => {
       expect(fs.statSync(script).mode & 0o111).not.toBe(0)
     }
     expect(after).toBe(before)
-    expect(selftest).toContain('PASS=96 FAIL=0')
+    expect(selftest).toContain('PASS=102 FAIL=0')
     expect(prompt).toContain('Use only gpt-5.6-sol with max reasoning')
     expect(prompt).toContain('Never delegate, spawn subagents, create child tasks, or fall back')
     expect(prompt).toContain('NATIVE-001 through NATIVE-005')

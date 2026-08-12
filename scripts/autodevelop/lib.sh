@@ -242,7 +242,45 @@ autodevelop_main_batch_advance() {
 autodevelop_should_integrate_main() {
   local decision="$1"
   local package="$2"
-  [ "$decision" = INTEGRATE ] || [ "$package" = NATIVE-009 ]
+  local family="${3:-}"
+  local result="${4:-}"
+  [ "$decision" = INTEGRATE ] \
+    || [ "$package" = NATIVE-009 ] \
+    || { [ "$package" = NATIVE-007 ] \
+      && [ "$family" = native-five-target-ci-throughput ] \
+      && [ "$result" = CLOSED ]; }
+}
+
+autodevelop_last_run_field() {
+  local key="$1"
+  local record="$AUTODEVELOP_STATE_DIR/last-run.env"
+  local matches
+  [ -f "$record" ] && [ ! -L "$record" ] || return 1
+  matches="$(sed -n "s/^${key}=//p" "$record")"
+  [ "$(printf '%s\n' "$matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] || return 1
+  printf '%s\n' "$matches"
+}
+
+autodevelop_prime_terminal_integration() {
+  local head="$1"
+  local class package family result after_head count target
+  class="$(autodevelop_last_run_field CLASS)" || return 1
+  package="$(autodevelop_last_run_field GAP_PACKAGE)" || return 1
+  family="$(autodevelop_last_run_field GAP_FAMILY)" || return 1
+  result="$(autodevelop_last_run_field GAP_RESULT)" || return 1
+  after_head="$(autodevelop_last_run_field AFTER_HEAD)" || return 1
+  [ "$class" = PROGRESS ] || return 1
+  [ "$after_head" = "$head" ] || return 1
+  autodevelop_should_integrate_main RECOVERY "$package" "$family" "$result" || return 1
+
+  count="$(autodevelop_state_get main-batch-count 0)"
+  case "$count" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  target=$((AUTODEVELOP_MAIN_BATCH_PASSES - 1))
+  if [ "$count" -lt "$target" ]; then
+    autodevelop_state_set main-batch-count "$target"
+  fi
 }
 
 autodevelop_record_blocker() {

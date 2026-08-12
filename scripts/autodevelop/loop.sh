@@ -101,7 +101,8 @@ while :; do
       MAIN_BATCH_STATE="$(autodevelop_main_batch_advance)"
       MAIN_BATCH_DECISION="${MAIN_BATCH_STATE%% *}"
       MAIN_BATCH_COUNT="${MAIN_BATCH_STATE#* }"
-      if autodevelop_should_integrate_main "$MAIN_BATCH_DECISION" "$GAP_PACKAGE"; then
+      if autodevelop_should_integrate_main \
+        "$MAIN_BATCH_DECISION" "$GAP_PACKAGE" "$GAP_FAMILY" "$GAP_RESULT"; then
         push_green_checkpoint || break
         autodevelop_state_set main-batch-count 0
         PUSH_DETAIL="checkpoint backed up and integrated to main"
