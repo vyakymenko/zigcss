@@ -104,6 +104,25 @@ fn outputStamp(dir: std.fs.Dir, path: []const u8) !OutputStamp {
     return .{ .inode = stat.inode, .mtime = stat.mtime, .ctime = stat.ctime };
 }
 
+fn configurePortableWatchChildCwd(
+    child: *Child,
+    temporary: *const std.testing.TmpDir,
+) ![]u8 {
+    // Zig 0.15.2 does not implement Child.cwd_dir on Windows. std.testing
+    // creates this resource-derived path beneath the process cwd on every host.
+    const process_cwd = try std.process.getCwdAlloc(allocator);
+    defer allocator.free(process_cwd);
+    const cwd = try std.fs.path.join(allocator, &.{
+        process_cwd,
+        ".zig-cache",
+        "tmp",
+        temporary.sub_path[0..],
+    });
+    child.cwd = cwd;
+    child.cwd_dir = null;
+    return cwd;
+}
+
 const WatchAtomicOperation = enum {
     observe,
     rename,
@@ -337,6 +356,26 @@ test "watch atomic retries retain lower terminal and over-limit boundaries" {
         WatchChildTermination.killed,
         watchChildTerminationAfterKill(.windows, .{ .Exited = 1 }),
     );
+}
+
+test "native watch child cwd is an absolute portable fixture path" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const argv = [_][]const u8{"zigcss"};
+    var child = Child.init(&argv, allocator);
+    const cwd = try configurePortableWatchChildCwd(&child, &tmp);
+    defer allocator.free(cwd);
+
+    try std.testing.expect(child.cwd_dir == null);
+    try std.testing.expectEqualStrings(cwd, child.cwd.?);
+    try std.testing.expect(std.fs.path.isAbsolute(cwd));
+    var opened = try std.fs.openDirAbsolute(cwd, .{});
+    defer opened.close();
+    try opened.writeFile(.{ .sub_path = "portable-cwd.txt", .data = "owned" });
+    const contents = try tmp.dir.readFileAlloc(allocator, "portable-cwd.txt", 16);
+    defer allocator.free(contents);
+    try std.testing.expectEqualStrings("owned", contents);
 }
 
 fn waitForOutputContents(
@@ -826,7 +865,8 @@ test "binary CLI native watch invalidates the finite syntax dependency set" {
         child.stdin_behavior = .Ignore;
         child.stdout_behavior = .Ignore;
         child.stderr_behavior = .Pipe;
-        child.cwd_dir = tmp.dir;
+        const cwd = try configurePortableWatchChildCwd(&child, &tmp);
+        defer allocator.free(cwd);
         try child.spawn();
         var running = true;
         defer {
