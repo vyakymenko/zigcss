@@ -333,68 +333,6 @@ fn writeOutputFile(path: []const u8, bytes: []const u8) !void {
     };
 }
 
-const AtomicRenameProbe = struct {
-    access_denied_before_success: usize,
-    terminal_error: ?anyerror = null,
-    flushes: usize = 0,
-    attempts: usize = 0,
-
-    fn flush(self: *AtomicRenameProbe) !void {
-        self.flushes += 1;
-    }
-
-    fn renameIntoPlace(self: *AtomicRenameProbe) !void {
-        self.attempts += 1;
-        if (self.attempts <= self.access_denied_before_success) {
-            return error.AccessDenied;
-        }
-        if (self.terminal_error) |err| return err;
-    }
-};
-
-test "atomic output rename retry has a finite Windows terminal" {
-    var lower = AtomicRenameProbe{ .access_denied_before_success = 0 };
-    try finishAtomicFileWithRetry(&lower, .windows, 0);
-    try std.testing.expectEqual(@as(usize, 1), lower.flushes);
-    try std.testing.expectEqual(@as(usize, 1), lower.attempts);
-
-    var terminal = AtomicRenameProbe{
-        .access_denied_before_success = windows_atomic_operation_attempt_limit - 1,
-    };
-    try finishAtomicFileWithRetry(&terminal, .windows, 0);
-    try std.testing.expectEqual(@as(usize, 1), terminal.flushes);
-    try std.testing.expectEqual(windows_atomic_operation_attempt_limit, terminal.attempts);
-
-    var over_limit = AtomicRenameProbe{
-        .access_denied_before_success = windows_atomic_operation_attempt_limit,
-    };
-    try std.testing.expectError(
-        error.AccessDenied,
-        finishAtomicFileWithRetry(&over_limit, .windows, 0),
-    );
-    try std.testing.expectEqual(@as(usize, 1), over_limit.flushes);
-    try std.testing.expectEqual(windows_atomic_operation_attempt_limit, over_limit.attempts);
-
-    var wrong_host = AtomicRenameProbe{ .access_denied_before_success = 1 };
-    try std.testing.expectError(
-        error.AccessDenied,
-        finishAtomicFileWithRetry(&wrong_host, .linux, 0),
-    );
-    try std.testing.expectEqual(@as(usize, 1), wrong_host.flushes);
-    try std.testing.expectEqual(@as(usize, 1), wrong_host.attempts);
-
-    var unrelated = AtomicRenameProbe{
-        .access_denied_before_success = 0,
-        .terminal_error = error.PermissionDenied,
-    };
-    try std.testing.expectError(
-        error.PermissionDenied,
-        finishAtomicFileWithRetry(&unrelated, .windows, 0),
-    );
-    try std.testing.expectEqual(@as(usize, 1), unrelated.flushes);
-    try std.testing.expectEqual(@as(usize, 1), unrelated.attempts);
-}
-
 fn compileLoadedFile(
     allocator: std.mem.Allocator,
     config: CompileConfig,
@@ -1988,6 +1926,68 @@ pub fn main() !void {
         };
     }
 }
+
+test "atomic output rename retry has a finite Windows terminal" {
+    var lower = AtomicRenameProbe{ .access_denied_before_success = 0 };
+    try finishAtomicFileWithRetry(&lower, .windows, 0);
+    try std.testing.expectEqual(@as(usize, 1), lower.flushes);
+    try std.testing.expectEqual(@as(usize, 1), lower.attempts);
+
+    var terminal = AtomicRenameProbe{
+        .access_denied_before_success = windows_atomic_operation_attempt_limit - 1,
+    };
+    try finishAtomicFileWithRetry(&terminal, .windows, 0);
+    try std.testing.expectEqual(@as(usize, 1), terminal.flushes);
+    try std.testing.expectEqual(windows_atomic_operation_attempt_limit, terminal.attempts);
+
+    var over_limit = AtomicRenameProbe{
+        .access_denied_before_success = windows_atomic_operation_attempt_limit,
+    };
+    try std.testing.expectError(
+        error.AccessDenied,
+        finishAtomicFileWithRetry(&over_limit, .windows, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 1), over_limit.flushes);
+    try std.testing.expectEqual(windows_atomic_operation_attempt_limit, over_limit.attempts);
+
+    var wrong_host = AtomicRenameProbe{ .access_denied_before_success = 1 };
+    try std.testing.expectError(
+        error.AccessDenied,
+        finishAtomicFileWithRetry(&wrong_host, .linux, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 1), wrong_host.flushes);
+    try std.testing.expectEqual(@as(usize, 1), wrong_host.attempts);
+
+    var unrelated = AtomicRenameProbe{
+        .access_denied_before_success = 0,
+        .terminal_error = error.PermissionDenied,
+    };
+    try std.testing.expectError(
+        error.PermissionDenied,
+        finishAtomicFileWithRetry(&unrelated, .windows, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 1), unrelated.flushes);
+    try std.testing.expectEqual(@as(usize, 1), unrelated.attempts);
+}
+
+const AtomicRenameProbe = struct {
+    access_denied_before_success: usize,
+    terminal_error: ?anyerror = null,
+    flushes: usize = 0,
+    attempts: usize = 0,
+
+    fn flush(self: *AtomicRenameProbe) !void {
+        self.flushes += 1;
+    }
+
+    fn renameIntoPlace(self: *AtomicRenameProbe) !void {
+        self.attempts += 1;
+        if (self.attempts <= self.access_denied_before_success) {
+            return error.AccessDenied;
+        }
+        if (self.terminal_error) |err| return err;
+    }
+};
 
 test "CLI format boundary rejects every experimental extension without importing adapters" {
     const cases = [_]struct { filename: []const u8, name: []const u8 }{

@@ -135,6 +135,7 @@ test('the installed executable delegates CSS compilation to the public facade', 
   const parallel = runtime.match(/const BatchWorkQueue[\s\S]*?\n}\n\nconst CompileError/)
   const batch = runtime.match(/fn compileBatch\([\s\S]*?\n}\n\nfn experimentalFormatName/)
 
+  assert.match(runtime, /pub fn main\(\) !void/)
   assert.match(runtime, /const zigcss = @import\("zigcss"\)/)
   assert.equal([...runtime.matchAll(/zigcss\.compile\(/g)].length, 1)
   assert.doesNotMatch(
