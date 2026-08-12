@@ -76,6 +76,25 @@ function safeEnvironmentPath(name) {
   return path.resolve(value)
 }
 
+export function resolveArchiveCommand(platform, environment = process.env) {
+  if (platform !== 'win32') return 'tar'
+
+  // Git Bash prepends GNU tar, which cannot own the Windows ZIP contract.
+  const systemRoot = environment.SystemRoot
+  if (
+    typeof systemRoot !== 'string'
+    || systemRoot.length === 0
+    || systemRoot.includes('\0')
+    || systemRoot.includes('\r')
+    || systemRoot.includes('\n')
+    || !path.win32.isAbsolute(systemRoot)
+    || !/^[A-Za-z]:[\\/]$/.test(path.win32.parse(systemRoot).root)
+  ) {
+    fail('SystemRoot must be an absolute local drive path without control characters')
+  }
+  return path.win32.join(path.win32.normalize(systemRoot), 'System32', 'tar.exe')
+}
+
 export function resolveArtifact(platform, arch, version) {
   if (version !== zigVersion) fail(`only Zig ${zigVersion} is admitted, received ${JSON.stringify(version)}`)
   const record = artifactRecords.find(candidate => candidate.platform === platform && candidate.arch === arch)
@@ -338,10 +357,14 @@ async function extractArchive(artifact, archive, runnerTemporary) {
   await fsPromises.mkdir(extractionParent, { recursive: false, mode: 0o700 })
 
   try {
-    const listing = await runBounded('tar', ['-tf', archive], maximumArchiveListingBytes)
+    const archiveCommand = resolveArchiveCommand(process.platform)
+    if (process.platform === 'win32') {
+      await requireCommandFile(archiveCommand, 'Windows archive tool')
+    }
+    const listing = await runBounded(archiveCommand, ['-tf', archive], maximumArchiveListingBytes)
     const entries = listing.stdout.split(/\r?\n/).filter(Boolean)
     validateArchiveEntries(entries, artifact.root)
-    await runBounded('tar', ['-xf', archive, '-C', extractionParent], 256 * 1024)
+    await runBounded(archiveCommand, ['-xf', archive, '-C', extractionParent], 256 * 1024)
 
     const topLevel = await fsPromises.readdir(extractionParent)
     if (topLevel.length !== 1 || topLevel[0] !== artifact.root) {

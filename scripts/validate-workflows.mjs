@@ -5,6 +5,7 @@ import {
   artifactRecords as setupZigArtifactRecords,
   maximumArchiveEntries as setupZigMaximumArchiveEntries,
   maximumCacheBytes as setupZigMaximumCacheBytes,
+  resolveArchiveCommand as setupZigResolveArchiveCommand,
   zigVersion as setupZigVersion,
 } from '../.github/actions/setup-zig/setup-zig.mjs'
 import { failureTailBytes, suiteArguments } from './run-zig-test-suite.mjs'
@@ -441,8 +442,10 @@ export function validateSetupZigAction(root = repositoryRoot) {
     'signal: AbortSignal.timeout(downloadTimeoutMilliseconds)',
     'await verifyArchive(destination, artifact)',
     'validateArchiveEntries(entries, artifact.root)',
-    "await runBounded('tar', ['-tf', archive], maximumArchiveListingBytes)",
-    "await runBounded('tar', ['-xf', archive, '-C', extractionParent], 256 * 1024)",
+    'const archiveCommand = resolveArchiveCommand(process.platform)',
+    "await requireCommandFile(archiveCommand, 'Windows archive tool')",
+    "await runBounded(archiveCommand, ['-tf', archive], maximumArchiveListingBytes)",
+    "await runBounded(archiveCommand, ['-xf', archive, '-C', extractionParent], 256 * 1024)",
     'await inspectExtractedTree(toolDirectory)',
     "version.stdout.trim() !== zigVersion || version.stderr.trim() !== ''",
     'const cache = await prepareCache(workspace)',
@@ -458,6 +461,17 @@ export function validateSetupZigAction(root = repositoryRoot) {
   }
   if (/http:\/\/|shell\s*:\s*true|\beval\s*\(|\bexecSync\s*\(/.test(implementation)) {
     fail('repository-owned Zig setup implementation contains an unsafe execution or transport primitive')
+  }
+  if (/runBounded\('tar'/.test(implementation)) {
+    fail('repository-owned Zig setup must not resolve the Windows archive tool through Git Bash PATH')
+  }
+  if (
+    setupZigResolveArchiveCommand('win32', {
+      PATH: 'C:\\Program Files\\Git\\usr\\bin;C:\\Windows\\System32',
+      SystemRoot: 'C:\\Windows',
+    }) !== 'C:\\Windows\\System32\\tar.exe'
+  ) {
+    fail('repository-owned Zig setup must select the local Windows archive tool independently of PATH')
   }
 
   const artifacts = Object.fromEntries(setupZigArtifactRecords.map(record => [

@@ -87,6 +87,28 @@ test('the exact Zig 0.15.2 host archive terminal is checksum and size bound', as
   assert.throws(() => setup.resolveArtifact('linux', 'x64', '0.15.3'), /only Zig 0\.15\.2/)
 })
 
+test('Windows archive extraction ignores Git Bash PATH shadowing', async () => {
+  const setup = await loadSetupModule()
+  const environment = {
+    PATH: 'C:\\Program Files\\Git\\usr\\bin;C:\\Windows\\System32',
+    SystemRoot: 'C:\\Windows',
+  }
+
+  assert.equal(
+    setup.resolveArchiveCommand('win32', environment),
+    'C:\\Windows\\System32\\tar.exe',
+  )
+  assert.equal(setup.resolveArchiveCommand('linux', environment), 'tar')
+  assert.equal(setup.resolveArchiveCommand('darwin', environment), 'tar')
+
+  for (const SystemRoot of [undefined, '', 'Windows', '\\\\server\\Windows', 'C:\\Windows\n']) {
+    assert.throws(
+      () => setup.resolveArchiveCommand('win32', { ...environment, SystemRoot }),
+      /SystemRoot/,
+    )
+  }
+})
+
 test('cached Zig archives fail closed on type, size, or digest drift', async t => {
   const setup = await loadSetupModule()
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-setup-zig-'))
