@@ -250,19 +250,61 @@ fn writeStdout(bytes: []const u8) !void {
     try writer.interface.flush();
 }
 
+const windows_atomic_operation_attempt_limit: usize = 100;
+const windows_atomic_retry_delay_ns: u64 = 10 * std.time.ns_per_ms;
+
+fn shouldRetryWindowsAtomicAccess(
+    os_tag: std.Target.Os.Tag,
+    err: anyerror,
+    attempt: usize,
+) bool {
+    return os_tag == .windows and
+        err == error.AccessDenied and
+        attempt < windows_atomic_operation_attempt_limit - 1;
+}
+
+fn finishAtomicFileWithRetry(
+    atomic_file: anytype,
+    os_tag: std.Target.Os.Tag,
+    retry_delay_ns: u64,
+) !void {
+    try atomic_file.flush();
+    for (0..windows_atomic_operation_attempt_limit) |attempt| {
+        atomic_file.renameIntoPlace() catch |err| {
+            if (!shouldRetryWindowsAtomicAccess(os_tag, err, attempt)) return err;
+            if (retry_delay_ns > 0) std.Thread.sleep(retry_delay_ns);
+            continue;
+        };
+        return;
+    }
+    unreachable;
+}
+
+fn outputFileMode(
+    cwd: std.fs.Dir,
+    path: []const u8,
+) !std.fs.File.Mode {
+    for (0..windows_atomic_operation_attempt_limit) |attempt| {
+        const stat = cwd.statFile(path) catch |err| {
+            if (err == error.FileNotFound) return std.fs.File.default_mode;
+            if (shouldRetryWindowsAtomicAccess(builtin.os.tag, err, attempt)) {
+                std.Thread.sleep(windows_atomic_retry_delay_ns);
+                continue;
+            }
+            return err;
+        };
+        return if (stat.kind == .file) @intCast(stat.mode) else std.fs.File.default_mode;
+    }
+    unreachable;
+}
+
 fn writeOutputFile(path: []const u8, bytes: []const u8) !void {
     const cwd = std.fs.cwd();
-    const mode = blk: {
-        const stat = cwd.statFile(path) catch |err| switch (err) {
-            error.FileNotFound => break :blk std.fs.File.default_mode,
-            else => {
-                // Some hosts report an existing directory during stat while
-                // others reach atomicFile. Keep one cross-platform contract.
-                std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
-                return err;
-            },
-        };
-        break :blk if (stat.kind == .file) stat.mode else std.fs.File.default_mode;
+    const mode = outputFileMode(cwd, path) catch |err| {
+        // Some hosts report an existing directory during stat while others
+        // reach atomicFile. Keep one cross-platform contract.
+        std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
+        return err;
     };
 
     var buffer: [4096]u8 = undefined;
@@ -281,10 +323,76 @@ fn writeOutputFile(path: []const u8, bytes: []const u8) !void {
         std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
         return err;
     };
-    atomic_file.finish() catch |err| {
+    finishAtomicFileWithRetry(
+        &atomic_file,
+        builtin.os.tag,
+        windows_atomic_retry_delay_ns,
+    ) catch |err| {
         std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
         return err;
     };
+}
+
+const AtomicRenameProbe = struct {
+    access_denied_before_success: usize,
+    terminal_error: ?anyerror = null,
+    flushes: usize = 0,
+    attempts: usize = 0,
+
+    fn flush(self: *AtomicRenameProbe) !void {
+        self.flushes += 1;
+    }
+
+    fn renameIntoPlace(self: *AtomicRenameProbe) !void {
+        self.attempts += 1;
+        if (self.attempts <= self.access_denied_before_success) {
+            return error.AccessDenied;
+        }
+        if (self.terminal_error) |err| return err;
+    }
+};
+
+test "atomic output rename retry has a finite Windows terminal" {
+    var lower = AtomicRenameProbe{ .access_denied_before_success = 0 };
+    try finishAtomicFileWithRetry(&lower, .windows, 0);
+    try std.testing.expectEqual(@as(usize, 1), lower.flushes);
+    try std.testing.expectEqual(@as(usize, 1), lower.attempts);
+
+    var terminal = AtomicRenameProbe{
+        .access_denied_before_success = windows_atomic_operation_attempt_limit - 1,
+    };
+    try finishAtomicFileWithRetry(&terminal, .windows, 0);
+    try std.testing.expectEqual(@as(usize, 1), terminal.flushes);
+    try std.testing.expectEqual(windows_atomic_operation_attempt_limit, terminal.attempts);
+
+    var over_limit = AtomicRenameProbe{
+        .access_denied_before_success = windows_atomic_operation_attempt_limit,
+    };
+    try std.testing.expectError(
+        error.AccessDenied,
+        finishAtomicFileWithRetry(&over_limit, .windows, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 1), over_limit.flushes);
+    try std.testing.expectEqual(windows_atomic_operation_attempt_limit, over_limit.attempts);
+
+    var wrong_host = AtomicRenameProbe{ .access_denied_before_success = 1 };
+    try std.testing.expectError(
+        error.AccessDenied,
+        finishAtomicFileWithRetry(&wrong_host, .linux, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 1), wrong_host.flushes);
+    try std.testing.expectEqual(@as(usize, 1), wrong_host.attempts);
+
+    var unrelated = AtomicRenameProbe{
+        .access_denied_before_success = 0,
+        .terminal_error = error.PermissionDenied,
+    };
+    try std.testing.expectError(
+        error.PermissionDenied,
+        finishAtomicFileWithRetry(&unrelated, .windows, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 1), unrelated.flushes);
+    try std.testing.expectEqual(@as(usize, 1), unrelated.attempts);
 }
 
 fn compileLoadedFile(

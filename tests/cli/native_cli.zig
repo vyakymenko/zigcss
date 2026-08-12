@@ -6,6 +6,9 @@ const Child = std.process.Child;
 const allocator = std.testing.allocator;
 const native_parallel_worker_cap = 8;
 const native_parallel_queued_case_count = native_parallel_worker_cap + 1;
+const watch_atomic_attempt_limit: usize = 100;
+const watch_poll_delay_ns: u64 = 50 * std.time.ns_per_ms;
+const watch_atomic_rename_retry_delay_ns: u64 = 10 * std.time.ns_per_ms;
 
 const RouteCase = struct {
     syntax: []const u8,
@@ -101,31 +104,110 @@ fn outputStamp(dir: std.fs.Dir, path: []const u8) !OutputStamp {
     return .{ .inode = stat.inode, .mtime = stat.mtime, .ctime = stat.ctime };
 }
 
-fn isTransientWatchObservationError(os_tag: std.Target.Os.Tag, err: anyerror) bool {
+const WatchAtomicOperation = enum {
+    observe,
+    rename,
+};
+
+const WatchAtomicDisposition = enum {
+    retry,
+    exhausted,
+    fail,
+};
+
+fn watchAtomicDisposition(
+    operation: WatchAtomicOperation,
+    os_tag: std.Target.Os.Tag,
+    err: anyerror,
+    attempt: usize,
+) WatchAtomicDisposition {
     // Zig's AtomicFile.renameIntoPlace contract documents a Windows-only
     // AccessDenied window while the destination is being replaced.
-    return err == error.FileNotFound or
-        (os_tag == .windows and err == error.AccessDenied);
+    const transient = switch (operation) {
+        .observe => err == error.FileNotFound or
+            (os_tag == .windows and err == error.AccessDenied),
+        .rename => os_tag == .windows and err == error.AccessDenied,
+    };
+    if (!transient) return .fail;
+    return if (attempt < watch_atomic_attempt_limit - 1) .retry else .exhausted;
 }
 
-test "watch output polling retries only documented atomic replacement observations" {
+fn handleWatchAtomicFailure(
+    operation: WatchAtomicOperation,
+    os_tag: std.Target.Os.Tag,
+    err: anyerror,
+    attempt: usize,
+    retry_delay_ns: u64,
+) !void {
+    switch (watchAtomicDisposition(operation, os_tag, err, attempt)) {
+        .retry => if (retry_delay_ns > 0) std.Thread.sleep(retry_delay_ns),
+        .exhausted => switch (operation) {
+            .observe => return error.WatchTimeout,
+            .rename => return err,
+        },
+        .fail => return err,
+    }
+}
+
+test "watch atomic retries retain lower terminal and over-limit boundaries" {
     const cases = [_]struct {
+        operation: WatchAtomicOperation,
         os_tag: std.Target.Os.Tag,
         err: anyerror,
-        expected: bool,
+        attempt: usize,
+        expected: WatchAtomicDisposition,
     }{
-        .{ .os_tag = .linux, .err = error.FileNotFound, .expected = true },
-        .{ .os_tag = .windows, .err = error.FileNotFound, .expected = true },
-        .{ .os_tag = .windows, .err = error.AccessDenied, .expected = true },
-        .{ .os_tag = .linux, .err = error.AccessDenied, .expected = false },
-        .{ .os_tag = .windows, .err = error.OutOfMemory, .expected = false },
+        .{ .operation = .observe, .os_tag = .linux, .err = error.FileNotFound, .attempt = 0, .expected = .retry },
+        .{ .operation = .observe, .os_tag = .windows, .err = error.AccessDenied, .attempt = 0, .expected = .retry },
+        .{ .operation = .rename, .os_tag = .windows, .err = error.AccessDenied, .attempt = watch_atomic_attempt_limit - 2, .expected = .retry },
+        .{ .operation = .rename, .os_tag = .windows, .err = error.AccessDenied, .attempt = watch_atomic_attempt_limit - 1, .expected = .exhausted },
+        .{ .operation = .rename, .os_tag = .windows, .err = error.AccessDenied, .attempt = watch_atomic_attempt_limit, .expected = .exhausted },
+        .{ .operation = .rename, .os_tag = .windows, .err = error.FileNotFound, .attempt = 0, .expected = .fail },
+        .{ .operation = .rename, .os_tag = .linux, .err = error.AccessDenied, .attempt = 0, .expected = .fail },
+        .{ .operation = .observe, .os_tag = .windows, .err = error.OutOfMemory, .attempt = 0, .expected = .fail },
     };
     for (cases) |case| {
         try std.testing.expectEqual(
             case.expected,
-            isTransientWatchObservationError(case.os_tag, case.err),
+            watchAtomicDisposition(
+                case.operation,
+                case.os_tag,
+                case.err,
+                case.attempt,
+            ),
         );
     }
+    try handleWatchAtomicFailure(
+        .observe,
+        .windows,
+        error.AccessDenied,
+        watch_atomic_attempt_limit - 2,
+        0,
+    );
+    try std.testing.expectError(
+        error.WatchTimeout,
+        handleWatchAtomicFailure(
+            .observe,
+            .windows,
+            error.AccessDenied,
+            watch_atomic_attempt_limit - 1,
+            0,
+        ),
+    );
+    try std.testing.expectError(
+        error.AccessDenied,
+        handleWatchAtomicFailure(
+            .rename,
+            .windows,
+            error.AccessDenied,
+            watch_atomic_attempt_limit - 1,
+            0,
+        ),
+    );
+    try std.testing.expectError(
+        error.OutOfMemory,
+        handleWatchAtomicFailure(.observe, .windows, error.OutOfMemory, 0, 0),
+    );
 }
 
 fn waitForOutputContents(
@@ -133,17 +215,20 @@ fn waitForOutputContents(
     path: []const u8,
     expected: []const u8,
 ) !OutputStamp {
-    for (0..100) |_| {
+    poll: for (0..watch_atomic_attempt_limit) |attempt| {
         const contents = dir.readFileAlloc(allocator, path, 1024) catch |err| {
-            if (isTransientWatchObservationError(builtin.os.tag, err)) {
-                std.Thread.sleep(50 * std.time.ns_per_ms);
-                continue;
-            }
-            return err;
+            try handleWatchAtomicFailure(.observe, builtin.os.tag, err, attempt, watch_poll_delay_ns);
+            continue :poll;
         };
         defer allocator.free(contents);
-        if (std.mem.eql(u8, expected, contents)) return outputStamp(dir, path);
-        std.Thread.sleep(50 * std.time.ns_per_ms);
+        if (std.mem.eql(u8, expected, contents)) {
+            const stamp = outputStamp(dir, path) catch |err| {
+                try handleWatchAtomicFailure(.observe, builtin.os.tag, err, attempt, watch_poll_delay_ns);
+                continue :poll;
+            };
+            return stamp;
+        }
+        std.Thread.sleep(watch_poll_delay_ns);
     }
     return error.WatchTimeout;
 }
@@ -153,7 +238,25 @@ fn replaceFileAtomically(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !
     var atomic_file = try dir.atomicFile(path, .{ .write_buffer = &buffer });
     defer atomic_file.deinit();
     try atomic_file.file_writer.interface.writeAll(bytes);
-    try atomic_file.finish();
+    try atomic_file.flush();
+    for (0..watch_atomic_attempt_limit) |attempt| {
+        atomic_file.renameIntoPlace() catch |err| {
+            try handleWatchAtomicFailure(.rename, builtin.os.tag, err, attempt, watch_atomic_rename_retry_delay_ns);
+            continue;
+        };
+        return;
+    }
+    unreachable;
+}
+
+fn waitForOutputStamp(dir: std.fs.Dir, path: []const u8) !OutputStamp {
+    for (0..watch_atomic_attempt_limit) |attempt| {
+        return outputStamp(dir, path) catch |err| {
+            try handleWatchAtomicFailure(.observe, builtin.os.tag, err, attempt, watch_poll_delay_ns);
+            continue;
+        };
+    }
+    unreachable;
 }
 
 fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
@@ -220,18 +323,15 @@ fn waitForMappedOutputContents(
     expected_css: []const u8,
     expected_dependency_content: []const u8,
 ) !OutputStamp {
-    for (0..100) |_| {
+    poll: for (0..watch_atomic_attempt_limit) |attempt| {
         const contents = dir.readFileAlloc(allocator, path, 1024 * 1024) catch |err| {
-            if (isTransientWatchObservationError(builtin.os.tag, err)) {
-                std.Thread.sleep(50 * std.time.ns_per_ms);
-                continue;
-            }
-            return err;
+            try handleWatchAtomicFailure(.observe, builtin.os.tag, err, attempt, watch_poll_delay_ns);
+            continue :poll;
         };
         defer allocator.free(contents);
         if (!std.mem.startsWith(u8, contents, expected_css)) {
-            std.Thread.sleep(50 * std.time.ns_per_ms);
-            continue;
+            std.Thread.sleep(watch_poll_delay_ns);
+            continue :poll;
         }
         const source_map = try decodeInlineSourceMap(contents, expected_css);
         defer allocator.free(source_map);
@@ -240,10 +340,14 @@ fn waitForMappedOutputContents(
         const source_contents = parsed.value.object.get("sourcesContent").?.array.items;
         for (source_contents) |item| {
             if (std.mem.eql(u8, item.string, expected_dependency_content)) {
-                return outputStamp(dir, path);
+                const stamp = outputStamp(dir, path) catch |err| {
+                    try handleWatchAtomicFailure(.observe, builtin.os.tag, err, attempt, watch_poll_delay_ns);
+                    continue :poll;
+                };
+                return stamp;
             }
         }
-        std.Thread.sleep(50 * std.time.ns_per_ms);
+        std.Thread.sleep(watch_poll_delay_ns);
     }
     return error.WatchTimeout;
 }
@@ -494,7 +598,7 @@ test "binary CLI native watch atomically replaces CSS and its composed source ma
         case.watch_dependency_after,
     );
     std.Thread.sleep(1200 * std.time.ns_per_ms);
-    try std.testing.expect(changed.eql(try outputStamp(tmp.dir, "output.css")));
+    try std.testing.expect(changed.eql(try waitForOutputStamp(tmp.dir, "output.css")));
     _ = try child.kill();
     running = false;
 }
@@ -612,7 +716,7 @@ test "binary CLI native watch invalidates the finite syntax dependency set" {
             case.watch_expected_after,
         );
         std.Thread.sleep(1200 * std.time.ns_per_ms);
-        try std.testing.expect(changed.eql(try outputStamp(tmp.dir, "output.css")));
+        try std.testing.expect(changed.eql(try waitForOutputStamp(tmp.dir, "output.css")));
 
         _ = try child.kill();
         running = false;
