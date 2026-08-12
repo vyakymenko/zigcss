@@ -18,6 +18,13 @@ const hard_max_attempts = 8_192;
 const hard_max_depth = 128;
 const read_chunk_bytes = 64 * 1024;
 
+extern "kernel32" fn GetFinalPathNameByHandleW(
+    handle: std.os.windows.HANDLE,
+    path: [*]u16,
+    path_len: std.os.windows.DWORD,
+    flags: std.os.windows.DWORD,
+) callconv(.winapi) std.os.windows.DWORD;
+
 pub const Limits = struct {
     max_file_bytes: usize = hard_max_file_bytes,
     max_total_bytes: usize = hard_max_total_bytes,
@@ -249,10 +256,7 @@ pub const Resolver = struct {
             return error.InvalidRoot;
         if (input_identity.kind != .directory) return error.InvalidRoot;
 
-        const canonical = std.fs.realpathAlloc(self.allocator, input) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.InvalidRoot,
-        };
+        const canonical = try canonicalPathFromHandle(self.allocator, input_dir.fd, input);
         errdefer self.allocator.free(canonical);
         if (!validPathInput(canonical) or !isSupportedAbsolutePath(canonical)) {
             return error.InvalidRoot;
@@ -279,6 +283,35 @@ pub const Resolver = struct {
         });
     }
 };
+
+fn canonicalPathFromHandle(
+    allocator: std.mem.Allocator,
+    handle: std.fs.File.Handle,
+    input: []const u8,
+) Error![]u8 {
+    if (builtin.os.tag != .windows) {
+        return std.fs.realpathAlloc(allocator, input) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.InvalidRoot,
+        };
+    }
+
+    var buffer: [std.os.windows.PATH_MAX_WIDE]u16 = undefined;
+    const length = GetFinalPathNameByHandleW(
+        handle,
+        &buffer,
+        @intCast(buffer.len),
+        std.os.windows.FILE_NAME_NORMALIZED | std.os.windows.VOLUME_NAME_DOS,
+    );
+    if (length == 0 or @as(usize, length) >= buffer.len) return error.InvalidRoot;
+
+    var canonical_wide = buffer[0..length];
+    const extended_prefix = std.unicode.utf8ToUtf16LeStringLiteral("\\\\?\\");
+    if (std.mem.startsWith(u16, canonical_wide, extended_prefix)) {
+        canonical_wide = canonical_wide[extended_prefix.len..];
+    }
+    return std.unicode.wtf16LeToWtf8Alloc(allocator, canonical_wide);
+}
 
 pub const Session = struct {
     allocator: std.mem.Allocator,
@@ -347,7 +380,11 @@ pub const Session = struct {
             else => return error.NotRegular,
         }
 
-        const canonical_path = std.fs.realpathAlloc(self.allocator, resolved.absolute) catch |err| switch (err) {
+        const canonical_path = canonicalPathFromHandle(
+            self.allocator,
+            file.handle,
+            resolved.absolute,
+        ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.FileChanged,
         };
@@ -740,7 +777,11 @@ pub const Session = struct {
             return error.FileChanged;
         if (!parent_before.sameObject(parent_after)) return error.FileChanged;
 
-        const canonical_after = std.fs.realpathAlloc(self.allocator, absolute) catch |err| switch (err) {
+        const canonical_after = canonicalPathFromHandle(
+            self.allocator,
+            reopened.handle,
+            absolute,
+        ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return error.FileChanged,
         };

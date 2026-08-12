@@ -43,6 +43,20 @@ fn fileUrl(path: []const u8) ![]u8 {
     return resolver.pathToFileUrl(std.testing.allocator, path);
 }
 
+test "resolver admits one handle-canonical absolute root on every supported host" {
+    const allocator = std.testing.allocator;
+    const cwd = try std.process.getCwdAlloc(allocator);
+    defer allocator.free(cwd);
+
+    var confined = try resolver.Resolver.init(allocator, &.{cwd}, .{});
+    defer confined.deinit();
+    try std.testing.expectEqual(@as(usize, 1), confined.roots().len);
+
+    const root_url = try resolver.pathToFileUrl(allocator, confined.roots()[0]);
+    defer allocator.free(root_url);
+    try std.testing.expect(try confined.containsSourceUrl(allocator, root_url));
+}
+
 test "resolver owns canonical roots and rejects invalid root authority" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
