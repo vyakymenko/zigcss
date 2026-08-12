@@ -5,6 +5,7 @@ import {
   actionPins,
   buildThroughputPolicy,
   readWorkflowSources,
+  validateActionRuntimeMigration,
   validateBuildThroughput,
   validateBuildTestGraph,
   validateWorkflowSources,
@@ -21,6 +22,14 @@ test('all workflow jobs use explicit least privilege and immutable reviewed acti
   assert.deepEqual(validateZigTestSuiteRunner(), {
     failureTailBytes: 16 * 1024,
     modes: ['Debug', 'ReleaseSafe'],
+  })
+})
+
+test('the hosted action runtime migration has a finite reviewed terminal', () => {
+  assert.deepEqual(validateActionRuntimeMigration(), {
+    actions: 3,
+    node24Actions: ['actions/checkout', 'actions/setup-node'],
+    pendingActions: ['mlugg/setup-zig'],
   })
 })
 

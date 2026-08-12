@@ -10,20 +10,23 @@ export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 // Dependabot owns reviewed updates to these immutable references.
 export const actionPins = Object.freeze({
   'actions/checkout': Object.freeze({
-    sha: '34e114876b0b11c390a56381ad16ebd13914f8d5',
-    version: 'v4.3.1',
+    sha: '3d3c42e5aac5ba805825da76410c181273ba90b1',
+    version: 'v7.0.1',
+    runtime: 'node24',
   }),
   'mlugg/setup-zig': Object.freeze({
     sha: 'd1434d08867e3ee9daa34448df10607b98908d29',
     version: 'v2.2.1',
+    runtime: 'node20',
   }),
   'actions/upload-artifact': Object.freeze({
     sha: 'ea165f8d65b6e75b540449e92b4886f43607fa02',
     version: 'v4.6.2',
   }),
   'actions/setup-node': Object.freeze({
-    sha: '49933ea5288caeca8642d1e84afbd3f7d6820020',
-    version: 'v4.4.0',
+    sha: '820762786026740c76f36085b0efc47a31fe5020',
+    version: 'v7.0.0',
+    runtime: 'node24',
   }),
   'actions/upload-pages-artifact': Object.freeze({
     sha: '7b1f4a764d45c48632c6b24a0339c27f5614fb0b',
@@ -45,6 +48,19 @@ export const actionPins = Object.freeze({
     sha: 'de2c0eb89ae2a093876385947365aca7b0e5f844',
     version: 'v1',
   }),
+})
+
+// Public Build annotations define this exact finite migration inventory. The
+// official GitHub actions have tagged Node 24 releases; setup-zig remains on
+// its latest immutable tag until its separate terminal replacement slice.
+export const actionRuntimeMigration = Object.freeze({
+  requiredRuntime: 'node24',
+  terminalActions: Object.freeze([
+    'actions/checkout',
+    'actions/setup-node',
+    'mlugg/setup-zig',
+  ]),
+  pendingActions: Object.freeze(['mlugg/setup-zig']),
 })
 
 export const workflowPolicy = Object.freeze({
@@ -173,6 +189,32 @@ function same(left, right) {
 
 function sortedRecord(record) {
   return Object.fromEntries(Object.entries(record).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+export function validateActionRuntimeMigration() {
+  const node24Actions = []
+  const pendingActions = []
+  for (const name of actionRuntimeMigration.terminalActions) {
+    const pin = actionPins[name]
+    if (pin === undefined) fail(`action runtime migration includes unknown action ${name}`)
+    if (pin.runtime === actionRuntimeMigration.requiredRuntime) {
+      node24Actions.push(name)
+      continue
+    }
+    if (actionRuntimeMigration.pendingActions.includes(name) && pin.runtime === 'node20') {
+      pendingActions.push(name)
+      continue
+    }
+    fail(`${name} has unreviewed action runtime ${pin.runtime ?? 'missing'}`)
+  }
+  if (!same(pendingActions, actionRuntimeMigration.pendingActions)) {
+    fail(`action runtime migration pending inventory changed: expected ${actionRuntimeMigration.pendingActions.join(', ')}, received ${pendingActions.join(', ')}`)
+  }
+  return {
+    actions: actionRuntimeMigration.terminalActions.length,
+    node24Actions,
+    pendingActions,
+  }
 }
 
 export function validateZigTestSuiteRunner() {
@@ -405,6 +447,7 @@ export function validateWorkflowSources(sources) {
     jobs += result.jobs
     actions += result.actions
   }
+  validateActionRuntimeMigration()
   validateZigTestSuiteRunner()
   validateSelfGate(sources.get('build.yml'))
   validateBuildThroughput(sources.get('build.yml'))
