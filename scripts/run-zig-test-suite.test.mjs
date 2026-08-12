@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import {
-  failureTailBytes,
+  failureHeadBytes,
   runZigTestSuite,
   suiteArguments,
 } from './run-zig-test-suite.mjs'
@@ -108,11 +108,11 @@ test('a failed suite preserves its code and emits one escaped public annotation'
   assert.match(annotation.output(), /50%25%0Afailure%0D%0A/)
 })
 
-test('failure diagnostics retain lower, terminal, and over-limit tails', async () => {
+test('failure diagnostics retain lower, terminal, and over-limit heads', async () => {
   for (const fixture of [
     { name: 'lower', output: 'x', truncated: false },
-    { name: 'terminal', output: 'x'.repeat(failureTailBytes), truncated: false },
-    { name: 'over', output: `discarded-${'x'.repeat(failureTailBytes)}`, truncated: true },
+    { name: 'terminal', output: 'x'.repeat(failureHeadBytes), truncated: false },
+    { name: 'over', output: `${'x'.repeat(failureHeadBytes)}discarded`, truncated: true },
   ]) {
     const child = controlledSpawn({ stderr: fixture.output, code: 1 })
     const annotation = captureStream()
@@ -128,9 +128,33 @@ test('failure diagnostics retain lower, terminal, and over-limit tails', async (
     assert.equal(exitCode, 1, fixture.name)
     assert.equal(child.calls.length, 1, fixture.name)
     assert.equal(decoded.includes('diagnostic truncated'), fixture.truncated, fixture.name)
-    assert.equal(decoded.endsWith('x'.repeat(Math.min(fixture.output.length, failureTailBytes))), true, fixture.name)
-    assert.equal(decoded.includes('discarded-'), false, fixture.name)
+    assert.equal(decoded.endsWith(fixture.output.slice(0, failureHeadBytes)), true, fixture.name)
+    assert.equal(decoded.includes('discarded'), false, fixture.name)
   }
+})
+
+test('an over-limit public annotation retains the causal diagnostic head', async () => {
+  const causalDiagnostic = 'error: InvalidRoot while opening the Windows corpus root\n'
+  const terminalSummary = 'error: repeated failed-test summary\n'.repeat(failureHeadBytes)
+  const child = controlledSpawn({
+    stderr: `${causalDiagnostic}${terminalSummary}`,
+    code: 1,
+  })
+  const annotation = captureStream()
+
+  const exitCode = await runZigTestSuite({
+    mode: 'ReleaseSafe',
+    spawnProcess: child.spawnProcess,
+    stdout: captureStream().stream,
+    stderr: captureStream().stream,
+    annotation: annotation.stream,
+  })
+  const decoded = decodedAnnotation(annotation.output())
+
+  assert.equal(exitCode, 1)
+  assert.equal(child.calls.length, 1)
+  assert.match(decoded, /InvalidRoot while opening the Windows corpus root/)
+  assert.equal(decoded.length <= 4096, true)
 })
 
 test('a spawn failure is fail-closed and publicly attributed', async () => {

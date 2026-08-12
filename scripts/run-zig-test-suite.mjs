@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url'
 
 const scriptPath = fileURLToPath(import.meta.url)
 
-// GitHub workflow-command escaping can expand every retained byte to three bytes.
-// Keeping 16 KiB leaves the annotation below GitHub's 64 KiB command limit.
-export const failureTailBytes = 16 * 1024
+// Public check annotations expose at most 4 KiB of message text even though the
+// workflow-command transport accepts more. Retaining the first 3 KiB keeps the
+// causal diagnostic and leaves room for the bounded status and truncation note.
+export const failureHeadBytes = 3 * 1024
 
 const modes = Object.freeze({
   Debug: Object.freeze(['build', 'test', '--summary', 'all']),
@@ -26,30 +27,29 @@ function workflowCommandData(value) {
     .replaceAll('\n', '%0A')
 }
 
-function boundedTail(maxBytes) {
-  let tail = Buffer.alloc(0)
+function boundedHead(maxBytes) {
+  let head = Buffer.alloc(0)
   let truncated = false
 
   return {
     append(chunk) {
       const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      if (incoming.length >= maxBytes) {
-        truncated ||= tail.length > 0 || incoming.length > maxBytes
-        tail = incoming.subarray(incoming.length - maxBytes)
+      if (incoming.length === 0) return
+      const remaining = maxBytes - head.length
+      if (remaining === 0) {
+        truncated = true
         return
       }
-
-      const overflow = tail.length + incoming.length - maxBytes
-      if (overflow > 0) {
+      if (incoming.length > remaining) {
+        head = Buffer.concat([head, incoming.subarray(0, remaining)])
         truncated = true
-        tail = Buffer.concat([tail.subarray(overflow), incoming])
       } else {
-        tail = Buffer.concat([tail, incoming])
+        head = Buffer.concat([head, incoming])
       }
     },
     diagnostic() {
       return {
-        output: tail.toString('utf8'),
+        output: head.toString('utf8'),
         truncated,
       }
     },
@@ -59,7 +59,7 @@ function boundedTail(maxBytes) {
 function emitFailure(annotation, status, capture) {
   const diagnostic = capture.diagnostic()
   const truncation = diagnostic.truncated
-    ? `\n[diagnostic truncated to last ${failureTailBytes} bytes]`
+    ? `\n[diagnostic truncated after first ${failureHeadBytes} bytes]`
     : ''
   const detail = diagnostic.output.length === 0 ? '' : `\n${diagnostic.output}`
   const message = `zig build test ${status}${truncation}${detail}`
@@ -74,7 +74,7 @@ export async function runZigTestSuite({
   annotation = stdout,
 }) {
   const args = suiteArguments(mode)
-  const capture = boundedTail(failureTailBytes)
+  const capture = boundedHead(failureHeadBytes)
 
   return new Promise(resolve => {
     let child

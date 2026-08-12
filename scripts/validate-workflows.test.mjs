@@ -24,7 +24,7 @@ function cloneSources() {
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
   assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 10, actions: 32 })
   assert.deepEqual(validateZigTestSuiteRunner(), {
-    failureTailBytes: 16 * 1024,
+    failureHeadBytes: 3 * 1024,
     modes: ['Debug', 'ReleaseSafe'],
   })
 })

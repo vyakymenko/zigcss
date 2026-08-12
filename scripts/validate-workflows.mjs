@@ -8,7 +8,7 @@ import {
   resolveArchiveCommand as setupZigResolveArchiveCommand,
   zigVersion as setupZigVersion,
 } from '../.github/actions/setup-zig/setup-zig.mjs'
-import { failureTailBytes, suiteArguments } from './run-zig-test-suite.mjs'
+import { failureHeadBytes, suiteArguments } from './run-zig-test-suite.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -177,7 +177,7 @@ export const buildThroughputPolicy = Object.freeze({
 })
 
 export const zigTestSuitePolicy = Object.freeze({
-  failureTailBytes: 16 * 1024,
+  failureHeadBytes: 3 * 1024,
   modes: Object.freeze({
     Debug: Object.freeze(['build', 'test', '--summary', 'all']),
     ReleaseSafe: Object.freeze(['build', 'test', '-Doptimize=ReleaseSafe', '--summary', 'all']),
@@ -235,8 +235,8 @@ export function validateActionRuntimeMigration() {
 }
 
 export function validateZigTestSuiteRunner() {
-  if (failureTailBytes !== zigTestSuitePolicy.failureTailBytes) {
-    fail(`Zig test suite failure tail must remain ${zigTestSuitePolicy.failureTailBytes} bytes`)
+  if (failureHeadBytes !== zigTestSuitePolicy.failureHeadBytes) {
+    fail(`Zig test suite failure head must remain ${zigTestSuitePolicy.failureHeadBytes} bytes`)
   }
   for (const [mode, expected] of Object.entries(zigTestSuitePolicy.modes)) {
     let actual
@@ -250,7 +250,7 @@ export function validateZigTestSuiteRunner() {
     }
   }
   return {
-    failureTailBytes,
+    failureHeadBytes,
     modes: Object.keys(zigTestSuitePolicy.modes),
   }
 }
