@@ -7,6 +7,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
+import { nativeTargetContract } from './native-target-contract.mjs'
 import {
   expectedPackedFiles,
   validatePackageDescription,
@@ -31,13 +32,13 @@ const runtimeTraceLauncher = [
   "child.on('exit', (code, signal) => { if (signal) process.kill(process.pid, signal); else process.exitCode = code ?? 1 })",
 ].join('\n')
 
-export const nativeSmokeTargets = Object.freeze([
-  Object.freeze({ target: 'x86_64-linux', runner: 'ubuntu-latest', nodePlatform: 'linux', nodeArch: 'x64', binaryName: 'zigcss' }),
-  Object.freeze({ target: 'aarch64-linux', runner: 'ubuntu-24.04-arm', nodePlatform: 'linux', nodeArch: 'arm64', binaryName: 'zigcss' }),
-  Object.freeze({ target: 'x86_64-macos', runner: 'macos-15-intel', nodePlatform: 'darwin', nodeArch: 'x64', binaryName: 'zigcss' }),
-  Object.freeze({ target: 'aarch64-macos', runner: 'macos-15', nodePlatform: 'darwin', nodeArch: 'arm64', binaryName: 'zigcss' }),
-  Object.freeze({ target: 'x86_64-windows', runner: 'windows-latest', nodePlatform: 'win32', nodeArch: 'x64', binaryName: 'zigcss.exe' }),
-])
+export const nativeSmokeTargets = Object.freeze(nativeTargetContract.map(target => Object.freeze({
+  target: target.target,
+  runner: target.runner,
+  nodePlatform: target.nodePlatform,
+  nodeArch: target.nodeArch,
+  binaryName: target.binaryName,
+})))
 
 export const nativePreprocessorSmokeCases = Object.freeze([
   Object.freeze({

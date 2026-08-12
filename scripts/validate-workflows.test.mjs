@@ -310,6 +310,26 @@ test('required build jobs declare finite hard timeout budgets', () => {
   assert.throws(() => validateWorkflowSources(duplicateTarget), /exactly 5 unique targets/)
 })
 
+test('throughput owns the exact finite five-target artifact matrix', () => {
+  const workflow = cloneSources().get('build.yml')
+  const substitutions = [
+    ['ubuntu-latest', 'ubuntu-24.04'],
+    ['            arch: x86_64\n            target: x86_64-linux', '            arch: aarch64\n            target: x86_64-linux'],
+    ['x86_64-linux', 'x86_64-freebsd'],
+    ['archive-extension: tar.gz', 'archive-extension: tgz'],
+    ['zig-version: 0.15.2', 'zig-version: 0.15.3'],
+    ['binary-name: zigcss\n', 'binary-name: zigcss.bin\n'],
+  ]
+
+  for (const [current, replacement] of substitutions) {
+    assert.notEqual(workflow.replace(current, replacement), workflow)
+    assert.throws(
+      () => validateBuildThroughput(workflow.replace(current, replacement)),
+      /exact five-target artifact matrix/,
+    )
+  }
+})
+
 test('the artifact matrix uses the optimized complete suite while the test job owns Debug', () => {
   const buildWorkflow = cloneSources().get('build.yml')
   const artifactJob = buildWorkflow.slice(

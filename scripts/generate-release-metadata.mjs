@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { nativeTargetContract } from './native-target-contract.mjs'
 import { parseReleaseVersion } from './validate-release-version.mjs'
 import { actionPins, validateWorkflowSource } from './validate-workflows.mjs'
 
@@ -16,13 +17,13 @@ const maximumBinaryBytes = 256 * 1024 * 1024
 const maximumMetadataBytes = 16 * 1024 * 1024
 const maximumSourceDateEpoch = 253_402_300_799
 
-export const releaseTargets = Object.freeze([
-  Object.freeze({ target: 'x86_64-linux', os: 'ubuntu-latest', arch: 'x86_64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
-  Object.freeze({ target: 'aarch64-linux', os: 'ubuntu-24.04-arm', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
-  Object.freeze({ target: 'x86_64-macos', os: 'macos-15-intel', arch: 'x86_64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
-  Object.freeze({ target: 'aarch64-macos', os: 'macos-15', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
-  Object.freeze({ target: 'x86_64-windows', os: 'windows-latest', arch: 'x86_64', binaryName: 'zigcss.exe', archiveExtension: 'zip' }),
-])
+export const releaseTargets = Object.freeze(nativeTargetContract.map(target => Object.freeze({
+  target: target.target,
+  os: target.runner,
+  arch: target.zigArch,
+  binaryName: target.binaryName,
+  archiveExtension: target.archiveExtension,
+})))
 
 function fail(message) {
   throw new Error(`release metadata integrity: ${message}`)

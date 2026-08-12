@@ -8,6 +8,7 @@ import {
   resolveArchiveCommand as setupZigResolveArchiveCommand,
   zigVersion as setupZigVersion,
 } from '../.github/actions/setup-zig/setup-zig.mjs'
+import { nativeTargetContract } from './native-target-contract.mjs'
 import { failureHeadBytes, suiteArguments } from './run-zig-test-suite.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
@@ -168,7 +169,14 @@ export const nativeTestRunners = Object.freeze([
 
 export const buildThroughputPolicy = Object.freeze({
   interventionPercent: 75,
-  artifactTargets: 5,
+  artifactMatrix: Object.freeze(nativeTargetContract.map(target => Object.freeze({
+    os: target.runner,
+    arch: target.zigArch,
+    target: target.target,
+    archiveExtension: target.archiveExtension,
+    zigVersion: target.zigVersion,
+    binaryName: target.binaryName,
+  }))),
   jobs: Object.freeze({
     build: Object.freeze({ timeoutMinutes: 240 }),
     'native-package-evidence': Object.freeze({ timeoutMinutes: 60 }),
@@ -591,10 +599,22 @@ export function validateBuildThroughput(buildWorkflow) {
     return match === null ? [] : [match[1]]
   })
   if (
-    artifactTargets.length !== buildThroughputPolicy.artifactTargets
+    artifactTargets.length !== buildThroughputPolicy.artifactMatrix.length
     || new Set(artifactTargets).size !== artifactTargets.length
   ) {
-    fail(`build.yml artifact matrix must contain exactly ${buildThroughputPolicy.artifactTargets} unique targets`)
+    fail(`build.yml artifact matrix must contain exactly ${buildThroughputPolicy.artifactMatrix.length} unique targets`)
+  }
+  const artifactMatrixExpression = /          - os: ([^\n]+)\n            arch: ([^\n]+)\n            target: ([^\n]+)\n            archive-extension: ([^\n]+)\n            zig-version: ([^\n]+)\n            binary-name: ([^\n]+)/g
+  const artifactMatrix = [...artifactJob.matchAll(artifactMatrixExpression)].map(match => ({
+    os: match[1],
+    arch: match[2],
+    target: match[3],
+    archiveExtension: match[4],
+    zigVersion: match[5],
+    binaryName: match[6],
+  }))
+  if (!same(artifactMatrix, buildThroughputPolicy.artifactMatrix)) {
+    fail('build.yml must retain the exact five-target artifact matrix')
   }
   const debugAggregate = `      - name: Run Native Tests\n        run: ${zigTestSuitePolicy.workflowCommands.Debug}`
   const releaseSafeAggregate = `      - name: Run Native Tests\n        run: ${zigTestSuitePolicy.workflowCommands.ReleaseSafe}`

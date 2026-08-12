@@ -7,6 +7,7 @@ import path from 'node:path'
 import { builtinModules, createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { nativeTargetContract } from './native-target-contract.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -39,13 +40,11 @@ export const canonicalProviderMetadata = Object.freeze({
     syntaxes: Object.freeze(['stylus']),
   }),
 })
-export const nativePackageTargets = Object.freeze([
-  Object.freeze({ target: 'x86_64-linux', platform: 'linux', arch: 'x64' }),
-  Object.freeze({ target: 'aarch64-linux', platform: 'linux', arch: 'arm64' }),
-  Object.freeze({ target: 'x86_64-macos', platform: 'darwin', arch: 'x64' }),
-  Object.freeze({ target: 'aarch64-macos', platform: 'darwin', arch: 'arm64' }),
-  Object.freeze({ target: 'x86_64-windows', platform: 'win32', arch: 'x64' }),
-])
+export const nativePackageTargets = Object.freeze(nativeTargetContract.map(target => Object.freeze({
+  target: target.target,
+  platform: target.nodePlatform,
+  arch: target.nodeArch,
+})))
 
 export const runtimeSourceFiles = Object.freeze([
   'index.js',
