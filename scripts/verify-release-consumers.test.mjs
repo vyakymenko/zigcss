@@ -11,7 +11,11 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
 import { prepareReleaseContainer } from './prepare-release-container.mjs'
-import { parseHomebrewFormula } from './verify-homebrew-formula.mjs'
+import {
+  homebrewArchiveDownloadArguments,
+  homebrewArchiveDownloadPolicy,
+  parseHomebrewFormula,
+} from './verify-homebrew-formula.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -437,6 +441,37 @@ test('Homebrew formula pins immutable verified source and the supported Zig tool
   assert.match(formula, /assert_equal "\.test\{color:red\}", shell_output\("#\{bin\}\/zigcss test\.css --minify"\)/)
   assert.doesNotMatch(formula, /^  head /m)
   assert.doesNotMatch(formula, /^  sha256 ""$/m)
+})
+
+test('Homebrew source download is hermetic, bounded, and retryable', () => {
+  assert.deepEqual(homebrewArchiveDownloadPolicy, {
+    attempts: 5,
+    connectTimeoutSeconds: 10,
+    maximumArchiveBytes: 64 * 1024 * 1024,
+    requestTimeoutSeconds: 60,
+    retryDelaySeconds: 1,
+    retryWindowSeconds: 240,
+  })
+  assert.deepEqual(homebrewArchiveDownloadArguments('/tmp/source.tar.gz', 'https://github.com/example/archive.tar.gz'), [
+    '--disable',
+    '--fail',
+    '--location',
+    '--silent',
+    '--show-error',
+    '--proto', '=https',
+    '--proto-redir', '=https',
+    '--max-redirs', '5',
+    '--connect-timeout', '10',
+    '--max-time', '60',
+    '--retry', '4',
+    '--retry-all-errors',
+    '--retry-delay', '1',
+    '--retry-max-time', '240',
+    '--remove-on-error',
+    '--max-filesize', String(64 * 1024 * 1024),
+    '--output', '/tmp/source.tar.gz',
+    'https://github.com/example/archive.tar.gz',
+  ])
 })
 
 test('Homebrew formula policy rejects mutable sources, missing trust data, and second downloads', () => {

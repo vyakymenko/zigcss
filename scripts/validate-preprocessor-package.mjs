@@ -8,6 +8,7 @@ import { builtinModules, createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { nativeTargetContract } from './native-target-contract.mjs'
+import { releaseConsumerSteps, validateReleaseConsumerSteps } from './validate-workflows.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -570,11 +571,20 @@ export function validatePreprocessorPackagingWorkflows(build, release, docs) {
   if (literalCount(build, command) !== 1 || literalCount(release, command) !== 1) {
     fail('build and release workflows must each own one exact native package gate')
   }
-  const buildConsumer = build.indexOf('- name: Test release consumer paths')
-  const buildPackage = build.indexOf('- name: Verify native zero-dependency package', buildConsumer)
+  const buildTestJob = build.slice(build.indexOf('\n  test:\n'))
+  validateReleaseConsumerSteps(buildTestJob)
+  const buildConsumer = build.indexOf(`- name: ${releaseConsumerSteps[0].name}`)
+  const buildConsumerTerminal = build.indexOf(`- name: ${releaseConsumerSteps.at(-1).name}`, buildConsumer)
+  const buildPackage = build.indexOf('- name: Verify native zero-dependency package', buildConsumerTerminal)
   const buildInstall = build.indexOf('- name: Install independent validator', buildPackage)
   const buildAudit = build.indexOf('- name: Verify dependency policy and production audits', buildInstall)
-  if (buildConsumer < 0 || buildPackage <= buildConsumer || buildInstall <= buildPackage || buildAudit <= buildInstall) {
+  if (
+    buildConsumer < 0
+    || buildConsumerTerminal <= buildConsumer
+    || buildPackage <= buildConsumerTerminal
+    || buildInstall <= buildPackage
+    || buildAudit <= buildInstall
+  ) {
     fail('build workflow native package gate is ordered incorrectly')
   }
   const releaseSetup = release.indexOf('- name: Setup Node.js')

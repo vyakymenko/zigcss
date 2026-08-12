@@ -320,12 +320,12 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     /release metadata CI step/,
   )
   assert.throws(
-    () => validateReleaseBuildGate(buildWorkflow.replace('- name: Test release consumer paths', '- name: Removed release consumer paths')),
-    /release consumer CI step/,
+    () => validateReleaseBuildGate(buildWorkflow.replace('- name: Test release smoke', '- name: Removed release smoke')),
+    /Test release smoke CI step/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-smoke', 'npm run removed:release-smoke')),
-    /release smoke policy CI command/,
+    /Test release smoke CI command/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:npm-publication', 'npm run removed:npm-publication')),
@@ -337,7 +337,7 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-homebrew', 'npm run removed:release-homebrew')),
-    /Homebrew release CI command/,
+    /Test release Homebrew CI command/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('          fetch-depth: 0', '          fetch-depth: 1')),

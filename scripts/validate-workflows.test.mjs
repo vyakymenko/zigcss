@@ -267,6 +267,12 @@ test('required build jobs declare finite hard timeout budgets', () => {
       'native-package-evidence': 45,
       test: 180,
     },
+    releaseConsumerSteps: [
+      'npm run test:release-smoke',
+      'npm run test:release-consumers',
+      'npm run test:release-container',
+      'npm run test:release-homebrew',
+    ],
     semanticGraphs: {
       build: 'ReleaseSafe',
       test: 'Debug',
@@ -363,6 +369,40 @@ test('the artifact matrix uses the optimized complete suite while the test job o
   assert.equal(artifactJob.split(optimizedArtifactSuite).length, 2)
   assert.equal(testJob.split(debugAggregate).length, 2)
   assert.equal(testJob.includes(optimizedAggregate), false)
+})
+
+test('release consumer gates are finite, individually attributable, and run once', () => {
+  const buildWorkflow = cloneSources().get('build.yml')
+  assert.deepEqual(validateBuildThroughput(buildWorkflow).releaseConsumerSteps, [
+    'npm run test:release-smoke',
+    'npm run test:release-consumers',
+    'npm run test:release-container',
+    'npm run test:release-homebrew',
+  ])
+
+  const missing = buildWorkflow.replace(
+    '      - name: Test release container\n        run: npm run test:release-container\n\n',
+    '',
+  )
+  assert.notEqual(missing, buildWorkflow)
+  assert.throws(() => validateBuildThroughput(missing), /release consumer.*attributable/i)
+
+  const duplicated = buildWorkflow.replace(
+    '      - name: Test release Homebrew\n        run: npm run test:release-homebrew',
+    '      - name: Test release Homebrew\n        run: npm run test:release-homebrew\n\n'
+      + '      - name: Test release Homebrew duplicate\n        run: npm run test:release-homebrew',
+  )
+  assert.notEqual(duplicated, buildWorkflow)
+  assert.throws(() => validateBuildThroughput(duplicated), /release consumer.*attributable/i)
+
+  const merged = buildWorkflow.replace(
+    '      - name: Test release smoke\n        run: npm run test:release-smoke\n\n'
+      + '      - name: Test release consumers\n        run: npm run test:release-consumers',
+    '      - name: Test release consumer paths\n'
+      + '        run: npm run test:release-smoke && npm run test:release-consumers',
+  )
+  assert.notEqual(merged, buildWorkflow)
+  assert.throws(() => validateBuildThroughput(merged), /release consumer.*attributable/i)
 })
 
 test('the complete Zig test graph owns every native frontend runner', () => {

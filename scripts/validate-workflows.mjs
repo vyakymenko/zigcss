@@ -184,6 +184,13 @@ export const buildThroughputPolicy = Object.freeze({
   }),
 })
 
+export const releaseConsumerSteps = Object.freeze([
+  Object.freeze({ name: 'Test release smoke', command: 'npm run test:release-smoke' }),
+  Object.freeze({ name: 'Test release consumers', command: 'npm run test:release-consumers' }),
+  Object.freeze({ name: 'Test release container', command: 'npm run test:release-container' }),
+  Object.freeze({ name: 'Test release Homebrew', command: 'npm run test:release-homebrew' }),
+])
+
 export const zigTestSuitePolicy = Object.freeze({
   failureHeadBytes: 3 * 1024,
   modes: Object.freeze({
@@ -588,6 +595,27 @@ function parseJobTimeout(lines, job) {
   return Number.parseInt(match[1], 10)
 }
 
+export function validateReleaseConsumerSteps(testJob) {
+  if (typeof testJob !== 'string') fail('build.yml Test Suite is unavailable')
+  const lines = testJob.split('\n')
+  let priorPosition = -1
+  for (const step of releaseConsumerSteps) {
+    const nameLine = `      - name: ${step.name}`
+    const commandLine = `        run: ${step.command}`
+    const nameCount = lines.filter(line => line === nameLine).length
+    const commandCount = lines.filter(line => line === commandLine).length
+    const position = testJob.indexOf(`${nameLine}\n${commandLine}\n\n`)
+    if (nameCount !== 1 || commandCount !== 1 || position <= priorPosition) {
+      fail('build.yml release consumer gates must remain individually attributable and run exactly once')
+    }
+    priorPosition = position
+  }
+  if (testJob.includes('- name: Test release consumer paths')) {
+    fail('build.yml release consumer gates must remain individually attributable and run exactly once')
+  }
+  return releaseConsumerSteps.map(step => step.command)
+}
+
 export function validateBuildThroughput(buildWorkflow) {
   const concurrency = 'concurrency:\n  group: build-${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: false\n'
   if (buildWorkflow.split(concurrency).length !== 2) {
@@ -647,10 +675,12 @@ export function validateBuildThroughput(buildWorkflow) {
   if (testJob.split(aggregate).length !== 2) {
     fail('build.yml Test Suite must run exactly one complete root Zig test graph')
   }
+  const attributedReleaseConsumerSteps = validateReleaseConsumerSteps(testJob)
   return {
     artifactTargets: artifactTargets.length,
     hardTimeoutMinutes,
     interventionMinutes,
+    releaseConsumerSteps: attributedReleaseConsumerSteps,
     semanticGraphs: {
       build: 'ReleaseSafe',
       test: 'Debug',

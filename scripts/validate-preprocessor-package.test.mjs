@@ -200,6 +200,19 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
   assert.equal(validatePreprocessorPackagingWorkflows(build, release, docs), true)
   assert.throws(
     () => validatePreprocessorPackagingWorkflows(
+      build.replace(
+        '      - name: Test release smoke\n        run: npm run test:release-smoke\n\n'
+          + '      - name: Test release consumers\n        run: npm run test:release-consumers',
+        '      - name: Test release consumer paths\n'
+          + '        run: npm run test:release-smoke && npm run test:release-consumers',
+      ),
+      release,
+      docs,
+    ),
+    /release consumer.*attributable/i,
+  )
+  assert.throws(
+    () => validatePreprocessorPackagingWorkflows(
       build.replace("node-version: '20.19.0'", "node-version: '20'"),
       release,
       docs,

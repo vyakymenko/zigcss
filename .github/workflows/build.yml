@@ -233,8 +233,17 @@ jobs:
       - name: Verify native zero-dependency migration contract
         run: npm run test:native-contract && npm run test:native-package-evidence && npm run check:native-contract
 
-      - name: Test release consumer paths
-        run: npm run test:release-smoke && npm run test:release-consumers && npm run test:release-container && npm run test:release-homebrew
+      - name: Test release smoke
+        run: npm run test:release-smoke
+
+      - name: Test release consumers
+        run: npm run test:release-consumers
+
+      - name: Test release container
+        run: npm run test:release-container
+
+      - name: Test release Homebrew
+        run: npm run test:release-homebrew
 
       - name: Verify native zero-dependency package
         run: npm run test:preprocessor-package && npm run check:preprocessor-package

@@ -15,6 +15,39 @@ const maximumArchiveBytes = 64 * 1024 * 1024
 const maximumArchiveEntries = 10_000
 const commandTimeoutMs = 10 * 60 * 1000
 
+export const homebrewArchiveDownloadPolicy = Object.freeze({
+  attempts: 5,
+  connectTimeoutSeconds: 10,
+  maximumArchiveBytes,
+  requestTimeoutSeconds: 60,
+  retryDelaySeconds: 1,
+  retryWindowSeconds: 240,
+})
+
+export function homebrewArchiveDownloadArguments(archive, url) {
+  const policy = homebrewArchiveDownloadPolicy
+  return [
+    '--disable',
+    '--fail',
+    '--location',
+    '--silent',
+    '--show-error',
+    '--proto', '=https',
+    '--proto-redir', '=https',
+    '--max-redirs', '5',
+    '--connect-timeout', String(policy.connectTimeoutSeconds),
+    '--max-time', String(policy.requestTimeoutSeconds),
+    '--retry', String(policy.attempts - 1),
+    '--retry-all-errors',
+    '--retry-delay', String(policy.retryDelaySeconds),
+    '--retry-max-time', String(policy.retryWindowSeconds),
+    '--remove-on-error',
+    '--max-filesize', String(policy.maximumArchiveBytes),
+    '--output', archive,
+    url,
+  ]
+}
+
 function fail(message) {
   throw new Error(`Homebrew release verification: ${message}`)
 }
@@ -195,20 +228,11 @@ export function smokeHomebrewFormula(root = repositoryRoot) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-homebrew-release-'))
   try {
     const archive = path.join(temporary, 'source.tar.gz')
-    run('curl', [
-      '--fail',
-      '--location',
-      '--silent',
-      '--show-error',
-      '--proto', '=https',
-      '--proto-redir', '=https',
-      '--max-redirs', '5',
-      '--connect-timeout', '10',
-      '--max-time', '60',
-      '--max-filesize', String(maximumArchiveBytes),
-      '--output', archive,
-      policy.url,
-    ], { timeout: 70_000 })
+    run('curl', homebrewArchiveDownloadArguments(archive, policy.url), {
+      timeout: (homebrewArchiveDownloadPolicy.retryWindowSeconds
+        + homebrewArchiveDownloadPolicy.requestTimeoutSeconds
+        + 10) * 1000,
+    })
     if (sha256(archive) !== policy.digest) fail('downloaded source archive SHA-256 does not match the formula')
 
     const expectedRoot = inspectArchive(archive, policy)

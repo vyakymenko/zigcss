@@ -4,7 +4,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { nativeTargetContract } from './native-target-contract.mjs'
 import { parseReleaseVersion } from './validate-release-version.mjs'
-import { actionPins, validateWorkflowSource } from './validate-workflows.mjs'
+import {
+  actionPins,
+  releaseConsumerSteps,
+  validateReleaseConsumerSteps,
+  validateWorkflowSource,
+} from './validate-workflows.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -622,17 +627,17 @@ export function validateReleaseBuildGate(source) {
     1,
     'release metadata CI command',
   )
-  expectLiteralCount(source, '- name: Test release consumer paths', 1, 'release consumer CI step')
-  expectLiteralCount(source, 'npm run test:release-smoke', 1, 'release smoke policy CI command')
-  expectLiteralCount(source, 'npm run test:release-consumers', 1, 'release consumer CI command')
-  expectLiteralCount(source, 'npm run test:release-container', 1, 'release container CI command')
-  expectLiteralCount(source, 'npm run test:release-homebrew', 1, 'Homebrew release CI command')
+  for (const step of releaseConsumerSteps) {
+    expectLiteralCount(source, `- name: ${step.name}`, 1, `${step.name} CI step`)
+    expectLiteralCount(source, step.command, 1, `${step.name} CI command`)
+  }
+  validateReleaseConsumerSteps(source.slice(testJobStart))
   expectOrdered(source, [
     '- name: Setup Node.js',
     '- name: Verify workflow security policy',
     '- name: Verify release version policy',
     '- name: Verify release artifact metadata policy',
-    '- name: Test release consumer paths',
+    ...releaseConsumerSteps.map(step => `- name: ${step.name}`),
     '- name: Install independent validator',
   ])
   return true
