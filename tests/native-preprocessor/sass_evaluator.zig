@@ -44407,6 +44407,87 @@ const LocalUseAllocationContext = struct {
     root_url: []const u8,
 };
 
+const local_use_allocation_reexports = [_]struct {
+    name: []const u8,
+    previous: []const u8,
+}{
+    // The first re-export crosses from the configured module into a sibling.
+    .{ .name = "third", .previous = "tokens" },
+    // The second re-export is the terminal representative recursive branch.
+    .{ .name = "fourth", .previous = "third" },
+};
+
+const local_use_allocation_input =
+    \\@use "sass:meta";
+    \\@use "sass:map";
+    \\@use "sass:math";
+    \\@use "index-module";
+    \\@use "owner";
+    \\@use "tokens" with ($configured: (
+    \\  "function": meta.get-function("abs", $module: "math"),
+    \\  "mixin": meta.get-mixin("apply", $module: "meta"),
+    \\  "owner-function": owner.$exported-function,
+    \\  "owner-mixin": owner.$exported-mixin,
+    \\  "nested": (1, 2),
+    \\));
+    \\@use "third" with ($configured: tokens.$configured-export);
+    \\@use "fourth" with ($configured: third.$configured-export);
+    \\$function: meta.get-function("double", $module: "tokens");
+    \\$mixin: meta.get-mixin("emit", "tokens");
+    \\$exported-function: tokens.$exported-function;
+    \\$exported-mixin: tokens.$exported-mixin;
+    \\$variables: meta.module-variables("tokens");
+    \\$functions: meta.module-functions("tokens");
+    \\$mixins: meta.module-mixins("tokens");
+    \\$returned: tokens.return-callables();
+    \\$configured-export: tokens.$configured-export;
+    \\$configured-enumerated: map.get($variables, "configured-export");
+    \\$third-configured: third.$configured-export;
+    \\$fourth-configured: fourth.$configured-export;
+    \\.root {
+    \\  function-exists: meta.function-exists("double", "tokens");
+    \\  mixin-exists: meta.mixin-exists("emit", "tokens");
+    \\  variable-enumerated: map.get($variables, "public") == tokens.$public;
+    \\  function-enumerated: map.get($functions, "double") == $function;
+    \\  mixin-enumerated: map.get($mixins, "emit") == $mixin;
+    \\  function-type: meta.type-of($function);
+    \\  function-inspect: meta.inspect($function);
+    \\  reflected-value: meta.call($function, tokens.$public);
+    \\  exported-function-value: meta.call($exported-function, tokens.$public);
+    \\  exported-function-enumerated: map.get($variables, "exported-function") == $exported-function;
+    \\  callable-argument-value: tokens.invoke($exported-function, 3px);
+    \\  callable-result-value: meta.call(map.get($returned, "function"), 5px);
+    \\  callable-result-builtin: meta.call(map.get($returned, "builtin"), -6px);
+    \\  configured-function: meta.call(map.get($configured-export, "owner-function"), 7px);
+    \\  configured-identity: map.get($configured-export, "owner-function") == map.get($configured-enumerated, "owner-function");
+    \\  configured-inspect: meta.inspect(map.get($configured-export, "owner-function"));
+    \\  configured-mixin-content: meta.accepts-content(map.get($configured-export, "owner-mixin"));
+    \\  third-configured-function: meta.call(map.get($third-configured, "owner-function"), 9px);
+    \\  third-configured-identity: map.get($third-configured, "owner-function") == map.get($configured-export, "owner-function");
+    \\  third-configured-inspect: meta.inspect(map.get($third-configured, "owner-function"));
+    \\  third-configured-mixin-content: meta.accepts-content(map.get($third-configured, "owner-mixin"));
+    \\  fourth-configured-function: meta.call(map.get($fourth-configured, "owner-function"), 11px);
+    \\  fourth-configured-identity: map.get($fourth-configured, "owner-function") == map.get($third-configured, "owner-function");
+    \\  fourth-configured-inspect: meta.inspect(map.get($fourth-configured, "owner-function"));
+    \\  fourth-configured-mixin-content: meta.accepts-content(map.get($fourth-configured, "owner-mixin"));
+    \\  mixin-type: meta.type-of($mixin);
+    \\  mixin-inspect: meta.inspect($mixin);
+    \\  mixin-content: meta.accepts-content($mixin);
+    \\  value: tokens.double(tokens.$public);
+    \\}
+    \\@include meta.apply($mixin, reflected);
+    \\@include meta.apply($exported-mixin, exported);
+    \\@include tokens.apply-callback($exported-mixin, callback);
+    \\@include tokens.round-trip($exported-function) using ($callback) {
+    \\  .round-trip { value: meta.call($callback, 4px); }
+    \\}
+    \\@include meta.apply(map.get($returned, "mixin"), result);
+    \\@include meta.apply(map.get($configured-export, "owner-mixin"), configured-reexport, 8px);
+    \\@include meta.apply(map.get($third-configured, "owner-mixin"), reexported-configuration, 10px);
+    \\@include meta.apply(map.get($fourth-configured, "owner-mixin"), recursive-reexported-configuration, 12px);
+    \\@include tokens.emit(card) { content: caller; }
+;
+
 fn exerciseLocalUseAllocationFailures(
     allocator: std.mem.Allocator,
     context: *const LocalUseAllocationContext,
@@ -44417,207 +44498,7 @@ fn exerciseLocalUseAllocationFailures(
     defer session.deinit();
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
-    const input =
-        \\@use "sass:meta";
-        \\@use "sass:map";
-        \\@use "sass:math";
-        \\@use "index-module";
-        \\@use "owner";
-        \\@use "tokens" with ($configured: (
-        \\  "function": meta.get-function("abs", $module: "math"),
-        \\  "mixin": meta.get-mixin("apply", $module: "meta"),
-        \\  "owner-function": owner.$exported-function,
-        \\  "owner-mixin": owner.$exported-mixin,
-        \\  "nested": (1, 2),
-        \\));
-        \\@use "third" with ($configured: tokens.$configured-export);
-        \\@use "fourth" with ($configured: third.$configured-export);
-        \\@use "fifth" with ($configured: fourth.$configured-export);
-        \\@use "sixth" with ($configured: fifth.$configured-export);
-        \\@use "seventh" with ($configured: sixth.$configured-export);
-        \\@use "eighth" with ($configured: seventh.$configured-export);
-        \\@use "ninth" with ($configured: eighth.$configured-export);
-        \\@use "tenth" with ($configured: ninth.$configured-export);
-        \\@use "eleventh" with ($configured: tenth.$configured-export);
-        \\@use "twelfth" with ($configured: eleventh.$configured-export);
-        \\@use "thirteenth" with ($configured: twelfth.$configured-export);
-        \\@use "fourteenth" with ($configured: thirteenth.$configured-export);
-        \\@use "fifteenth" with ($configured: fourteenth.$configured-export);
-        \\@use "sixteenth" with ($configured: fifteenth.$configured-export);
-        \\@use "seventeenth" with ($configured: sixteenth.$configured-export);
-        \\@use "eighteenth" with ($configured: seventeenth.$configured-export);
-        \\@use "nineteenth" with ($configured: eighteenth.$configured-export);
-        \\@use "twentieth" with ($configured: nineteenth.$configured-export);
-        \\@use "twenty-first" with ($configured: twentieth.$configured-export);
-        \\@use "twenty-second" with ($configured: twenty-first.$configured-export);
-        \\@use "twenty-third" with ($configured: twenty-second.$configured-export);
-        \\@use "twenty-fourth" with ($configured: twenty-third.$configured-export);
-        \\@use "twenty-fifth" with ($configured: twenty-fourth.$configured-export);
-        \\@use "twenty-sixth" with ($configured: twenty-fifth.$configured-export);
-        \\@use "twenty-seventh" with ($configured: twenty-sixth.$configured-export);
-        \\@use "twenty-eighth" with ($configured: twenty-seventh.$configured-export);
-        \\@use "twenty-ninth" with ($configured: twenty-eighth.$configured-export);
-        \\@use "thirtieth" with ($configured: twenty-ninth.$configured-export);
-        \\@use "thirty-first" with ($configured: thirtieth.$configured-export);
-        \\@use "thirty-second" with ($configured: thirty-first.$configured-export);
-        \\@use "thirty-third" with ($configured: thirty-second.$configured-export);
-        \\@use "thirty-fourth" with ($configured: thirty-third.$configured-export);
-        \\@use "thirty-fifth" with ($configured: thirty-fourth.$configured-export);
-        \\@use "thirty-sixth" with ($configured: thirty-fifth.$configured-export);
-        \\@use "thirty-seventh" with ($configured: thirty-sixth.$configured-export);
-        \\@use "thirty-eighth" with ($configured: thirty-seventh.$configured-export);
-        \\@use "thirty-ninth" with ($configured: thirty-eighth.$configured-export);
-        \\@use "fortieth" with ($configured: thirty-ninth.$configured-export);
-        \\@use "forty-first" with ($configured: fortieth.$configured-export);
-        \\@use "forty-second" with ($configured: forty-first.$configured-export);
-        \\@use "forty-third" with ($configured: forty-second.$configured-export);
-        \\@use "forty-fourth" with ($configured: forty-third.$configured-export);
-        \\@use "forty-fifth" with ($configured: forty-fourth.$configured-export);
-        \\@use "forty-sixth" with ($configured: forty-fifth.$configured-export);
-        \\@use "forty-seventh" with ($configured: forty-sixth.$configured-export);
-        \\@use "forty-eighth" with ($configured: forty-seventh.$configured-export);
-        \\@use "forty-ninth" with ($configured: forty-eighth.$configured-export);
-        \\@use "fiftieth" with ($configured: forty-ninth.$configured-export);
-        \\@use "fifty-first" with ($configured: fiftieth.$configured-export);
-        \\@use "fifty-second" with ($configured: fifty-first.$configured-export);
-        \\@use "fifty-third" with ($configured: fifty-second.$configured-export);
-        \\@use "fifty-fourth" with ($configured: fifty-third.$configured-export);
-        \\@use "fifty-fifth" with ($configured: fifty-fourth.$configured-export);
-        \\@use "fifty-sixth" with ($configured: fifty-fifth.$configured-export);
-        \\@use "fifty-seventh" with ($configured: fifty-sixth.$configured-export);
-        \\@use "fifty-eighth" with ($configured: fifty-seventh.$configured-export);
-        \\@use "fifty-ninth" with ($configured: fifty-eighth.$configured-export);
-        \\@use "sixtieth" with ($configured: fifty-ninth.$configured-export);
-        \\@use "sixty-first" with ($configured: sixtieth.$configured-export);
-        \\@use "sixty-second" with ($configured: sixty-first.$configured-export);
-        \\$function: meta.get-function("double", $module: "tokens");
-        \\$mixin: meta.get-mixin("emit", "tokens");
-        \\$exported-function: tokens.$exported-function;
-        \\$exported-mixin: tokens.$exported-mixin;
-        \\$variables: meta.module-variables("tokens");
-        \\$functions: meta.module-functions("tokens");
-        \\$mixins: meta.module-mixins("tokens");
-        \\$returned: tokens.return-callables();
-        \\$configured-export: tokens.$configured-export;
-        \\$configured-enumerated: map.get($variables, "configured-export");
-        \\$third-configured: third.$configured-export;
-        \\$fourth-configured: fourth.$configured-export;
-        \\$fifth-configured: fifth.$configured-export;
-        \\$sixth-configured: sixth.$configured-export;
-        \\$seventh-configured: seventh.$configured-export;
-        \\$eighth-configured: eighth.$configured-export;
-        \\$ninth-configured: ninth.$configured-export;
-        \\$tenth-configured: tenth.$configured-export;
-        \\$eleventh-configured: eleventh.$configured-export;
-        \\$twelfth-configured: twelfth.$configured-export;
-        \\$thirteenth-configured: thirteenth.$configured-export;
-        \\$fourteenth-configured: fourteenth.$configured-export;
-        \\$fifteenth-configured: fifteenth.$configured-export;
-        \\$sixteenth-configured: sixteenth.$configured-export;
-        \\.root {
-        \\  function-exists: meta.function-exists("double", "tokens");
-        \\  mixin-exists: meta.mixin-exists("emit", "tokens");
-        \\  variable-enumerated: map.get($variables, "public") == tokens.$public;
-        \\  function-enumerated: map.get($functions, "double") == $function;
-        \\  mixin-enumerated: map.get($mixins, "emit") == $mixin;
-        \\  function-type: meta.type-of($function);
-        \\  function-inspect: meta.inspect($function);
-        \\  reflected-value: meta.call($function, tokens.$public);
-        \\  exported-function-value: meta.call($exported-function, tokens.$public);
-        \\  exported-function-enumerated: map.get($variables, "exported-function") == $exported-function;
-        \\  callable-argument-value: tokens.invoke($exported-function, 3px);
-        \\  callable-result-value: meta.call(map.get($returned, "function"), 5px);
-        \\  callable-result-builtin: meta.call(map.get($returned, "builtin"), -6px);
-        \\  configured-function: meta.call(map.get($configured-export, "owner-function"), 7px);
-        \\  configured-identity: map.get($configured-export, "owner-function") == map.get($configured-enumerated, "owner-function");
-        \\  configured-inspect: meta.inspect(map.get($configured-export, "owner-function"));
-        \\  configured-mixin-content: meta.accepts-content(map.get($configured-export, "owner-mixin"));
-        \\  third-configured-function: meta.call(map.get($third-configured, "owner-function"), 9px);
-        \\  third-configured-identity: map.get($third-configured, "owner-function") == map.get($configured-export, "owner-function");
-        \\  third-configured-inspect: meta.inspect(map.get($third-configured, "owner-function"));
-        \\  third-configured-mixin-content: meta.accepts-content(map.get($third-configured, "owner-mixin"));
-        \\  fourth-configured-function: meta.call(map.get($fourth-configured, "owner-function"), 11px);
-        \\  fourth-configured-identity: map.get($fourth-configured, "owner-function") == map.get($third-configured, "owner-function");
-        \\  fourth-configured-inspect: meta.inspect(map.get($fourth-configured, "owner-function"));
-        \\  fourth-configured-mixin-content: meta.accepts-content(map.get($fourth-configured, "owner-mixin"));
-        \\  fifth-configured-function: meta.call(map.get($fifth-configured, "owner-function"), 13px);
-        \\  fifth-configured-identity: map.get($fifth-configured, "owner-function") == map.get($fourth-configured, "owner-function");
-        \\  fifth-configured-inspect: meta.inspect(map.get($fifth-configured, "owner-function"));
-        \\  fifth-configured-mixin-content: meta.accepts-content(map.get($fifth-configured, "owner-mixin"));
-        \\  sixth-configured-function: meta.call(map.get($sixth-configured, "owner-function"), 15px);
-        \\  sixth-configured-identity: map.get($sixth-configured, "owner-function") == map.get($fifth-configured, "owner-function");
-        \\  sixth-configured-inspect: meta.inspect(map.get($sixth-configured, "owner-function"));
-        \\  sixth-configured-mixin-content: meta.accepts-content(map.get($sixth-configured, "owner-mixin"));
-        \\  seventh-configured-function: meta.call(map.get($seventh-configured, "owner-function"), 17px);
-        \\  seventh-configured-identity: map.get($seventh-configured, "owner-function") == map.get($sixth-configured, "owner-function");
-        \\  seventh-configured-inspect: meta.inspect(map.get($seventh-configured, "owner-function"));
-        \\  seventh-configured-mixin-content: meta.accepts-content(map.get($seventh-configured, "owner-mixin"));
-        \\  eighth-configured-function: meta.call(map.get($eighth-configured, "owner-function"), 19px);
-        \\  eighth-configured-identity: map.get($eighth-configured, "owner-function") == map.get($seventh-configured, "owner-function");
-        \\  eighth-configured-inspect: meta.inspect(map.get($eighth-configured, "owner-function"));
-        \\  eighth-configured-mixin-content: meta.accepts-content(map.get($eighth-configured, "owner-mixin"));
-        \\  ninth-configured-function: meta.call(map.get($ninth-configured, "owner-function"), 21px);
-        \\  ninth-configured-identity: map.get($ninth-configured, "owner-function") == map.get($eighth-configured, "owner-function");
-        \\  ninth-configured-inspect: meta.inspect(map.get($ninth-configured, "owner-function"));
-        \\  ninth-configured-mixin-content: meta.accepts-content(map.get($ninth-configured, "owner-mixin"));
-        \\  tenth-configured-function: meta.call(map.get($tenth-configured, "owner-function"), 23px);
-        \\  tenth-configured-identity: map.get($tenth-configured, "owner-function") == map.get($ninth-configured, "owner-function");
-        \\  tenth-configured-inspect: meta.inspect(map.get($tenth-configured, "owner-function"));
-        \\  tenth-configured-mixin-content: meta.accepts-content(map.get($tenth-configured, "owner-mixin"));
-        \\  eleventh-configured-function: meta.call(map.get($eleventh-configured, "owner-function"), 25px);
-        \\  eleventh-configured-identity: map.get($eleventh-configured, "owner-function") == map.get($tenth-configured, "owner-function");
-        \\  eleventh-configured-inspect: meta.inspect(map.get($eleventh-configured, "owner-function"));
-        \\  eleventh-configured-mixin-content: meta.accepts-content(map.get($eleventh-configured, "owner-mixin"));
-        \\  twelfth-configured-function: meta.call(map.get($twelfth-configured, "owner-function"), 27px);
-        \\  twelfth-configured-identity: map.get($twelfth-configured, "owner-function") == map.get($eleventh-configured, "owner-function");
-        \\  twelfth-configured-inspect: meta.inspect(map.get($twelfth-configured, "owner-function"));
-        \\  twelfth-configured-mixin-content: meta.accepts-content(map.get($twelfth-configured, "owner-mixin"));
-        \\  thirteenth-configured-function: meta.call(map.get($thirteenth-configured, "owner-function"), 29px);
-        \\  thirteenth-configured-identity: map.get($thirteenth-configured, "owner-function") == map.get($twelfth-configured, "owner-function");
-        \\  thirteenth-configured-inspect: meta.inspect(map.get($thirteenth-configured, "owner-function"));
-        \\  thirteenth-configured-mixin-content: meta.accepts-content(map.get($thirteenth-configured, "owner-mixin"));
-        \\  fourteenth-configured-function: meta.call(map.get($fourteenth-configured, "owner-function"), 31px);
-        \\  fourteenth-configured-identity: map.get($fourteenth-configured, "owner-function") == map.get($thirteenth-configured, "owner-function");
-        \\  fourteenth-configured-inspect: meta.inspect(map.get($fourteenth-configured, "owner-function"));
-        \\  fourteenth-configured-mixin-content: meta.accepts-content(map.get($fourteenth-configured, "owner-mixin"));
-        \\  fifteenth-configured-function: meta.call(map.get($fifteenth-configured, "owner-function"), 33px);
-        \\  fifteenth-configured-identity: map.get($fifteenth-configured, "owner-function") == map.get($fourteenth-configured, "owner-function");
-        \\  fifteenth-configured-inspect: meta.inspect(map.get($fifteenth-configured, "owner-function"));
-        \\  fifteenth-configured-mixin-content: meta.accepts-content(map.get($fifteenth-configured, "owner-mixin"));
-        \\  sixteenth-configured-function: meta.call(map.get($sixteenth-configured, "owner-function"), 35px);
-        \\  sixteenth-configured-identity: map.get($sixteenth-configured, "owner-function") == map.get($fifteenth-configured, "owner-function");
-        \\  sixteenth-configured-inspect: meta.inspect(map.get($sixteenth-configured, "owner-function"));
-        \\  sixteenth-configured-mixin-content: meta.accepts-content(map.get($sixteenth-configured, "owner-mixin"));
-        \\  mixin-type: meta.type-of($mixin);
-        \\  mixin-inspect: meta.inspect($mixin);
-        \\  mixin-content: meta.accepts-content($mixin);
-        \\  value: tokens.double(tokens.$public);
-        \\}
-        \\@include meta.apply($mixin, reflected);
-        \\@include meta.apply($exported-mixin, exported);
-        \\@include tokens.apply-callback($exported-mixin, callback);
-        \\@include tokens.round-trip($exported-function) using ($callback) {
-        \\  .round-trip { value: meta.call($callback, 4px); }
-        \\}
-        \\@include meta.apply(map.get($returned, "mixin"), result);
-        \\@include meta.apply(map.get($configured-export, "owner-mixin"), configured-reexport, 8px);
-        \\@include meta.apply(map.get($third-configured, "owner-mixin"), reexported-configuration, 10px);
-        \\@include meta.apply(map.get($fourth-configured, "owner-mixin"), recursive-reexported-configuration, 12px);
-        \\@include meta.apply(map.get($fifth-configured, "owner-mixin"), fifth-module-reexported-configuration, 14px);
-        \\@include meta.apply(map.get($sixth-configured, "owner-mixin"), sixth-module-reexported-configuration, 16px);
-        \\@include meta.apply(map.get($seventh-configured, "owner-mixin"), seventh-module-reexported-configuration, 18px);
-        \\@include meta.apply(map.get($eighth-configured, "owner-mixin"), eighth-module-reexported-configuration, 20px);
-        \\@include meta.apply(map.get($ninth-configured, "owner-mixin"), ninth-module-reexported-configuration, 22px);
-        \\@include meta.apply(map.get($tenth-configured, "owner-mixin"), tenth-module-reexported-configuration, 24px);
-        \\@include meta.apply(map.get($eleventh-configured, "owner-mixin"), eleventh-module-reexported-configuration, 26px);
-        \\@include meta.apply(map.get($twelfth-configured, "owner-mixin"), twelfth-module-reexported-configuration, 28px);
-        \\@include meta.apply(map.get($thirteenth-configured, "owner-mixin"), thirteenth-module-reexported-configuration, 30px);
-        \\@include meta.apply(map.get($fourteenth-configured, "owner-mixin"), fourteenth-module-reexported-configuration, 32px);
-        \\@include meta.apply(map.get($fifteenth-configured, "owner-mixin"), fifteenth-module-reexported-configuration, 34px);
-        \\@include meta.apply(map.get($sixteenth-configured, "owner-mixin"), sixteenth-module-reexported-configuration, 36px);
-        \\@include tokens.emit(card) { content: caller; }
-    ;
-    const source_id = try sources.add(context.root_url, input);
+    const source_id = try sources.add(context.root_url, local_use_allocation_input);
     var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
     defer parser.deinit();
     var document = try parser.parse();
@@ -44634,12 +44515,33 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".owner{order:owner}.module{order:first}.configured-owner{function:9px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-owner-mixin{value:12px}.configured-third{function:15px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-third-mixin{value:18px}.configured-fourth{function:21px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-fourth-mixin{value:24px}.configured-fifth{function:27px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-fifth-mixin{value:30px}.configured-sixth{function:33px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-sixth-mixin{value:36px}.configured-seventh{function:39px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-seventh-mixin{value:42px}" ++
-            ".configured-eighth{function:45px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-eighth-mixin{value:48px}.configured-ninth{function:51px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-ninth-mixin{value:54px}.configured-tenth{function:57px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-tenth-mixin{value:60px}.configured-eleventh{function:63px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-eleventh-mixin{value:66px}.configured-twelfth{function:69px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-twelfth-mixin{value:72px}.configured-thirteenth{function:75px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-thirteenth-mixin{value:78px}.configured-fourteenth{function:81px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-fourteenth-mixin{value:84px}.configured-fifteenth{function:87px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-fifteenth-mixin{value:90px}.configured-sixteenth{function:93px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-sixteenth-mixin{value:96px}" ++
-            ".root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured-function:21px;configured-identity:true;configured-inspect:get-function(\"triple\");configured-mixin-content:true;third-configured-function:27px;third-configured-identity:true;third-configured-inspect:get-function(\"triple\");third-configured-mixin-content:true;fourth-configured-function:33px;fourth-configured-identity:true;fourth-configured-inspect:get-function(\"triple\");fourth-configured-mixin-content:true;fifth-configured-function:39px;fifth-configured-identity:true;fifth-configured-inspect:get-function(\"triple\");fifth-configured-mixin-content:true;sixth-configured-function:45px;sixth-configured-identity:true;sixth-configured-inspect:get-function(\"triple\");sixth-configured-mixin-content:true;seventh-configured-function:51px;seventh-configured-identity:true;seventh-configured-inspect:get-function(\"triple\");seventh-configured-mixin-content:true;eighth-configured-function:57px;eighth-configured-identity:true;eighth-configured-inspect:get-function(\"triple\");eighth-configured-mixin-content:true;ninth-configured-function:63px;ninth-configured-identity:true;ninth-configured-inspect:get-function(\"triple\");ninth-configured-mixin-content:true;tenth-configured-function:69px;tenth-configured-identity:true;tenth-configured-inspect:get-function(\"triple\");tenth-configured-mixin-content:true;eleventh-configured-function:75px;eleventh-configured-identity:true;eleventh-configured-inspect:get-function(\"triple\");eleventh-configured-mixin-content:true;twelfth-configured-function:81px;twelfth-configured-identity:true;twelfth-configured-inspect:get-function(\"triple\");twelfth-configured-mixin-content:true;thirteenth-configured-function:87px;thirteenth-configured-identity:true;thirteenth-configured-inspect:get-function(\"triple\");thirteenth-configured-mixin-content:true;fourteenth-configured-function:93px;fourteenth-configured-identity:true;fourteenth-configured-inspect:get-function(\"triple\");fourteenth-configured-mixin-content:true;fifteenth-configured-function:99px;fifteenth-configured-identity:true;fifteenth-configured-inspect:get-function(\"triple\");fifteenth-configured-mixin-content:true;sixteenth-configured-function:105px;sixteenth-configured-identity:true;sixteenth-configured-inspect:get-function(\"triple\");sixteenth-configured-mixin-content:true;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}" ++
-            ".reflected{value:4px}.exported{value:4px}.callback{value:4px}.round-trip{value:8px}.result{value:4px}.configured-reexport{value:24px}.reexported-configuration{value:30px}.recursive-reexported-configuration{value:36px}.fifth-module-reexported-configuration{value:42px}.sixth-module-reexported-configuration{value:48px}.seventh-module-reexported-configuration{value:54px}.eighth-module-reexported-configuration{value:60px}.ninth-module-reexported-configuration{value:66px}.tenth-module-reexported-configuration{value:72px}.eleventh-module-reexported-configuration{value:78px}.twelfth-module-reexported-configuration{value:84px}.thirteenth-module-reexported-configuration{value:90px}.fourteenth-module-reexported-configuration{value:96px}.fifteenth-module-reexported-configuration{value:102px}.sixteenth-module-reexported-configuration{value:108px}.card{value:4px;content:caller}",
+        ".owner{order:owner}.module{order:first}.configured-owner{function:9px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-owner-mixin{value:12px}.configured-third{function:15px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-third-mixin{value:18px}.configured-fourth{function:21px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-fourth-mixin{value:24px}" ++
+            ".root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured-function:21px;configured-identity:true;configured-inspect:get-function(\"triple\");configured-mixin-content:true;third-configured-function:27px;third-configured-identity:true;third-configured-inspect:get-function(\"triple\");third-configured-mixin-content:true;fourth-configured-function:33px;fourth-configured-identity:true;fourth-configured-inspect:get-function(\"triple\");fourth-configured-mixin-content:true;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}" ++
+            ".reflected{value:4px}.exported{value:4px}.callback{value:4px}.round-trip{value:8px}.result{value:4px}.configured-reexport{value:24px}.reexported-configuration{value:30px}.recursive-reexported-configuration{value:36px}.card{value:4px;content:caller}",
         result.css(),
     );
+}
+
+test "native Sass local use allocation replay has representative re-export bounds" {
+    try std.testing.expectEqual(@as(usize, 2), local_use_allocation_reexports.len);
+    for (local_use_allocation_reexports) |case| {
+        const directive = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"{s}\" with ($configured: {s}.$configured-export);",
+            .{ case.name, case.previous },
+        );
+        defer std.testing.allocator.free(directive);
+        try std.testing.expect(std.mem.indexOf(
+            u8,
+            local_use_allocation_input,
+            directive,
+        ) != null);
+    }
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        local_use_allocation_input,
+        "@use \"fifth\"",
+    ) == null);
 }
 
 test "native Sass local use handles every allocation failure" {
@@ -44727,508 +44629,6 @@ test "native Sass local use handles every allocation failure" {
         ,
     });
     try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-fifth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 9px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-fifth-mixin, 10px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_sixth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-sixth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 11px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-sixth-mixin, 12px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_seventh.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-seventh {
-        \\  function: meta.call(map.get($configured, "owner-function"), 13px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-seventh-mixin, 14px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_eighth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-eighth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 15px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-eighth-mixin, 16px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_ninth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-ninth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 17px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-ninth-mixin, 18px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_tenth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-tenth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 19px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-tenth-mixin, 20px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_eleventh.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-eleventh {
-        \\  function: meta.call(map.get($configured, "owner-function"), 21px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-eleventh-mixin, 22px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twelfth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-twelfth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 23px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-twelfth-mixin, 24px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirteenth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-thirteenth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 25px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-thirteenth-mixin, 26px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fourteenth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-fourteenth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 27px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-fourteenth-mixin, 28px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifteenth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-fifteenth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 29px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-fifteenth-mixin, 30px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_sixteenth.scss",
-        .data =
-        \\@use "sass:map";
-        \\@use "sass:meta";
-        \\$configured: null !default;
-        \\.configured-sixteenth {
-        \\  function: meta.call(map.get($configured, "owner-function"), 31px);
-        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
-        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
-        \\}
-        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-sixteenth-mixin, 32px);
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_seventeenth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_eighteenth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_nineteenth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twentieth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-first.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-second.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-third.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-fourth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-fifth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-sixth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-seventh.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-eighth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_twenty-ninth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirtieth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-first.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-second.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-third.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-fourth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-fifth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-sixth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-seventh.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-eighth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_thirty-ninth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fortieth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-first.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-second.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-third.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-fourth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-fifth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-sixth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-seventh.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-eighth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_forty-ninth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fiftieth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-first.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-second.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-third.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-fourth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-fifth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-sixth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-seventh.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-eighth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_fifty-ninth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_sixtieth.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_sixty-first.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
-        .sub_path = "root/_sixty-second.scss",
-        .data =
-        \\$configured: null !default;
-        \\$configured-export: $configured;
-        ,
-    });
-    try tmp.dir.writeFile(.{
         .sub_path = "root/_fourth.scss",
         .data =
         \\@use "sass:map";
@@ -45243,139 +44643,10 @@ test "native Sass local use handles every allocation failure" {
         \\$configured-export: $configured;
         ,
     });
-    const root_input =
-        \\@use "sass:meta";
-        \\@use "sass:map";
-        \\@use "sass:math";
-        \\@use "owner";
-        \\@use "tokens" with ($configured: (
-        \\  "function": meta.get-function("abs", $module: "math"),
-        \\  "mixin": meta.get-mixin("apply", $module: "meta"),
-        \\  "owner-function": owner.$exported-function,
-        \\  "owner-mixin": owner.$exported-mixin,
-        \\  "nested": (1, 2),
-        \\));
-        \\@use "third" with ($configured: tokens.$configured-export);
-        \\@use "fourth" with ($configured: third.$configured-export);
-        \\@use "fifth" with ($configured: fourth.$configured-export);
-        \\@use "sixth" with ($configured: fifth.$configured-export);
-        \\@use "seventh" with ($configured: sixth.$configured-export);
-        \\@use "eighth" with ($configured: seventh.$configured-export);
-        \\@use "ninth" with ($configured: eighth.$configured-export);
-        \\@use "tenth" with ($configured: ninth.$configured-export);
-        \\@use "eleventh" with ($configured: tenth.$configured-export);
-        \\@use "twelfth" with ($configured: eleventh.$configured-export);
-        \\@use "thirteenth" with ($configured: twelfth.$configured-export);
-        \\$function: meta.get-function("double", $module: "tokens");
-        \\$mixin: meta.get-mixin("emit", "tokens");
-        \\$exported-function: tokens.$exported-function;
-        \\$exported-mixin: tokens.$exported-mixin;
-        \\$variables: meta.module-variables("tokens");
-        \\$functions: meta.module-functions("tokens");
-        \\$mixins: meta.module-mixins("tokens");
-        \\$returned: tokens.return-callables();
-        \\$configured-export: tokens.$configured-export;
-        \\$configured-enumerated: map.get($variables, "configured-export");
-        \\$third-configured: third.$configured-export;
-        \\$fourth-configured: fourth.$configured-export;
-        \\$fifth-configured: fifth.$configured-export;
-        \\$sixth-configured: sixth.$configured-export;
-        \\$seventh-configured: seventh.$configured-export;
-        \\$eighth-configured: eighth.$configured-export;
-        \\$ninth-configured: ninth.$configured-export;
-        \\$tenth-configured: tenth.$configured-export;
-        \\$eleventh-configured: eleventh.$configured-export;
-        \\$twelfth-configured: twelfth.$configured-export;
-        \\$thirteenth-configured: thirteenth.$configured-export;
-        \\.root {
-        \\  function-exists: meta.function-exists("double", "tokens");
-        \\  mixin-exists: meta.mixin-exists("emit", "tokens");
-        \\  variable-enumerated: map.get($variables, "public") == tokens.$public;
-        \\  function-enumerated: map.get($functions, "double") == $function;
-        \\  mixin-enumerated: map.get($mixins, "emit") == $mixin;
-        \\  function-type: meta.type-of($function);
-        \\  function-inspect: meta.inspect($function);
-        \\  reflected-value: meta.call($function, tokens.$public);
-        \\  exported-function-value: meta.call($exported-function, tokens.$public);
-        \\  exported-function-enumerated: map.get($variables, "exported-function") == $exported-function;
-        \\  callable-argument-value: tokens.invoke($exported-function, 3px);
-        \\  callable-result-value: meta.call(map.get($returned, "function"), 5px);
-        \\  callable-result-builtin: meta.call(map.get($returned, "builtin"), -6px);
-        \\  configured-function: meta.call(map.get($configured-export, "owner-function"), 7px);
-        \\  configured-identity: map.get($configured-export, "owner-function") == map.get($configured-enumerated, "owner-function");
-        \\  configured-inspect: meta.inspect(map.get($configured-export, "owner-function"));
-        \\  configured-mixin-content: meta.accepts-content(map.get($configured-export, "owner-mixin"));
-        \\  third-configured-function: meta.call(map.get($third-configured, "owner-function"), 9px);
-        \\  third-configured-identity: map.get($third-configured, "owner-function") == map.get($configured-export, "owner-function");
-        \\  third-configured-inspect: meta.inspect(map.get($third-configured, "owner-function"));
-        \\  third-configured-mixin-content: meta.accepts-content(map.get($third-configured, "owner-mixin"));
-        \\  fourth-configured-function: meta.call(map.get($fourth-configured, "owner-function"), 11px);
-        \\  fourth-configured-identity: map.get($fourth-configured, "owner-function") == map.get($third-configured, "owner-function");
-        \\  fourth-configured-inspect: meta.inspect(map.get($fourth-configured, "owner-function"));
-        \\  fourth-configured-mixin-content: meta.accepts-content(map.get($fourth-configured, "owner-mixin"));
-        \\  fifth-configured-function: meta.call(map.get($fifth-configured, "owner-function"), 13px);
-        \\  fifth-configured-identity: map.get($fifth-configured, "owner-function") == map.get($fourth-configured, "owner-function");
-        \\  fifth-configured-inspect: meta.inspect(map.get($fifth-configured, "owner-function"));
-        \\  fifth-configured-mixin-content: meta.accepts-content(map.get($fifth-configured, "owner-mixin"));
-        \\  sixth-configured-function: meta.call(map.get($sixth-configured, "owner-function"), 15px);
-        \\  sixth-configured-identity: map.get($sixth-configured, "owner-function") == map.get($fifth-configured, "owner-function");
-        \\  sixth-configured-inspect: meta.inspect(map.get($sixth-configured, "owner-function"));
-        \\  sixth-configured-mixin-content: meta.accepts-content(map.get($sixth-configured, "owner-mixin"));
-        \\  seventh-configured-function: meta.call(map.get($seventh-configured, "owner-function"), 17px);
-        \\  seventh-configured-identity: map.get($seventh-configured, "owner-function") == map.get($sixth-configured, "owner-function");
-        \\  seventh-configured-inspect: meta.inspect(map.get($seventh-configured, "owner-function"));
-        \\  seventh-configured-mixin-content: meta.accepts-content(map.get($seventh-configured, "owner-mixin"));
-        \\  eighth-configured-function: meta.call(map.get($eighth-configured, "owner-function"), 19px);
-        \\  eighth-configured-identity: map.get($eighth-configured, "owner-function") == map.get($seventh-configured, "owner-function");
-        \\  eighth-configured-inspect: meta.inspect(map.get($eighth-configured, "owner-function"));
-        \\  eighth-configured-mixin-content: meta.accepts-content(map.get($eighth-configured, "owner-mixin"));
-        \\  ninth-configured-function: meta.call(map.get($ninth-configured, "owner-function"), 21px);
-        \\  ninth-configured-identity: map.get($ninth-configured, "owner-function") == map.get($eighth-configured, "owner-function");
-        \\  ninth-configured-inspect: meta.inspect(map.get($ninth-configured, "owner-function"));
-        \\  ninth-configured-mixin-content: meta.accepts-content(map.get($ninth-configured, "owner-mixin"));
-        \\  tenth-configured-function: meta.call(map.get($tenth-configured, "owner-function"), 23px);
-        \\  tenth-configured-identity: map.get($tenth-configured, "owner-function") == map.get($ninth-configured, "owner-function");
-        \\  tenth-configured-inspect: meta.inspect(map.get($tenth-configured, "owner-function"));
-        \\  tenth-configured-mixin-content: meta.accepts-content(map.get($tenth-configured, "owner-mixin"));
-        \\  eleventh-configured-function: meta.call(map.get($eleventh-configured, "owner-function"), 25px);
-        \\  eleventh-configured-identity: map.get($eleventh-configured, "owner-function") == map.get($tenth-configured, "owner-function");
-        \\  eleventh-configured-inspect: meta.inspect(map.get($eleventh-configured, "owner-function"));
-        \\  eleventh-configured-mixin-content: meta.accepts-content(map.get($eleventh-configured, "owner-mixin"));
-        \\  twelfth-configured-function: meta.call(map.get($twelfth-configured, "owner-function"), 27px);
-        \\  twelfth-configured-identity: map.get($twelfth-configured, "owner-function") == map.get($eleventh-configured, "owner-function");
-        \\  twelfth-configured-inspect: meta.inspect(map.get($twelfth-configured, "owner-function"));
-        \\  twelfth-configured-mixin-content: meta.accepts-content(map.get($twelfth-configured, "owner-mixin"));
-        \\  thirteenth-configured-function: meta.call(map.get($thirteenth-configured, "owner-function"), 29px);
-        \\  thirteenth-configured-identity: map.get($thirteenth-configured, "owner-function") == map.get($twelfth-configured, "owner-function");
-        \\  thirteenth-configured-inspect: meta.inspect(map.get($thirteenth-configured, "owner-function"));
-        \\  thirteenth-configured-mixin-content: meta.accepts-content(map.get($thirteenth-configured, "owner-mixin"));
-        \\  mixin-type: meta.type-of($mixin);
-        \\  mixin-inspect: meta.inspect($mixin);
-        \\  mixin-content: meta.accepts-content($mixin);
-        \\  value: tokens.double(tokens.$public);
-        \\}
-        \\@include meta.apply($mixin, reflected);
-        \\@include meta.apply($exported-mixin, exported);
-        \\@include tokens.apply-callback($exported-mixin, callback);
-        \\@include tokens.round-trip($exported-function) using ($callback) {
-        \\  .round-trip { value: meta.call($callback, 4px); }
-        \\}
-        \\@include meta.apply(map.get($returned, "mixin"), result);
-        \\@include meta.apply(map.get($configured-export, "owner-mixin"), configured-reexport, 8px);
-        \\@include meta.apply(map.get($third-configured, "owner-mixin"), reexported-configuration, 10px);
-        \\@include meta.apply(map.get($fourth-configured, "owner-mixin"), recursive-reexported-configuration, 12px);
-        \\@include meta.apply(map.get($fifth-configured, "owner-mixin"), fifth-module-reexported-configuration, 14px);
-        \\@include meta.apply(map.get($sixth-configured, "owner-mixin"), sixth-module-reexported-configuration, 16px);
-        \\@include meta.apply(map.get($seventh-configured, "owner-mixin"), seventh-module-reexported-configuration, 18px);
-        \\@include meta.apply(map.get($eighth-configured, "owner-mixin"), eighth-module-reexported-configuration, 20px);
-        \\@include meta.apply(map.get($ninth-configured, "owner-mixin"), ninth-module-reexported-configuration, 22px);
-        \\@include meta.apply(map.get($tenth-configured, "owner-mixin"), tenth-module-reexported-configuration, 24px);
-        \\@include meta.apply(map.get($eleventh-configured, "owner-mixin"), eleventh-module-reexported-configuration, 26px);
-        \\@include meta.apply(map.get($twelfth-configured, "owner-mixin"), twelfth-module-reexported-configuration, 28px);
-        \\@include meta.apply(map.get($thirteenth-configured, "owner-mixin"), thirteenth-module-reexported-configuration, 30px);
-        \\@include tokens.emit(card) { content: caller; }
-    ;
-    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = root_input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/input.scss",
+        .data = local_use_allocation_input,
+    });
     const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
