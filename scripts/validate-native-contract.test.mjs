@@ -1931,15 +1931,15 @@ test('requires one complete build graph with every native frontend runner in CI'
   )
   assert.throws(
     () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replaceAll(
-      'zig build test --summary all',
+      'node scripts/run-zig-test-suite.mjs --mode Debug',
       'zig build test-native-preprocessor --summary all',
     ) }),
-    /build workflow is missing.*zig build test --summary all/,
+    /build workflow is missing.*run-zig-test-suite\.mjs --mode Debug/,
   )
   assert.throws(
     () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replace(
-      'zig build test --summary all',
-      'zig build test-native-preprocessor --summary all\n        run: zig build test --summary all',
+      'node scripts/run-zig-test-suite.mjs --mode Debug',
+      'zig build test-native-preprocessor --summary all\n        run: node scripts/run-zig-test-suite.mjs --mode Debug',
     ) }),
     /must not duplicate native frontend coverage/,
   )

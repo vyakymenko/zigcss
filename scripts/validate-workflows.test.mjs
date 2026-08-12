@@ -9,6 +9,7 @@ import {
   validateBuildTestGraph,
   validateWorkflowSources,
   validateWorkflows,
+  validateZigTestSuiteRunner,
 } from './validate-workflows.mjs'
 
 function cloneSources() {
@@ -17,6 +18,10 @@ function cloneSources() {
 
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
   assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 10, actions: 32 })
+  assert.deepEqual(validateZigTestSuiteRunner(), {
+    failureTailBytes: 16 * 1024,
+    modes: ['Debug', 'ReleaseSafe'],
+  })
 })
 
 test('mutable, malformed, unknown, and stale action references fail closed', () => {
@@ -111,15 +116,15 @@ test('the build workflow preserves one complete aggregate suite within a bounded
 
   const duplicated = cloneSources()
   duplicated.set('build.yml', duplicated.get('build.yml').replace(
-    '      - name: Run Tests\n        run: zig build test --summary all',
-    '      - name: Verify native stylesheet frontend foundations\n        run: zig build test-native-preprocessor --summary all\n\n      - name: Run Tests\n        run: zig build test --summary all',
+    '      - name: Run Tests\n        run: node scripts/run-zig-test-suite.mjs --mode Debug',
+    '      - name: Verify native stylesheet frontend foundations\n        run: zig build test-native-preprocessor --summary all\n\n      - name: Run Tests\n        run: node scripts/run-zig-test-suite.mjs --mode Debug',
   ))
   assert.throws(() => validateWorkflowSources(duplicated), /must not run the native suite twice/)
 
   const unoptimizedMatrix = cloneSources()
   unoptimizedMatrix.set('build.yml', unoptimizedMatrix.get('build.yml').replace(
-    '      - name: Run Native Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all',
-    '      - name: Run Native Tests\n        run: zig build test --summary all',
+    '      - name: Run Native Tests\n        run: node scripts/run-zig-test-suite.mjs --mode ReleaseSafe',
+    '      - name: Run Native Tests\n        run: node scripts/run-zig-test-suite.mjs --mode Debug',
   ))
   assert.throws(() => validateWorkflowSources(unoptimizedMatrix), /must not run the complete Zig graph in Debug/)
 })
@@ -206,10 +211,10 @@ test('the artifact matrix uses the optimized complete suite while the test job o
     buildWorkflow.indexOf('  native-package-evidence:'),
   )
   const testJob = buildWorkflow.slice(buildWorkflow.indexOf('  test:'))
-  const debugArtifactSuite = '      - name: Run Native Tests\n        run: zig build test --summary all'
-  const optimizedArtifactSuite = '      - name: Run Native Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
-  const debugAggregate = '      - name: Run Tests\n        run: zig build test --summary all'
-  const optimizedAggregate = '      - name: Run Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
+  const debugArtifactSuite = '      - name: Run Native Tests\n        run: node scripts/run-zig-test-suite.mjs --mode Debug'
+  const optimizedArtifactSuite = '      - name: Run Native Tests\n        run: node scripts/run-zig-test-suite.mjs --mode ReleaseSafe'
+  const debugAggregate = '      - name: Run Tests\n        run: node scripts/run-zig-test-suite.mjs --mode Debug'
+  const optimizedAggregate = '      - name: Run Tests\n        run: node scripts/run-zig-test-suite.mjs --mode ReleaseSafe'
   assert.equal(artifactJob.includes(debugArtifactSuite), false)
   assert.equal(artifactJob.split(optimizedArtifactSuite).length, 2)
   assert.equal(testJob.split(debugAggregate).length, 2)

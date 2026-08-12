@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { failureTailBytes, suiteArguments } from './run-zig-test-suite.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -150,6 +151,18 @@ export const buildThroughputPolicy = Object.freeze({
   }),
 })
 
+export const zigTestSuitePolicy = Object.freeze({
+  failureTailBytes: 16 * 1024,
+  modes: Object.freeze({
+    Debug: Object.freeze(['build', 'test', '--summary', 'all']),
+    ReleaseSafe: Object.freeze(['build', 'test', '-Doptimize=ReleaseSafe', '--summary', 'all']),
+  }),
+  workflowCommands: Object.freeze({
+    Debug: 'node scripts/run-zig-test-suite.mjs --mode Debug',
+    ReleaseSafe: 'node scripts/run-zig-test-suite.mjs --mode ReleaseSafe',
+  }),
+})
+
 function fail(message) {
   throw new Error(`workflow integrity: ${message}`)
 }
@@ -160,6 +173,27 @@ function same(left, right) {
 
 function sortedRecord(record) {
   return Object.fromEntries(Object.entries(record).sort(([left], [right]) => left.localeCompare(right)))
+}
+
+export function validateZigTestSuiteRunner() {
+  if (failureTailBytes !== zigTestSuitePolicy.failureTailBytes) {
+    fail(`Zig test suite failure tail must remain ${zigTestSuitePolicy.failureTailBytes} bytes`)
+  }
+  for (const [mode, expected] of Object.entries(zigTestSuitePolicy.modes)) {
+    let actual
+    try {
+      actual = suiteArguments(mode)
+    } catch (error) {
+      fail(`Zig test suite mode ${mode} is unavailable: ${error.message}`)
+    }
+    if (!same(actual, expected)) {
+      fail(`Zig test suite mode ${mode} changed: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`)
+    }
+  }
+  return {
+    failureTailBytes,
+    modes: Object.keys(zigTestSuitePolicy.modes),
+  }
 }
 
 function splitJobs(source, filename) {
@@ -313,22 +347,22 @@ export function validateBuildThroughput(buildWorkflow) {
   ) {
     fail(`build.yml artifact matrix must contain exactly ${buildThroughputPolicy.artifactTargets} unique targets`)
   }
-  const debugAggregate = '      - name: Run Native Tests\n        run: zig build test --summary all'
-  const releaseSafeAggregate = '      - name: Run Native Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
+  const debugAggregate = `      - name: Run Native Tests\n        run: ${zigTestSuitePolicy.workflowCommands.Debug}`
+  const releaseSafeAggregate = `      - name: Run Native Tests\n        run: ${zigTestSuitePolicy.workflowCommands.ReleaseSafe}`
   if (artifactJob.includes(debugAggregate)) {
     fail('build.yml artifact matrix must not run the complete Zig graph in Debug')
   }
   if (artifactJob.split(releaseSafeAggregate).length !== 2) {
     fail('build.yml artifact matrix must run exactly one complete ReleaseSafe Zig graph')
   }
-  const optimizedAggregate = '      - name: Run Tests\n        run: zig build test -Doptimize=ReleaseSafe --summary all'
+  const optimizedAggregate = `      - name: Run Tests\n        run: ${zigTestSuitePolicy.workflowCommands.ReleaseSafe}`
   if (testJob.includes(optimizedAggregate)) {
     fail('build.yml Test Suite must leave the optimized complete graph to the artifact matrix')
   }
   if (testJob.includes('zig build test-native-preprocessor')) {
     fail('build.yml Test Suite must not run the native suite twice')
   }
-  const aggregate = '      - name: Run Tests\n        run: zig build test --summary all'
+  const aggregate = `      - name: Run Tests\n        run: ${zigTestSuitePolicy.workflowCommands.Debug}`
   if (testJob.split(aggregate).length !== 2) {
     fail('build.yml Test Suite must run exactly one complete root Zig test graph')
   }
@@ -371,6 +405,7 @@ export function validateWorkflowSources(sources) {
     jobs += result.jobs
     actions += result.actions
   }
+  validateZigTestSuiteRunner()
   validateSelfGate(sources.get('build.yml'))
   validateBuildThroughput(sources.get('build.yml'))
   return { workflows: names.length, jobs, actions }

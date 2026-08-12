@@ -70,7 +70,7 @@ jobs:
           node-version: '20.19.0'
 
       - name: Run Native Tests
-        run: zig build test -Doptimize=ReleaseSafe --summary all
+        run: node scripts/run-zig-test-suite.mjs --mode ReleaseSafe
 
       - name: Build Target Binary
         run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}
@@ -259,7 +259,7 @@ jobs:
         run: npm run test:capability-status && npm run check:capability-status
 
       - name: Run Tests
-        run: zig build test --summary all
+        run: node scripts/run-zig-test-suite.mjs --mode Debug
 
       - name: Install pinned Neovim clients
         run: |

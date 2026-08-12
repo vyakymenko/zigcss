@@ -2668,6 +2668,9 @@ export function validateContract(
   if (manifest.scripts?.['test:native-package-evidence'] !== 'node --test scripts/validate-native-package-evidence.test.mjs') {
     fail('package script test:native-package-evidence is missing or changed')
   }
+  if (manifest.scripts?.['test:workflows'] !== 'node --test scripts/run-zig-test-suite.test.mjs scripts/validate-workflows.test.mjs') {
+    fail('package script test:workflows must retain the Zig suite runner contract')
+  }
 
   for (const [index, foundation] of contract.foundations.entries()) {
     validateFoundation(foundation, index, plan)
@@ -2696,7 +2699,8 @@ export function validateContract(
   const buildGate = 'npm run test:native-contract && npm run test:native-package-evidence && npm run check:native-contract'
   requireText(buildWorkflow, buildGate, 'build workflow')
   requireText(buildWorkflow, 'npm run test:node-wrapper', 'native JavaScript wrapper workflow')
-  requireText(buildWorkflow, 'zig build test --summary all', 'build workflow')
+  requireText(buildWorkflow, 'node scripts/run-zig-test-suite.mjs --mode Debug', 'build workflow')
+  requireText(buildWorkflow, 'node scripts/run-zig-test-suite.mjs --mode ReleaseSafe', 'build workflow')
   if (buildWorkflow.includes('zig build test-native-preprocessor --summary all')) {
     fail('build workflow must not duplicate native frontend coverage before the complete root test graph')
   }
