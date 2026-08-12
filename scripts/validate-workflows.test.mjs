@@ -12,6 +12,7 @@ import {
   validateBuildTestGraph,
   validateSetupZigAction,
   validateSetupZigWorkflowContract,
+  validateStylusCorpusCheckoutAttributes,
   validateWorkflowSources,
   validateWorkflows,
   validateZigTestSuiteRunner,
@@ -27,6 +28,36 @@ test('all workflow jobs use explicit least privilege and immutable reviewed acti
     failureHeadBytes: 3 * 1024,
     modes: ['Debug', 'ReleaseSafe'],
   })
+})
+
+test('Windows checkout preserves the finite Stylus text-fixture surface as LF', () => {
+  const attributes = fs.readFileSync('.gitattributes', 'utf8')
+  assert.deepEqual(validateStylusCorpusCheckoutAttributes(attributes), {
+    patterns: 4,
+    extensions: ['css', 'json', 'styl', 'svg'],
+  })
+
+  assert.throws(
+    () => validateStylusCorpusCheckoutAttributes(attributes.replace(
+      'tests/preprocessors/stylus/corpus/files/**/*.styl text eol=lf\n',
+      '',
+    )),
+    /Stylus corpus checkout attributes changed/,
+  )
+  assert.throws(
+    () => validateStylusCorpusCheckoutAttributes(attributes.replace(
+      'tests/preprocessors/stylus/corpus/files/**/*.css text eol=lf',
+      'tests/preprocessors/stylus/corpus/files/**/*.css text',
+    )),
+    /Stylus corpus checkout attributes changed/,
+  )
+  assert.throws(
+    () => validateStylusCorpusCheckoutAttributes(attributes.replace(
+      'tests/preprocessors/stylus/corpus/files/**/*.json text eol=lf',
+      'tests/preprocessors/stylus/corpus/files/** text eol=lf',
+    )),
+    /Stylus corpus checkout attributes changed/,
+  )
 })
 
 test('the hosted action runtime migration has a finite reviewed terminal', () => {

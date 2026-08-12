@@ -188,6 +188,13 @@ export const zigTestSuitePolicy = Object.freeze({
   }),
 })
 
+export const stylusCorpusCheckoutAttributes = Object.freeze([
+  'tests/preprocessors/stylus/corpus/files/**/*.css text eol=lf',
+  'tests/preprocessors/stylus/corpus/files/**/*.json text eol=lf',
+  'tests/preprocessors/stylus/corpus/files/**/*.styl text eol=lf',
+  'tests/preprocessors/stylus/corpus/files/**/*.svg text eol=lf',
+])
+
 function fail(message) {
   throw new Error(`workflow integrity: ${message}`)
 }
@@ -252,6 +259,20 @@ export function validateZigTestSuiteRunner() {
   return {
     failureHeadBytes,
     modes: Object.keys(zigTestSuitePolicy.modes),
+  }
+}
+
+export function validateStylusCorpusCheckoutAttributes(source) {
+  if (source.includes('\r')) fail('.gitattributes must use LF line endings')
+  const actual = source
+    .split('\n')
+    .filter(line => line.startsWith('tests/preprocessors/stylus/corpus/files/'))
+  if (!same(actual, stylusCorpusCheckoutAttributes)) {
+    fail(`Stylus corpus checkout attributes changed: expected ${JSON.stringify(stylusCorpusCheckoutAttributes)}, received ${JSON.stringify(actual)}`)
+  }
+  return {
+    patterns: stylusCorpusCheckoutAttributes.length,
+    extensions: stylusCorpusCheckoutAttributes.map(line => line.match(/\.([a-z]+) text eol=lf$/)[1]),
   }
 }
 
@@ -657,6 +678,7 @@ export function validateWorkflows(root = repositoryRoot) {
   const result = validateWorkflowSources(readWorkflowSources(root))
   validateSetupZigAction(root)
   validateBuildTestGraph(fs.readFileSync(path.join(root, 'build.zig'), 'utf8'))
+  validateStylusCorpusCheckoutAttributes(fs.readFileSync(path.join(root, '.gitattributes'), 'utf8'))
   return result
 }
 
