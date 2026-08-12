@@ -49,7 +49,9 @@ describe('native artifact workflows', () => {
   })
 
   test('passes every build matrix target to Zig after the ReleaseSafe suite', () => {
-    const nativeTests = buildWorkflow.indexOf('zig build test -Doptimize=ReleaseSafe --summary all')
+    const nativeTests = buildWorkflow.indexOf(
+      'node scripts/run-zig-test-suite.mjs --mode ReleaseSafe',
+    )
     const targetBuild = buildWorkflow.indexOf('zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}')
     const inspection = buildWorkflow.indexOf('node scripts/verify-artifact-target.mjs')
     const upload = buildWorkflow.indexOf('uses: actions/upload-artifact@')
@@ -64,7 +66,10 @@ describe('native artifact workflows', () => {
     const install = buildWorkflow.indexOf('npm ci --ignore-scripts')
     const generatorTests = buildWorkflow.indexOf('npm run test:prefix-data')
     const prefixData = buildWorkflow.indexOf('npm run check:prefix-data')
-    const tests = buildWorkflow.indexOf('zig build test --summary all', prefixData)
+    const tests = buildWorkflow.indexOf(
+      'node scripts/run-zig-test-suite.mjs --mode Debug',
+      prefixData,
+    )
     expect(install).toBeGreaterThan(-1)
     expect(generatorTests).toBeGreaterThan(install)
     expect(prefixData).toBeGreaterThan(generatorTests)
@@ -88,7 +93,10 @@ describe('native artifact workflows', () => {
 
   test('validates every documentation link and example after compiler and editor setup', () => {
     const mainTestStep = buildWorkflow.indexOf('- name: Run Tests')
-    const nativeTests = buildWorkflow.indexOf('zig build test --summary all', mainTestStep)
+    const nativeTests = buildWorkflow.indexOf(
+      'node scripts/run-zig-test-suite.mjs --mode Debug',
+      mainTestStep,
+    )
     const neovim = buildWorkflow.indexOf('npm run test:neovim', nativeTests)
     const documentation = buildWorkflow.indexOf('npm run test:documentation', neovim)
     const drift = buildWorkflow.indexOf('npm run check:documentation', documentation)
@@ -111,7 +119,9 @@ describe('native artifact workflows', () => {
 
   test('runs the locked independent CSS validator after native tests', () => {
     const install = buildWorkflow.lastIndexOf('npm ci --ignore-scripts')
-    const nativeTests = buildWorkflow.lastIndexOf('zig build test --summary all')
+    const nativeTests = buildWorkflow.indexOf(
+      'node scripts/run-zig-test-suite.mjs --mode Debug',
+    )
     const compatibility = buildWorkflow.lastIndexOf('npm run test:compat')
     const transforms = buildWorkflow.lastIndexOf('npm run test:transforms')
 
@@ -123,7 +133,10 @@ describe('native artifact workflows', () => {
 
   test('validates package metadata, bounded preprocessing, and result ownership before CSS oracles', () => {
     const metadata = buildWorkflow.indexOf('npm run test:zig-package')
-    const nativeTests = buildWorkflow.lastIndexOf('zig build test --summary all', metadata)
+    const nativeTests = buildWorkflow.lastIndexOf(
+      'node scripts/run-zig-test-suite.mjs --mode Debug',
+      metadata,
+    )
     const wrapper = buildWorkflow.indexOf('npm run test:node-wrapper', metadata)
     const preprocessorHost = buildWorkflow.indexOf('npm run test:preprocessor-host', wrapper)
     const preprocessorResolver = buildWorkflow.indexOf(
