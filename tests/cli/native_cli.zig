@@ -101,18 +101,45 @@ fn outputStamp(dir: std.fs.Dir, path: []const u8) !OutputStamp {
     return .{ .inode = stat.inode, .mtime = stat.mtime, .ctime = stat.ctime };
 }
 
+fn isTransientWatchObservationError(os_tag: std.Target.Os.Tag, err: anyerror) bool {
+    // Zig's AtomicFile.renameIntoPlace contract documents a Windows-only
+    // AccessDenied window while the destination is being replaced.
+    return err == error.FileNotFound or
+        (os_tag == .windows and err == error.AccessDenied);
+}
+
+test "watch output polling retries only documented atomic replacement observations" {
+    const cases = [_]struct {
+        os_tag: std.Target.Os.Tag,
+        err: anyerror,
+        expected: bool,
+    }{
+        .{ .os_tag = .linux, .err = error.FileNotFound, .expected = true },
+        .{ .os_tag = .windows, .err = error.FileNotFound, .expected = true },
+        .{ .os_tag = .windows, .err = error.AccessDenied, .expected = true },
+        .{ .os_tag = .linux, .err = error.AccessDenied, .expected = false },
+        .{ .os_tag = .windows, .err = error.OutOfMemory, .expected = false },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqual(
+            case.expected,
+            isTransientWatchObservationError(case.os_tag, case.err),
+        );
+    }
+}
+
 fn waitForOutputContents(
     dir: std.fs.Dir,
     path: []const u8,
     expected: []const u8,
 ) !OutputStamp {
     for (0..100) |_| {
-        const contents = dir.readFileAlloc(allocator, path, 1024) catch |err| switch (err) {
-            error.FileNotFound => {
+        const contents = dir.readFileAlloc(allocator, path, 1024) catch |err| {
+            if (isTransientWatchObservationError(builtin.os.tag, err)) {
                 std.Thread.sleep(50 * std.time.ns_per_ms);
                 continue;
-            },
-            else => return err,
+            }
+            return err;
         };
         defer allocator.free(contents);
         if (std.mem.eql(u8, expected, contents)) return outputStamp(dir, path);
@@ -194,12 +221,12 @@ fn waitForMappedOutputContents(
     expected_dependency_content: []const u8,
 ) !OutputStamp {
     for (0..100) |_| {
-        const contents = dir.readFileAlloc(allocator, path, 1024 * 1024) catch |err| switch (err) {
-            error.FileNotFound => {
+        const contents = dir.readFileAlloc(allocator, path, 1024 * 1024) catch |err| {
+            if (isTransientWatchObservationError(builtin.os.tag, err)) {
                 std.Thread.sleep(50 * std.time.ns_per_ms);
                 continue;
-            },
-            else => return err,
+            }
+            return err;
         };
         defer allocator.free(contents);
         if (!std.mem.startsWith(u8, contents, expected_css)) {
