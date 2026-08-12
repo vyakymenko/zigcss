@@ -25,7 +25,7 @@ const Fixture = struct {
     fn init(allocator: std.mem.Allocator) !Fixture {
         return .{
             .allocator = allocator,
-            .root = try std.fs.cwd().realpathAlloc(allocator, "."),
+            .root = try std.process.getCwdAlloc(allocator),
         };
     }
 
@@ -134,7 +134,10 @@ test "native compiler rejects invalid roots and language failures without a resu
         }),
     );
 
-    const outside_url = try resolver.pathToFileUrl(std.testing.allocator, "/outside.scss");
+    const parent = std.fs.path.dirname(fixture.root) orelse return error.InvalidRoot;
+    const outside_path = try std.fs.path.join(std.testing.allocator, &.{ parent, "outside.scss" });
+    defer std.testing.allocator.free(outside_path);
+    const outside_url = try resolver.pathToFileUrl(std.testing.allocator, outside_path);
     defer std.testing.allocator.free(outside_url);
     try std.testing.expectError(
         error.PathEscape,

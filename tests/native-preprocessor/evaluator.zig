@@ -4,6 +4,7 @@ const diagnostics = preprocessor.diagnostics;
 const evaluator = preprocessor.evaluator;
 const resolver = preprocessor.resolver;
 const source = preprocessor.source;
+const test_path = @import("test_path.zig");
 
 const Harness = struct {
     allocator: std.mem.Allocator,
@@ -20,7 +21,7 @@ const Harness = struct {
         var tmp = std.testing.tmpDir(.{});
         errdefer tmp.cleanup();
         try tmp.dir.makeDir("root");
-        const base = try tmp.dir.realpathAlloc(allocator, ".");
+        const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
         errdefer allocator.free(base);
         const root = try std.fs.path.join(allocator, &.{ base, "root" });
         errdefer allocator.free(root);
@@ -561,7 +562,7 @@ test "evaluator handles every initialization staging validation and result alloc
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
     try tmp.dir.writeFile(.{ .sub_path = "root/_dep.scss", .data = "$dep: 1" });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);

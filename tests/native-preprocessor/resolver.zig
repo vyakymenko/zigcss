@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const preprocessor = @import("native_preprocessor");
 const resolver = preprocessor.resolver;
+const test_path = @import("test_path.zig");
 
 const Fixture = struct {
     tmp: std.testing.TmpDir,
@@ -14,7 +15,7 @@ const Fixture = struct {
         errdefer tmp.cleanup();
         try tmp.dir.makeDir("root");
         try tmp.dir.makeDir("outside");
-        const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+        const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
         errdefer std.testing.allocator.free(base);
         const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
         errdefer std.testing.allocator.free(root);
@@ -41,6 +42,23 @@ const Fixture = struct {
 
 fn fileUrl(path: []const u8) ![]u8 {
     return resolver.pathToFileUrl(std.testing.allocator, path);
+}
+
+test "native fixture roots are absolute without platform realpath" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+
+    const absolute = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
+    defer std.testing.allocator.free(absolute);
+    try std.testing.expect(std.fs.path.isAbsolute(absolute));
+
+    var opened = try std.fs.openDirAbsolute(absolute, .{});
+    defer opened.close();
+    try opened.writeFile(.{ .sub_path = "fixture.txt", .data = "owned" });
+
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{absolute}, .{});
+    defer confined.deinit();
+    try std.testing.expectEqual(@as(usize, 1), confined.roots().len);
 }
 
 test "resolver admits one handle-canonical absolute root on every supported host" {

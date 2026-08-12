@@ -6,6 +6,7 @@ const less = preprocessor.less;
 const less_evaluator = preprocessor.less_evaluator;
 const resolver = preprocessor.resolver;
 const source = preprocessor.source;
+const test_path = @import("test_path.zig");
 
 // Closed Less 4.6.7 references for the admitted evaluator slices:
 // less-lazy-eval-lazy-eval, less-scope-scope, less-variables-variables,
@@ -32,7 +33,7 @@ fn compile(
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
-    const base = try temporary.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &temporary);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -80,7 +81,7 @@ fn compileImportFixture(
     }
     try temporary.dir.writeFile(.{ .sub_path = "root/input.less", .data = root_input });
 
-    const base = try temporary.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &temporary);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -147,7 +148,7 @@ fn expectImportFailure(
     }
     try temporary.dir.writeFile(.{ .sub_path = "root/input.less", .data = root_input });
 
-    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -476,7 +477,7 @@ fn expectSemanticRejectionWithOptions(
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
-    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -698,7 +699,7 @@ fn expectPermanentRejection(
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
-    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -847,7 +848,7 @@ test "native Less plain CSS foundation owns resource and cancellation boundaries
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
-    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);

@@ -6,6 +6,7 @@ const resolver = preprocessor.resolver;
 const source = preprocessor.source;
 const stylus = preprocessor.stylus;
 const stylus_evaluator = preprocessor.stylus_evaluator;
+const test_path = @import("test_path.zig");
 
 const eol_escape_input =
     "\nlist = foo \\\n" ++
@@ -1564,7 +1565,7 @@ fn compileWithOptions(
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
-    const base = try temporary.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &temporary);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -1682,7 +1683,7 @@ fn compileFixtureWithOptionsAndCancellation(
         try root_dir.writeFile(.{ .sub_path = file.path, .data = file.contents });
     }
 
-    const base = try temporary.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &temporary);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -1766,7 +1767,7 @@ fn expectFixtureRejectionWithOptions(
         try root_dir.writeFile(.{ .sub_path = file.path, .data = file.contents });
     }
 
-    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -1864,7 +1865,7 @@ fn expectSemanticRejectionWithLimits(
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
-    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -8509,7 +8510,7 @@ test "native Stylus plain CSS foundation owns resource and cancellation boundari
         var temporary = std.testing.tmpDir(.{});
         defer temporary.cleanup();
         try temporary.dir.makeDir("root");
-        const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+        const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &temporary);
         defer std.testing.allocator.free(base);
         const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
         defer std.testing.allocator.free(root);

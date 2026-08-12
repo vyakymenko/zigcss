@@ -5,6 +5,7 @@ const resolver = preprocessor.resolver;
 const sass = preprocessor.sass;
 const sass_evaluator = preprocessor.sass_evaluator;
 const source = preprocessor.source;
+const test_path = @import("test_path.zig");
 
 fn compile(
     allocator: std.mem.Allocator,
@@ -27,7 +28,7 @@ fn compileWithTransactionLimits(
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -24256,7 +24257,7 @@ fn expectLegacyAlphaModernColorFailure(
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -34323,7 +34324,7 @@ fn expectUniqueIdRejected(
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -35695,7 +35696,7 @@ test "native Sass cancellation poisons staged CSS before commit" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -36013,7 +36014,7 @@ test "native Sass semantic core handles every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -36079,7 +36080,7 @@ test "native Sass legacy if function handles every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -36141,7 +36142,7 @@ test "native Sass math constants and random handle every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -36299,7 +36300,7 @@ test "native Sass meta inspection handles every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -36377,7 +36378,7 @@ test "native Sass selector parsing composition relations extension replacement a
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -36833,7 +36834,7 @@ test "native Sass legacy import handles every allocation failure" {
         .sub_path = "root/input.scss",
         .data = "@import \"other\"; .root { after: true; }",
     });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -37010,7 +37011,7 @@ test "native Sass meta load css handles every allocation failure" {
         .sub_path = "root/input.scss",
         .data = "@use \"sass:meta\"; a { @include meta.load-css(\"other\"); }",
     });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -38322,7 +38323,7 @@ test "native Sass transitive use graph handles every allocation failure" {
         .sub_path = "root/input.scss",
         .data = "@use \"left\"; @use \"right\"; .root { order: root; }",
     });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -38432,7 +38433,7 @@ test "native Sass configured forward handles every allocation failure" {
         \\@include meta.apply(map.get($mixins, "emit"), reflected);
         ,
     });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
@@ -38495,7 +38496,7 @@ fn compileWithLocalUseFilesAndTransactionLimits(
     defer allocator.free(root_relative);
     try tmp.dir.writeFile(.{ .sub_path = root_relative, .data = root_input });
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -38587,7 +38588,7 @@ fn expectLocalUseFailureWithLimits(
     defer allocator.free(root_relative);
     try tmp.dir.writeFile(.{ .sub_path = root_relative, .data = root_input });
 
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -40352,7 +40353,7 @@ test "native Sass local use configuration owns diagnostics without partial CSS" 
         .sub_path = "root/_tokens.scss",
         .data = "$fixed: original; .module { value: $fixed; }",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -40467,7 +40468,7 @@ test "native Sass rejects configured callable re-export over its finite depth wi
         const path = try std.fs.path.join(scratch, &.{ "root", file.name });
         try tmp.dir.writeFile(.{ .sub_path = path, .data = file.contents });
     }
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43253,7 +43254,7 @@ test "native Sass local module function reference failures own diagnostics witho
         .sub_path = "root/_functions.scss",
         .data = "@function required($left, $right: 2) { @return $left + $right; }",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43345,7 +43346,7 @@ test "native Sass re-exported peer callable arguments fail without partial CSS" 
         .sub_path = "root/_receiver.scss",
         .data = "@function accepts($value) { @return $value; }",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43427,7 +43428,7 @@ test "native Sass local module mixin reference failures own diagnostics without 
         .sub_path = "root/_mixins.scss",
         .data = "@mixin required($left, $right: 2) {}",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43513,7 +43514,7 @@ test "native Sass local module callable reference ambiguity owns diagnostics wit
         .sub_path = "root/_second.scss",
         .data = "@function shared() { @return second; }",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43599,7 +43600,7 @@ test "native Sass local module mixin content ambiguity owns diagnostics without 
         .sub_path = "root/_second.scss",
         .data = "@mixin shared {}",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43680,7 +43681,7 @@ test "native Sass local module variable enumeration owns unknown namespace diagn
         .sub_path = "root/_first.scss",
         .data = "$public: first;",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43761,7 +43762,7 @@ test "native Sass local module function enumeration owns unknown namespace diagn
         .sub_path = "root/_first.scss",
         .data = "@function public() { @return first; }",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43842,7 +43843,7 @@ test "native Sass local module mixin enumeration owns unknown namespace diagnost
         .sub_path = "root/_first.scss",
         .data = "@mixin public() {}",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -43928,7 +43929,7 @@ test "native Sass local module existence ambiguity owns diagnostics without part
         .sub_path = "root/_second.scss",
         .data = "@function shared() { @return second; }",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -44121,7 +44122,7 @@ test "native Sass local module callable failures own diagnostics without partial
         .sub_path = "root/_first.scss",
         .data = "@function -private($value) { @return $value; }",
     });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -44338,7 +44339,7 @@ test "native Sass local use reports owned import diagnostics without partial CSS
     try tmp.dir.makeDir("root");
     const input = "@use \"absent\"; .unreachable { color: red; }";
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
-    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(allocator, &tmp);
     defer allocator.free(base);
     const root = try std.fs.path.join(allocator, &.{ base, "root" });
     defer allocator.free(root);
@@ -44647,7 +44648,7 @@ test "native Sass local use handles every allocation failure" {
         .sub_path = "root/input.scss",
         .data = local_use_allocation_input,
     });
-    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const base = try test_path.absoluteTmpDirPath(std.testing.allocator, &tmp);
     defer std.testing.allocator.free(base);
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
