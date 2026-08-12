@@ -149,6 +149,111 @@ fn handleWatchAtomicFailure(
     }
 }
 
+const NativeWatchCaseStage = enum {
+    @"initial-output",
+    @"dependency-replace",
+    @"changed-output",
+    @"stability-observation",
+    @"child-termination",
+};
+
+const WatchChildTermination = enum {
+    killed,
+    @"already-terminated",
+    @"termination-failed",
+};
+
+fn nativeWatchFailureDiagnostic(
+    buffer: []u8,
+    syntax: []const u8,
+    stage: NativeWatchCaseStage,
+    err: anyerror,
+    termination: WatchChildTermination,
+) std.fmt.BufPrintError![]const u8 {
+    return std.fmt.bufPrint(
+        buffer,
+        "native watch regression syntax={s} stage={s} error={s} child={s}",
+        .{
+            syntax,
+            @tagName(stage),
+            @errorName(err),
+            @tagName(termination),
+        },
+    );
+}
+
+fn watchChildTerminationAfterKill(
+    os_tag: std.Target.Os.Tag,
+    term: Child.Term,
+) WatchChildTermination {
+    if (os_tag == .windows) return .killed;
+    return switch (term) {
+        .Exited => .@"already-terminated",
+        else => .killed,
+    };
+}
+
+fn terminateWatchChild(child: *Child) !WatchChildTermination {
+    const term = child.kill() catch |err| switch (err) {
+        error.AlreadyTerminated => {
+            _ = try child.wait();
+            return .@"already-terminated";
+        },
+        else => return err,
+    };
+    return watchChildTerminationAfterKill(builtin.os.tag, term);
+}
+
+fn reportNativeWatchFailure(
+    captured: *std.fs.File,
+    syntax: []const u8,
+    stage: NativeWatchCaseStage,
+    err: anyerror,
+    termination: WatchChildTermination,
+) void {
+    var diagnostic_buffer: [256]u8 = undefined;
+    const diagnostic = nativeWatchFailureDiagnostic(
+        &diagnostic_buffer,
+        syntax,
+        stage,
+        err,
+        termination,
+    ) catch "native watch regression diagnostic overflow";
+    if (termination == .@"termination-failed") {
+        std.debug.print("{s}\n", .{diagnostic});
+        return;
+    }
+
+    const stderr = captured.readToEndAlloc(allocator, 1024 * 1024) catch |capture_err| {
+        std.debug.print("{s} stderr-capture={s}\n", .{ diagnostic, @errorName(capture_err) });
+        return;
+    };
+    defer allocator.free(stderr);
+    std.debug.print("{s}\nchild stderr:\n{s}{s}", .{
+        diagnostic,
+        stderr,
+        if (stderr.len == 0 or stderr[stderr.len - 1] == '\n') "" else "\n",
+    });
+}
+
+fn settleNativeWatchFailure(
+    child: *Child,
+    running: *bool,
+    captured: *std.fs.File,
+    syntax: []const u8,
+    stage: NativeWatchCaseStage,
+    err: anyerror,
+    observed_termination: ?WatchChildTermination,
+) void {
+    const termination = observed_termination orelse terminateWatchChild(child) catch |termination_err| {
+        reportNativeWatchFailure(captured, syntax, stage, err, .@"termination-failed");
+        std.debug.print("native watch child termination error={s}\n", .{@errorName(termination_err)});
+        return;
+    };
+    running.* = false;
+    reportNativeWatchFailure(captured, syntax, stage, err, termination);
+}
+
 test "watch atomic retries retain lower terminal and over-limit boundaries" {
     const cases = [_]struct {
         operation: WatchAtomicOperation,
@@ -207,6 +312,30 @@ test "watch atomic retries retain lower terminal and over-limit boundaries" {
     try std.testing.expectError(
         error.OutOfMemory,
         handleWatchAtomicFailure(.observe, .windows, error.OutOfMemory, 0, 0),
+    );
+
+    var diagnostic_buffer: [256]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "native watch regression syntax=less stage=changed-output error=WatchTimeout child=already-terminated",
+        try nativeWatchFailureDiagnostic(
+            &diagnostic_buffer,
+            "less",
+            .@"changed-output",
+            error.WatchTimeout,
+            .@"already-terminated",
+        ),
+    );
+    try std.testing.expectEqual(
+        WatchChildTermination.@"already-terminated",
+        watchChildTerminationAfterKill(.linux, .{ .Exited = 1 }),
+    );
+    try std.testing.expectEqual(
+        WatchChildTermination.killed,
+        watchChildTerminationAfterKill(.linux, .{ .Signal = 15 }),
+    );
+    try std.testing.expectEqual(
+        WatchChildTermination.killed,
+        watchChildTerminationAfterKill(.windows, .{ .Exited = 1 }),
     );
 }
 
@@ -696,30 +825,51 @@ test "binary CLI native watch invalidates the finite syntax dependency set" {
         var child = Child.init(&argv, allocator);
         child.stdin_behavior = .Ignore;
         child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
+        child.stderr_behavior = .Pipe;
         child.cwd_dir = tmp.dir;
         try child.spawn();
         var running = true;
         defer {
-            if (running) _ = child.kill() catch {};
+            if (running) _ = terminateWatchChild(&child) catch {};
         }
 
+        var captured = child.stderr.?;
+        child.stderr = null;
+        defer captured.close();
+        var stage: NativeWatchCaseStage = .@"initial-output";
+        var observed_termination: ?WatchChildTermination = null;
+        errdefer |err| settleNativeWatchFailure(
+            &child,
+            &running,
+            &captured,
+            case.syntax,
+            stage,
+            err,
+            observed_termination,
+        );
+
         _ = try waitForOutputContents(tmp.dir, "output.css", case.watch_expected_before);
+        stage = .@"dependency-replace";
         try replaceFileAtomically(
             tmp.dir,
             case.watch_dependency,
             case.watch_dependency_after,
         );
+        stage = .@"changed-output";
         const changed = try waitForOutputContents(
             tmp.dir,
             "output.css",
             case.watch_expected_after,
         );
         std.Thread.sleep(1200 * std.time.ns_per_ms);
+        stage = .@"stability-observation";
         try std.testing.expect(changed.eql(try waitForOutputStamp(tmp.dir, "output.css")));
 
-        _ = try child.kill();
+        stage = .@"child-termination";
+        const termination = try terminateWatchChild(&child);
+        observed_termination = termination;
         running = false;
+        if (termination == .@"already-terminated") return error.WatchChildExited;
     }
 }
 
