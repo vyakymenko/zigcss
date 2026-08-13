@@ -612,6 +612,181 @@ export function validateReleaseWorkflowSource(source) {
 export function validateReleaseBuildGate(source) {
   if (typeof source !== 'string' || source.length > 256 * 1024) fail('build workflow is missing or oversized')
   source = normalizeWorkflowSource(source, 'build workflow')
+  const provenanceJobStart = source.indexOf('\n  native-provenance-evidence:\n')
+  const aggregateJobStart = source.indexOf('\n  native-package-evidence:\n')
+  if (provenanceJobStart < 0 || aggregateJobStart <= provenanceJobStart) {
+    fail('native provenance evidence job is missing or reordered')
+  }
+  const buildJob = source.slice(0, provenanceJobStart)
+  const provenanceJob = source.slice(provenanceJobStart, aggregateJobStart)
+  const readOnlyPermissions = '    permissions:\n      contents: read'
+  expectLiteralCount(buildJob, readOnlyPermissions, 1, 'unprivileged Build permissions')
+  expectLiteralCount(buildJob, '      attestations: write', 0, 'Build attestation authority')
+  expectLiteralCount(buildJob, '      id-token: write', 0, 'Build OIDC authority')
+
+  const upload = actionPins['actions/upload-artifact']
+  if (upload === undefined) fail('actions/upload-artifact has no reviewed immutable pin')
+  const releaseInputUpload = [
+    '      - name: Upload Native Release Inputs',
+    "        if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+    `        uses: actions/upload-artifact@${upload.sha} # ${upload.version}`,
+    '        with:',
+    '          name: native-release-${{ matrix.target }}',
+    '          path: |',
+    '            release-assets/${{ env.RELEASE_ARCHIVE }}',
+    '            release-assets/${{ env.RELEASE_SBOM }}',
+    '            release-assets/${{ env.RELEASE_CHECKSUMS }}',
+    '            zig-out/bin/${{ matrix.binary-name }}',
+    '          if-no-files-found: error',
+    '          retention-days: 7',
+  ].join('\n')
+  expectLiteralCount(buildJob, releaseInputUpload, 1, 'closed native release input upload')
+  const plannedReleaseAssets = [
+    '          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"',
+    '          echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"',
+    '          echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"',
+    '          echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"',
+    '          echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"',
+    '          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"',
+  ]
+  for (const asset of plannedReleaseAssets) {
+    expectLiteralCount(buildJob, asset, 1, 'Build native release asset plan')
+  }
+
+  const attest = actionPins['actions/attest']
+  if (attest === undefined) fail('actions/attest has no reviewed immutable pin')
+  expectLiteralCount(buildJob, `uses: actions/attest@${attest.sha} # ${attest.version}`, 0, 'Build attestation action')
+
+  const permissions = '    permissions:\n      attestations: write\n      contents: read\n      id-token: write'
+  expectLiteralCount(provenanceJob, permissions, 1, 'native provenance attestation permissions')
+  expectLiteralCount(
+    provenanceJob,
+    "    if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+    1,
+    'native provenance exact-main authority gate',
+  )
+  expectLiteralCount(provenanceJob, '    needs: build', 1, 'native provenance build dependency')
+  expectLiteralCount(provenanceJob, '    runs-on: ubuntu-latest', 1, 'native provenance runner')
+  expectLiteralCount(provenanceJob, '    timeout-minutes: 30', 1, 'native provenance timeout')
+  expectLiteralCount(provenanceJob, 'continue-on-error', 0, 'native provenance fail-open policy')
+  for (const asset of plannedReleaseAssets) {
+    expectLiteralCount(provenanceJob, asset, 1, 'native provenance release asset plan')
+  }
+  expectLiteralCount(
+    provenanceJob,
+    'node scripts/generate-release-metadata.mjs --check \\\n',
+    1,
+    'native release input metadata check',
+  )
+  expectLiteralCount(
+    provenanceJob,
+    `uses: actions/attest@${attest.sha} # ${attest.version}`,
+    2,
+    'native provenance pinned attestation action',
+  )
+  expectLiteralCount(provenanceJob, '- name: Attest Native Provenance', 1, 'native provenance attestation')
+  expectLiteralCount(provenanceJob, '- name: Attest Native SBOM', 1, 'native SBOM attestation')
+  expectLiteralCount(
+    provenanceJob,
+    '          sbom-path: release-assets/${{ env.RELEASE_SBOM }}',
+    1,
+    'native signed SBOM attestation',
+  )
+  expectLiteralCount(provenanceJob, 'gh attestation verify', 2, 'native provenance cryptographic verification')
+  expectLiteralCount(
+    provenanceJob,
+    '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build.yml"',
+    2,
+    'native provenance signer workflow verification',
+  )
+  expectLiteralCount(provenanceJob, '--signer-digest "$GITHUB_SHA"', 2, 'native provenance signer digest verification')
+  expectLiteralCount(provenanceJob, '--source-ref refs/heads/main', 2, 'native provenance source ref verification')
+  expectLiteralCount(provenanceJob, '--source-digest "$GITHUB_SHA"', 2, 'native provenance source digest verification')
+  expectLiteralCount(
+    provenanceJob,
+    '--predicate-type https://spdx.dev/Document/v2.3',
+    1,
+    'native SPDX attestation verification',
+  )
+  expectLiteralCount(
+    provenanceJob,
+    'node scripts/generate-release-metadata.mjs --check-bundles',
+    1,
+    'native local attestation binding check',
+  )
+  expectLiteralCount(provenanceJob, '${{ steps.provenance.outputs.bundle-path }}', 1, 'preserved native provenance bundle')
+  expectLiteralCount(provenanceJob, '${{ steps.sbom-attestation.outputs.bundle-path }}', 1, 'preserved native SBOM bundle')
+  expectLiteralCount(provenanceJob, '          GH_TOKEN: ${{ github.token }}', 1, 'native attestation verification token')
+
+  const download = actionPins['actions/download-artifact']
+  if (download === undefined) fail('actions/download-artifact has no reviewed immutable pin')
+  const releaseInputDownload = [
+    '      - name: Download Native Release Inputs',
+    `        uses: actions/download-artifact@${download.sha} # ${download.version}`,
+    '        with:',
+    '          name: native-release-${{ matrix.target }}',
+    '          path: .',
+  ].join('\n')
+  expectLiteralCount(provenanceJob, releaseInputDownload, 1, 'exact native release input download')
+  const provenanceUpload = [
+    '      - name: Upload Native Provenance Evidence',
+    `        uses: actions/upload-artifact@${upload.sha} # ${upload.version}`,
+    '        with:',
+    '          name: native-provenance-${{ matrix.target }}',
+    '          path: |',
+    '            release-assets/${{ env.RELEASE_ARCHIVE }}',
+    '            release-assets/${{ env.RELEASE_SBOM }}',
+    '            release-assets/${{ env.RELEASE_CHECKSUMS }}',
+    '            release-assets/${{ env.RELEASE_BASE }}.provenance.sigstore.jsonl',
+    '            release-assets/${{ env.RELEASE_BASE }}.sbom.sigstore.jsonl',
+    '          if-no-files-found: error',
+    '          retention-days: 7',
+  ].join('\n')
+  expectLiteralCount(provenanceJob, provenanceUpload, 1, 'closed native provenance evidence upload')
+
+  expectOrdered(buildJob, [
+    '- name: Generate Native Smoke Metadata',
+    '- name: Smoke Native Archive and npm Installation',
+    '- name: Upload Native Release Inputs',
+    '- name: Upload Artifact',
+  ])
+  expectOrdered(provenanceJob, [
+    '- name: Download Native Release Inputs',
+    '- name: Plan Native Provenance Assets',
+    '- name: Verify Native Release Inputs',
+    '- name: Attest Native Provenance',
+    '- name: Attest Native SBOM',
+    '- name: Preserve Native Attestation Bundles',
+    '- name: Verify Native Attestation Bundles',
+    '- name: Upload Native Provenance Evidence',
+  ])
+
+  const actualTargets = workflowTargets(buildJob)
+  const expectedTargets = releaseTargets.map(target => ({
+    os: target.os,
+    arch: target.arch,
+    target: target.target,
+    archiveExtension: target.archiveExtension,
+    zigVersion: '0.15.2',
+    binaryName: target.binaryName,
+  }))
+  if (!same(actualTargets, expectedTargets)) fail('Build provenance target/archive inventory changed')
+
+  const provenanceTargetExpression = /          - target: ([^\n]+)\n            archive-extension: ([^\n]+)\n            binary-name: ([^\n]+)/g
+  const actualProvenanceTargets = [...provenanceJob.matchAll(provenanceTargetExpression)].map(match => ({
+    target: match[1],
+    archiveExtension: match[2],
+    binaryName: match[3],
+  }))
+  const expectedProvenanceTargets = releaseTargets.map(target => ({
+    target: target.target,
+    archiveExtension: target.archiveExtension,
+    binaryName: target.binaryName,
+  }))
+  if (!same(actualProvenanceTargets, expectedProvenanceTargets)) {
+    fail('native provenance target/archive inventory changed')
+  }
+
   const testJobStart = source.indexOf('\n  test:\n')
   if (testJobStart < 0) fail('release consumer test job is missing')
   expectLiteralCount(
@@ -640,7 +815,13 @@ export function validateReleaseBuildGate(source) {
     ...releaseConsumerSteps.map(step => `- name: ${step.name}`),
     '- name: Install independent validator',
   ])
-  return true
+  validateWorkflowSource('build.yml', source)
+  return {
+    targets: actualProvenanceTargets.length,
+    assetsPerTarget: 5,
+    attestations: 2,
+    signatureVerifications: 2,
+  }
 }
 
 export function validateReleaseWorkflow(root = repositoryRoot) {

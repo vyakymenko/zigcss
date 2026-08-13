@@ -88,7 +88,24 @@ export const workflowPolicy = Object.freeze({
   'build.yml': Object.freeze({
     build: Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
-      actions: Object.freeze(['actions/checkout', 'actions/setup-node', setupZigAction, 'actions/upload-artifact']),
+      actions: Object.freeze([
+        'actions/checkout',
+        'actions/setup-node',
+        setupZigAction,
+        'actions/upload-artifact',
+        'actions/upload-artifact',
+      ]),
+    }),
+    'native-provenance-evidence': Object.freeze({
+      permissions: Object.freeze({ attestations: 'write', contents: 'read', 'id-token': 'write' }),
+      actions: Object.freeze([
+        'actions/checkout',
+        'actions/setup-node',
+        'actions/download-artifact',
+        'actions/attest',
+        'actions/attest',
+        'actions/upload-artifact',
+      ]),
     }),
     'native-package-evidence': Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
@@ -179,6 +196,7 @@ export const buildThroughputPolicy = Object.freeze({
   }))),
   jobs: Object.freeze({
     build: Object.freeze({ timeoutMinutes: 240 }),
+    'native-provenance-evidence': Object.freeze({ timeoutMinutes: 30 }),
     'native-package-evidence': Object.freeze({ timeoutMinutes: 60 }),
     test: Object.freeze({ timeoutMinutes: 240 }),
   }),

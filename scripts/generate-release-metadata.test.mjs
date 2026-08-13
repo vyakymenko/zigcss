@@ -257,7 +257,12 @@ test('workflow validation normalizes Windows CRLF and rejects bare carriage retu
   }
 
   assert.deepEqual(validateReleaseWorkflowSource(workflow.replaceAll('\n', '\r\n')), expected)
-  assert.equal(validateReleaseBuildGate(buildWorkflow.replaceAll('\n', '\r\n')), true)
+  assert.deepEqual(validateReleaseBuildGate(buildWorkflow.replaceAll('\n', '\r\n')), {
+    targets: 5,
+    assetsPerTarget: 5,
+    attestations: 2,
+    signatureVerifications: 2,
+  })
   assert.throws(() => validateReleaseWorkflowSource(`${workflow}\r`), /bare carriage return/)
   assert.throws(() => validateReleaseBuildGate(`${buildWorkflow}\r`), /bare carriage return/)
 
@@ -318,6 +323,72 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('- name: Verify release artifact metadata policy', '- name: Removed release metadata policy')),
     /release metadata CI step/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('      attestations: write\n', '')),
+    /native provenance attestation permissions/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('- name: Attest Native Provenance', '- name: Removed native provenance')),
+    /native provenance attestation/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('gh attestation verify', 'gh removed verify')),
+    /native provenance cryptographic verification/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('--source-digest "$GITHUB_SHA"', '--source-digest "$GITHUB_REF"')),
+    /native provenance source digest verification/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      '          name: native-release-${{ matrix.target }}',
+      '          name: missing-native-release-${{ matrix.target }}',
+    )),
+    /closed native release input upload/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      '          echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"',
+      '          echo "REMOVED_RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"',
+    )),
+    /Build native release asset plan/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      "  native-provenance-evidence:\n    name: Native Provenance ${{ matrix.target }}\n    if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+      "  native-provenance-evidence:\n    name: Native Provenance ${{ matrix.target }}\n    if: github.event_name == 'push'",
+    )),
+    /native provenance exact-main authority gate/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      '    permissions:\n      contents: read\n    strategy:',
+      '    permissions:\n      attestations: write\n      contents: read\n      id-token: write\n    strategy:',
+    )),
+    /unprivileged Build permissions/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      '          - target: x86_64-linux\n            archive-extension: tar.gz\n            binary-name: zigcss\n',
+      '',
+    )),
+    /native provenance target\/archive inventory changed/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      '          - target: x86_64-windows\n            archive-extension: zip\n            binary-name: zigcss.exe',
+      '          - target: x86_64-windows\n            archive-extension: zip\n            binary-name: zigcss.exe\n'
+        + '          - target: x86_64-freebsd\n            archive-extension: tar.gz\n            binary-name: zigcss',
+    )),
+    /native provenance target\/archive inventory changed/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      '            release-assets/${{ env.RELEASE_BASE }}.sbom.sigstore.jsonl',
+      '            release-assets/${{ env.RELEASE_BASE }}.missing.sigstore.jsonl',
+    )),
+    /closed native provenance evidence upload/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('- name: Test release smoke', '- name: Removed release smoke')),

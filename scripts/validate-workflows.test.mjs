@@ -23,7 +23,7 @@ function cloneSources() {
 }
 
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
-  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 10, actions: 32 })
+  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 11, actions: 39 })
   assert.deepEqual(validateZigTestSuiteRunner(), {
     failureHeadBytes: 3 * 1024,
     modes: ['Debug', 'ReleaseSafe'],
@@ -196,6 +196,13 @@ test('workflow and job permission expansion fails closed', () => {
     '      id-token: write\n      packages: write',
   ))
   assert.throws(() => validateWorkflowSources(packages), /job release permissions changed/)
+
+  const compilerOidc = cloneSources()
+  compilerOidc.set('build.yml', compilerOidc.get('build.yml').replace(
+    '    permissions:\n      contents: read\n    strategy:',
+    '    permissions:\n      attestations: write\n      contents: read\n      id-token: write\n    strategy:',
+  ))
+  assert.throws(() => validateWorkflowSources(compilerOidc), /job build permissions changed/)
 })
 
 test('new workflows, jobs, and action placements require an explicit policy update', () => {
@@ -229,7 +236,7 @@ test('the workflow security gate runs before dependency installation', () => {
 
 test('the build workflow preserves one complete aggregate suite within a bounded queue', () => {
   const sources = cloneSources()
-  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 10, actions: 32 })
+  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 11, actions: 39 })
 
   const unconstrained = cloneSources()
   unconstrained.set('build.yml', unconstrained.get('build.yml').replace(
@@ -259,11 +266,13 @@ test('required build jobs declare finite hard timeout budgets', () => {
     artifactTargets: 5,
     hardTimeoutMinutes: {
       build: 240,
+      'native-provenance-evidence': 30,
       'native-package-evidence': 60,
       test: 240,
     },
     interventionMinutes: {
       build: 180,
+      'native-provenance-evidence': 22.5,
       'native-package-evidence': 45,
       test: 180,
     },
@@ -358,7 +367,7 @@ test('the artifact matrix uses the optimized complete suite while the test job o
   const buildWorkflow = cloneSources().get('build.yml')
   const artifactJob = buildWorkflow.slice(
     buildWorkflow.indexOf('  build:'),
-    buildWorkflow.indexOf('  native-package-evidence:'),
+    buildWorkflow.indexOf('  native-provenance-evidence:'),
   )
   const testJob = buildWorkflow.slice(buildWorkflow.indexOf('  test:'))
   const debugArtifactSuite = '      - name: Run Native Tests\n        run: node scripts/run-zig-test-suite.mjs --mode Debug'

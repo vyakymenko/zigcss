@@ -90,7 +90,10 @@ jobs:
           version="$(cat VERSION)"
           base="zigcss-v${version}-${{ matrix.target }}"
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"
           echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"
+          echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"
+          echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
 
       - name: Create Native Smoke Archive
@@ -140,6 +143,19 @@ jobs:
             --commit "$GITHUB_SHA" \
             --evidence "native-target-evidence/${{ matrix.target }}.json"
 
+      - name: Upload Native Release Inputs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-release-${{ matrix.target }}
+          path: |
+            release-assets/${{ env.RELEASE_ARCHIVE }}
+            release-assets/${{ env.RELEASE_SBOM }}
+            release-assets/${{ env.RELEASE_CHECKSUMS }}
+            zig-out/bin/${{ matrix.binary-name }}
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -153,6 +169,141 @@ jobs:
       - name: Bound Zig cache
         if: always()
         run: node .github/actions/setup-zig/setup-zig.mjs --prune-cache
+
+  native-provenance-evidence:
+    name: Native Provenance ${{ matrix.target }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux
+            archive-extension: tar.gz
+            binary-name: zigcss
+          - target: aarch64-linux
+            archive-extension: tar.gz
+            binary-name: zigcss
+          - target: x86_64-macos
+            archive-extension: tar.gz
+            binary-name: zigcss
+          - target: aarch64-macos
+            archive-extension: tar.gz
+            binary-name: zigcss
+          - target: x86_64-windows
+            archive-extension: zip
+            binary-name: zigcss.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+
+      - name: Download Native Release Inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: native-release-${{ matrix.target }}
+          path: .
+
+      - name: Plan Native Provenance Assets
+        shell: bash
+        run: |
+          version="$(cat VERSION)"
+          base="zigcss-v${version}-${{ matrix.target }}"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"
+          echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"
+          echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"
+          echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+
+      - name: Verify Native Release Inputs
+        shell: bash
+        run: |
+          node scripts/generate-release-metadata.mjs --check \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --output-directory release-assets \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Attest Native Provenance
+        id: provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: |
+            release-assets/${{ env.RELEASE_ARCHIVE }}
+            release-assets/${{ env.RELEASE_SBOM }}
+            release-assets/${{ env.RELEASE_CHECKSUMS }}
+
+      - name: Attest Native SBOM
+        id: sbom-attestation
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: release-assets/${{ env.RELEASE_ARCHIVE }}
+          sbom-path: release-assets/${{ env.RELEASE_SBOM }}
+
+      - name: Preserve Native Attestation Bundles
+        shell: bash
+        run: |
+          cp "${{ steps.provenance.outputs.bundle-path }}" \
+            "release-assets/${RELEASE_BASE}.provenance.sigstore.jsonl"
+          cp "${{ steps.sbom-attestation.outputs.bundle-path }}" \
+            "release-assets/${RELEASE_BASE}.sbom.sigstore.jsonl"
+
+      - name: Verify Native Attestation Bundles
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/generate-release-metadata.mjs --check-bundles \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --output-directory release-assets \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+          gh attestation verify "release-assets/$RELEASE_ARCHIVE" \
+            -R "$GITHUB_REPOSITORY" \
+            --bundle "release-assets/${RELEASE_BASE}.provenance.sigstore.jsonl" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build.yml" \
+            --signer-digest "$GITHUB_SHA" \
+            --source-ref refs/heads/main \
+            --source-digest "$GITHUB_SHA"
+          gh attestation verify "release-assets/$RELEASE_ARCHIVE" \
+            -R "$GITHUB_REPOSITORY" \
+            --bundle "release-assets/${RELEASE_BASE}.sbom.sigstore.jsonl" \
+            --predicate-type https://spdx.dev/Document/v2.3 \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build.yml" \
+            --signer-digest "$GITHUB_SHA" \
+            --source-ref refs/heads/main \
+            --source-digest "$GITHUB_SHA"
+
+      - name: Upload Native Provenance Evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-provenance-${{ matrix.target }}
+          path: |
+            release-assets/${{ env.RELEASE_ARCHIVE }}
+            release-assets/${{ env.RELEASE_SBOM }}
+            release-assets/${{ env.RELEASE_CHECKSUMS }}
+            release-assets/${{ env.RELEASE_BASE }}.provenance.sigstore.jsonl
+            release-assets/${{ env.RELEASE_BASE }}.sbom.sigstore.jsonl
+          if-no-files-found: error
+          retention-days: 7
 
   native-package-evidence:
     name: Native Package Evidence
