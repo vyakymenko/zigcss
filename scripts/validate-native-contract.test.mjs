@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   contractPath,
+  expectedReleaseGraduation,
   loadContract,
   loadProductionSources,
   validateContract,
@@ -16,113 +17,6 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 
 function clone(value) {
   return structuredClone(value)
-}
-
-const expectedReleaseGraduation = {
-  ownerPackage: 'NATIVE-009',
-  releaseGapFamily: 'native-release-evidence',
-  state: 'in-progress',
-  packageState: 'in-progress',
-  candidateVersion: '0.6.0-rc.2',
-  candidateTag: 'v0.6.0-rc.2',
-  candidateSelection: {
-    selectedOn: '2026-08-13',
-    localTagStateAtSelection: 'absent',
-    githubRepository: 'vyakymenko/zigcss',
-    githubTagStateAtSelection: 'absent',
-    npmPackage: 'zigcss',
-    npmVersionStateAtSelection: 'absent',
-    observedPublishedNpmVersions: ['0.2.0', '0.2.1', '0.3.0', '0.4.0-rc.3'],
-  },
-  terminalContract: {
-    syntaxes: ['css', 'scss', 'sass', 'less', 'stylus'],
-    targets: [
-      'x86_64-linux',
-      'aarch64-linux',
-      'x86_64-macos',
-      'aarch64-macos',
-      'x86_64-windows',
-    ],
-    preTagSurfaces: [
-      'release-evidence-contract',
-      'immutable-candidate',
-      'local-validation',
-      'hosted-validation',
-      'release-validation',
-      'artifact-validation',
-      'provenance-validation',
-      'consumer-validation',
-      'origin-main-integration',
-    ],
-    postTagSurfaces: ['tag-workflow-publication'],
-    publicationChannels: ['github-prerelease', 'npm-next'],
-    npmDistTag: 'next',
-    referenceCandidateEligible: false,
-  },
-  gates: [{
-    id: 'release-evidence-contract',
-    state: 'verified',
-    evidenceRequirements: [
-      'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
-      'five native syntax and target inventories are resource-derived',
-      'candidate version and tag selection remains separate from the closed release interlock',
-    ],
-  }, {
-    id: 'immutable-candidate',
-    state: 'verified',
-    evidenceRequirements: [
-      'one unused 0.6.x native version and matching immutable v tag are selected',
-      'the provider-backed 0.5.0-rc.1 reference candidate remains ineligible',
-    ],
-  }, {
-    id: 'local-validation',
-    state: 'verified',
-    evidenceRequirements: [
-      'Debug ReleaseSafe differential fuzz allocation resource documentation package and audit gates pass on the candidate',
-    ],
-  }, {
-    id: 'hosted-validation',
-    state: 'verified',
-    evidenceRequirements: [
-      'one automatic Build on the exact integrated candidate passes Test Suite five targets and aggregate evidence within runtime budgets',
-    ],
-  }, {
-    id: 'release-validation',
-    state: 'pending',
-    evidenceRequirements: [
-      'version native package workflow and publication preflight policies pass before npm authentication',
-    ],
-  }, {
-    id: 'artifact-validation',
-    state: 'pending',
-    evidenceRequirements: [
-      'five exact native archives checksums SPDX inventories and direct smokes pass',
-    ],
-  }, {
-    id: 'provenance-validation',
-    state: 'pending',
-    evidenceRequirements: [
-      'five exact archives and SBOMs are bound by verified GitHub attestations',
-    ],
-  }, {
-    id: 'consumer-validation',
-    state: 'pending',
-    evidenceRequirements: [
-      'direct archives and offline installed packages compile all five syntaxes on all five targets',
-    ],
-  }, {
-    id: 'origin-main-integration',
-    state: 'pending',
-    evidenceRequirements: [
-      'the exact candidate commit is integrated to origin main before tag creation',
-    ],
-  }, {
-    id: 'tag-workflow-publication',
-    state: 'pending',
-    evidenceRequirements: [
-      'one immutable tag produces one GitHub prerelease and the exact npm next publication',
-    ],
-  }],
 }
 
 function makeReleaseReady(version = '0.6.0-rc.2') {
@@ -1579,6 +1473,13 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
 test('binds the finite NATIVE-009 candidate and hosted-validation evidence', () => {
   const contract = loadContract()
   assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
+  assert.deepEqual(
+    expectedReleaseGraduation.gates.map(gate => gate.id),
+    [
+      ...expectedReleaseGraduation.terminalContract.preTagSurfaces,
+      ...expectedReleaseGraduation.terminalContract.postTagSurfaces,
+    ],
+  )
 
   for (const mutate of [
     release => { release.ownerPackage = 'NATIVE-008' },
@@ -1594,15 +1495,32 @@ test('binds the finite NATIVE-009 candidate and hosted-validation evidence', () 
     release => release.terminalContract.preTagSurfaces.reverse(),
     release => release.terminalContract.postTagSurfaces.push('npm-latest'),
     release => { release.terminalContract.referenceCandidateEligible = true },
-    release => { release.gates[0].state = 'pending' },
-    release => { release.gates[1].state = 'pending' },
-    release => { release.gates[2].state = 'pending' },
-    release => { release.gates[3].state = 'pending' },
+    release => release.gates.pop(),
     release => release.gates.push(clone(release.gates[0])),
   ]) {
     const changed = clone(contract)
     mutate(changed.releaseGraduation)
     assert.throws(() => validateContract(changed), /release graduation contract drifted/)
+  }
+
+  for (const [index, gate] of expectedReleaseGraduation.gates.entries()) {
+    const changedState = clone(contract)
+    changedState.releaseGraduation.gates[index].state = gate.state === 'verified'
+      ? 'pending'
+      : 'verified'
+    assert.throws(
+      () => validateContract(changedState),
+      /release graduation contract drifted/,
+      `${gate.id} must retain its exact current state`,
+    )
+
+    const changedEvidence = clone(contract)
+    changedEvidence.releaseGraduation.gates[index].evidenceRequirements.push('unbounded sibling evidence')
+    assert.throws(
+      () => validateContract(changedEvidence),
+      /release graduation contract drifted/,
+      `${gate.id} must retain its exact finite evidence`,
+    )
   }
 
   const ready = clone(contract)
@@ -2526,19 +2444,33 @@ test('release tags require the exact owner publication authority after graduatio
     /does not match the graduated native version/,
   )
 
-  const missingGate = makeReleaseReady()
-  missingGate.releaseGraduation.gates.find(gate => gate.id === 'local-validation').state = 'pending'
-  assert.throws(
-    () => validateReleaseTag(missingGate, 'v0.6.0-rc.2'),
-    /native release evidence is incomplete/,
-  )
+  for (const id of expectedReleaseGraduation.terminalContract.preTagSurfaces) {
+    const missingGate = makeReleaseReady()
+    missingGate.releaseGraduation.gates.find(gate => gate.id === id).state = 'pending'
+    assert.throws(
+      () => validateReleaseTag(missingGate, 'v0.6.0-rc.2'),
+      /native release evidence is incomplete/,
+      `${id} must be verified before tag admission`,
+    )
+  }
 
-  const duplicatedGate = makeReleaseReady()
-  duplicatedGate.releaseGraduation.gates.push(clone(duplicatedGate.releaseGraduation.gates[0]))
-  assert.throws(
-    () => validateReleaseTag(duplicatedGate, 'v0.6.0-rc.2'),
-    /native release evidence is incomplete/,
-  )
+  const recordedPublication = makeReleaseReady()
+  recordedPublication.releaseGraduation.gates
+    .find(gate => gate.id === 'tag-workflow-publication').state = 'verified'
+  assert.doesNotThrow(() => validateReleaseTag(recordedPublication, 'v0.6.0-rc.2'))
+
+  for (const mutate of [
+    release => release.gates.pop(),
+    release => release.gates.push(clone(release.gates[0])),
+    release => release.gates.reverse(),
+  ]) {
+    const changed = makeReleaseReady()
+    mutate(changed.releaseGraduation)
+    assert.throws(
+      () => validateReleaseTag(changed, 'v0.6.0-rc.2'),
+      /native release evidence is incomplete/,
+    )
+  }
 
   const ungraduatedAdapter = makeReleaseReady()
   ungraduatedAdapter.adapters[1].current = 'native-differential'

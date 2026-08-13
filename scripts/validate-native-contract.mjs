@@ -703,7 +703,7 @@ const expectedCapabilityGraduation = Object.freeze({
   ]),
 })
 
-const expectedReleaseGraduation = Object.freeze({
+export const expectedReleaseGraduation = Object.freeze({
   ownerPackage: 'NATIVE-009',
   releaseGapFamily: 'native-release-evidence',
   state: 'in-progress',
