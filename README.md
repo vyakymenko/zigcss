@@ -28,6 +28,8 @@ The current native package contract has zero `dependencies` and zero `optionalDe
 
 Publication remains a separate gate: `nativeReleaseReady: false`, no native release version is selected, and the later `NATIVE-009` candidate checks remain closed.
 
+`NATIVE-008` closes the finite source-capability inventory: machine rows, binary help, README, website, compiled examples, guides/compatibility metadata, and these migration notes now describe the same native-differential snapshot. This is not release graduation; executable plugin parity remains outside the contract and `NATIVE-009` remains the only release gate.
+
 ## Why ZigCSS
 
 | What matters | ZigCSS contract |
@@ -155,7 +157,7 @@ The installed package exports a thin launcher. It forwards the closed CLI argume
 
 ## Zig API
 
-The stable Zig example remains CSS-only while the separate native preprocessor example surface is still pending. It returns one owned compile result; call `deinit` exactly once.
+The stable `zigcss.compile` example remains CSS-only. It returns one owned compile result; call `deinit` exactly once.
 
 <!-- api-example:start -->
 ```zig
@@ -182,6 +184,60 @@ pub fn main() !void {
 }
 ```
 <!-- api-example:end -->
+
+The explicitly experimental `zigcss.experimental_native` namespace covers the finite SCSS, indented Sass, Less, and Stylus source set. This compiled example parameterizes all four rows, keeps resolver roots explicit, checks exact deterministic CSS, and deinitializes every owned result:
+
+<!-- native-api-example:start -->
+```zig
+const std = @import("std");
+const zigcss = @import("zigcss");
+
+const native = zigcss.experimental_native;
+
+const Example = struct {
+    syntax: native.Syntax,
+    filename: []const u8,
+    source: []const u8,
+    expected: []const u8,
+};
+
+const examples = [_]Example{
+    .{ .syntax = .scss, .filename = "example.scss", .source = "$color: red; .card { color: $color; }", .expected = ".card{color:red}" },
+    .{ .syntax = .sass, .filename = "example.sass", .source = "$color: red\n.card\n  color: $color\n", .expected = ".card{color:red}" },
+    .{ .syntax = .less, .filename = "example.less", .source = "@color: red; .card { color: @color; }", .expected = ".card{color:red}" },
+    .{ .syntax = .stylus, .filename = "example.styl", .source = "color = red\n.card\n  color color\n", .expected = ".card{color:#f00}" },
+};
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const root = try std.fs.cwd().realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+
+    var buffer: [1024]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&buffer);
+    inline for (examples) |example| {
+        const entry = try std.fs.path.join(allocator, &.{ root, example.filename });
+        defer allocator.free(entry);
+        var result = try native.compile(allocator, entry, example.source, .{
+            .syntax = example.syntax,
+            .root_paths = &.{root},
+            .format = .minified,
+        });
+        defer result.deinit();
+        if (result.diagnostics.len != 0 or !std.mem.eql(u8, result.css, example.expected)) {
+            return error.UnexpectedNativeResult;
+        }
+        try writer.interface.print("{s}\n", .{result.css});
+    }
+    try writer.interface.flush();
+}
+```
+<!-- native-api-example:end -->
+
+The same documentation gate executes the five committed files under [examples/native](examples/native) through the source-built binary with explicit `--syntax`. Neither example invokes a provider, child language engine, plugin, network service, or runtime download.
 
 `build.zig.zon` gives the source package stable identity `zigcss`. The build module exposes `helpers.addCssCompile` for declared CSS inputs and generated outputs. See [examples/build-integration](examples/build-integration).
 
@@ -227,7 +283,7 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 - SCSS, indented Sass, Less, and Stylus: `native-differential` after parser/evaluator, pinned conformance, native product-routing, package, and five-target gates.
 - Production package closure: verified with zero production dependencies and no provider or host bytes; the compiler itself starts no child process and performs no network access.
 - Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
-- Public capability graduation: README, binary help, and the website lab now match native evidence; examples, guides/compatibility, and changelog/migration notes remain pending in their declared order.
+- Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; release identity and publication remain closed under `NATIVE-009`.
 - Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
 - Publication: fail-closed until the exact later native candidate passes every local, hosted, artifact, provenance, and consumer gate.
 

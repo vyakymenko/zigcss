@@ -610,8 +610,8 @@
   "capabilityGraduation": {
     "ownerPackage": "NATIVE-008",
     "releaseGapFamily": "native-capability-graduation",
-    "state": "in-progress",
-    "packageState": "in-progress",
+    "state": "closed",
+    "packageState": "verified",
     "terminalContract": {
       "adapters": ["scss", "sass", "less", "stylus"],
       "surfaces": [
@@ -652,17 +652,17 @@
       },
       {
         "id": "examples",
-        "state": "pending",
+        "state": "verified",
         "closureEvidence": ["public examples compile through the native binary and Zig API"]
       },
       {
         "id": "guides-and-compatibility",
-        "state": "pending",
+        "state": "verified",
         "closureEvidence": ["machine capability rows and guides agree with native evidence"]
       },
       {
         "id": "changelog-and-migration-notes",
-        "state": "pending",
+        "state": "verified",
         "closureEvidence": ["changelog and migration notes retain oracle and plugin boundaries"]
       }
     ]

@@ -106,8 +106,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
   assert.deepEqual(contract.capabilityGraduation, {
     ownerPackage: 'NATIVE-008',
     releaseGapFamily: 'native-capability-graduation',
-    state: 'in-progress',
-    packageState: 'in-progress',
+    state: 'closed',
+    packageState: 'verified',
     terminalContract: {
       adapters: ['scss', 'sass', 'less', 'stylus'],
       surfaces: [
@@ -143,15 +143,15 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       closureEvidence: ['website claims and input/output lab execute the native product path'],
     }, {
       id: 'examples',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: ['public examples compile through the native binary and Zig API'],
     }, {
       id: 'guides-and-compatibility',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: ['machine capability rows and guides agree with native evidence'],
     }, {
       id: 'changelog-and-migration-notes',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: ['changelog and migration notes retain oracle and plugin boundaries'],
     }],
   })
@@ -1317,19 +1317,138 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   for (const mutate of [
     graduation => { graduation.ownerPackage = 'NATIVE-009' },
     graduation => { graduation.releaseGapFamily = 'renamed-capability-family' },
-    graduation => { graduation.state = 'closed' },
-    graduation => { graduation.packageState = 'verified' },
+    graduation => { graduation.state = 'in-progress' },
+    graduation => { graduation.packageState = 'in-progress' },
     graduation => graduation.terminalContract.adapters.pop(),
     graduation => graduation.terminalContract.surfaces.reverse(),
     graduation => { graduation.terminalContract.pluginParity = true },
     graduation => { graduation.gates[0].state = 'pending' },
     graduation => { graduation.gates[1].state = 'pending' },
     graduation => { graduation.gates[3].state = 'pending' },
+    graduation => { graduation.gates[4].state = 'pending' },
+    graduation => { graduation.gates[5].state = 'pending' },
+    graduation => { graduation.gates[6].state = 'pending' },
     graduation => graduation.gates.push(structuredClone(graduation.gates[0])),
   ]) {
     const changed = clone(loadContract())
     mutate(changed.capabilityGraduation)
     assert.throws(() => validateContract(changed), /capability graduation contract drifted/)
+  }
+
+  const nativeExampleSources = Object.fromEntries([
+    'examples/native/styles.css',
+    'examples/native/styles.scss',
+    'examples/native/styles.sass',
+    'examples/native/styles.less',
+    'examples/native/styles.styl',
+  ].map(relativePath => [
+    relativePath,
+    fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8'),
+  ]))
+  delete nativeExampleSources['examples/native/styles.styl']
+  assert.throws(
+    () => validateContract(loadContract(), { nativeExampleSources }),
+    /native binary example inventory drifted from its finite terminal set/,
+  )
+
+  const buildFile = fs.readFileSync(path.join(repositoryRoot, 'build.zig'), 'utf8')
+  assert.throws(
+    () => validateContract(loadContract(), {
+      buildFile: buildFile.replace(
+        'b.path("examples/native/styles.styl")',
+        'b.path("examples/native/styles.next")',
+      ),
+    }),
+    /native binary example build row examples\/native\/styles\.styl is missing/,
+  )
+
+  const nativeApiExample = fs.readFileSync(
+    path.join(repositoryRoot, 'examples/native_api.zig'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nativeApiExample: nativeApiExample.replace('inline for (examples)', 'for (examples)'),
+    }),
+    /parameterized native Zig API example execution is missing/,
+  )
+
+  const documentationPolicy = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'docs/documentation-validation.json'),
+    'utf8',
+  ))
+  documentationPolicy.executableZigExamples = documentationPolicy.executableZigExamples.filter(
+    relativePath => relativePath !== 'examples/native_api.zig',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { documentationPolicy }),
+    /documentation executable Zig example inventory drifted/,
+  )
+
+  const formatMatrix = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'tests/formats/matrix.json'),
+    'utf8',
+  ))
+  formatMatrix.adapters.find(row => row.id === 'less').compatibility = 'Unverified'
+  assert.throws(
+    () => validateContract(loadContract(), { formatMatrix }),
+    /format matrix native capability state drifted for less/,
+  )
+
+  const capabilityMetadata = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'docs/src/data/capabilities.json'),
+    'utf8',
+  ))
+  capabilityMetadata.capabilities.find(row => row.id === 'scss').status = 'Experimental'
+  assert.throws(
+    () => validateContract(loadContract(), { capabilityMetadata }),
+    /capability metadata native status drifted for scss/,
+  )
+
+  for (const [field, relativePath, needle, replacement, expectedError] of [
+    [
+      'formatGuide',
+      'docs/src/content/docs/guide/format-compatibility.md',
+      'These exact providers are development-only reference oracles.',
+      'These providers run in production.',
+      /format compatibility guide is missing/,
+    ],
+    [
+      'statusGuide',
+      'docs/src/content/docs/guide/status.md',
+      'The package JavaScript wrapper only locates and invokes that binary',
+      'The package JavaScript wrapper hosts every language',
+      /status guide is missing/,
+    ],
+    [
+      'recoveryGuide',
+      'docs/src/content/docs/guide/recovery-cli.md',
+      'They do not run during compilation',
+      'They run during compilation',
+      /native CLI guide is missing/,
+    ],
+    [
+      'buildGuide',
+      'docs/src/content/docs/guide/build-from-source.md',
+      'const native = zigcss.experimental_native;',
+      'const native = zigcss;',
+      /build-from-source guide native Zig API example drifted/,
+    ],
+    [
+      'changelog',
+      'CHANGELOG.md',
+      'remain exact development-only reference oracles and do not run during compilation',
+      'remain production runtime dependencies',
+      /changelog migration notes is missing/,
+    ],
+  ]) {
+    const source = fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8')
+    const changed = source.replace(needle, replacement)
+    assert.notEqual(changed, source, `${relativePath} fixture is missing ${JSON.stringify(needle)}`)
+    assert.throws(
+      () => validateContract(loadContract(), { [field]: changed }),
+      expectedError,
+    )
   }
 })
 
@@ -1497,9 +1616,9 @@ test('binds website claims and the recorded lab to the native product path', () 
     ],
     [
       'docs/src/app/components/Features.tsx',
-      'The compatibility table below still records the unpublished provider-backed reference candidate and will advance in the separate guides-and-compatibility gate.',
-      'The compatibility table describes the current native product path.',
-      /website compatibility transition boundary is missing/,
+      'The compatibility table below records the closed NATIVE-008 native-differential source snapshot; release graduation remains fail-closed under NATIVE-009.',
+      'The compatibility table describes an unbounded future product path.',
+      /website closed compatibility boundary is missing/,
     ],
   ]) {
     const changed = { ...websiteSources }

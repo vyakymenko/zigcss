@@ -142,9 +142,11 @@ test('public disabled and final LSP/editor boundaries cannot regress to stale cl
     ['stylus', 'Stylus 0.64.0'],
   ]) {
     assert.equal(byId.get(id).statusKind, 'verified')
-    assert.match(byId.get(id).status, /canonical provider verified/i)
+    assert.match(byId.get(id).status, /native differential verified/i)
     assert.match(byId.get(id).behavior, new RegExp(version.replaceAll('.', '\\.')))
     assert.match(byId.get(id).behavior, /plugin|custom function|project code/i)
+    assert.match(byId.get(id).behavior, /development oracle/)
+    assert.match(byId.get(id).behavior, /does not run during compilation/)
   }
   assert.equal(byId.get('alternate-ecosystem-formats').statusKind, 'unavailable')
 })

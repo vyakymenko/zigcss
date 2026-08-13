@@ -1,11 +1,11 @@
 # Build from source
 
-Source builds are the verified way to evaluate the green five-language 0.5 snapshot before its package is published. Local Zig package dependencies and the npm product pipeline are consumer-tested below.
+Source builds are the verified way to evaluate the green five-language native-differential snapshot before its package is published. Local Zig package dependencies and the thin npm delivery wrapper are consumer-tested below.
 
 ## Requirements
 
 - Zig 0.15.2
-- Node.js 20.19 or newer
+- Node.js 20.19 or newer for development-oracle and documentation gates; stylesheet compilation itself does not require Node.js
 - Git
 
 ## Build and test
@@ -17,10 +17,11 @@ npm ci
 zig build
 zig build test --summary all
 zig build test-public-api --summary all
+zig build test-native-zig-api --summary all
 zig build test-documentation-examples --summary all
 ```
 
-The CSS-only native executable is written to `zig-out/bin/zigcss`. The root `index.js` launcher combines it with the canonical SCSS, Sass, Less, and Stylus host.
+The self-contained executable is written to `zig-out/bin/zigcss` and compiles CSS, SCSS, indented Sass, Less, and Stylus through native Zig paths. The root `index.js` launcher only locates and invokes that binary. Exact Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 providers remain development-only reference oracles and do not run during compilation.
 
 `test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade, result cleanup, the explicit native CSS Modules subset, and an experimental borrowed native-plugin callback without claiming a stable plugin ABI or full ecosystem compatibility.
 
@@ -56,7 +57,63 @@ pub fn main() !void {
 
 Set `.profile = true` to populate `result.metrics` with `CompileMetrics`; the public root also exports `CompileStageTimings` and `CompileMemoryMetrics`. The total uses one monotonic session around the real compile, while stage fields cover parse, validation, dependencies, optimization, plugin/prefix transforms, emission, result promotion, and temporary cleanup. Memory fields count allocator-requested bytes and operations through a forwarding wrapper; they are not process RSS. Result buffers remain compatible with normal `result.deinit()` because the wrapper forwards exact pointers from the caller's allocator.
 
-Set `.syntax = .css_modules` only for the [experimental native CSS Modules subset](/guide/css-modules). A successful result owns class/local-value exports, nested composition references, and bounded module dependency facts; it never loads dependencies. The direct native executable, Zig API, and build helper remain CSS-oriented; the root npm launcher/API own the canonical preprocessor frontends.
+Set `.syntax = .css_modules` only for the [experimental native CSS Modules subset](/guide/css-modules). A successful result owns class/local-value exports, nested composition references, and bounded module dependency facts; it never loads dependencies. The stable compile facade and build helper remain CSS-oriented.
+
+## Native stylesheet Zig API example
+
+The finite native source API remains explicitly namespaced as `zigcss.experimental_native` until the later release gate. This exact example is compiled and executed by `test-documentation-examples`:
+
+<!-- native-api-example:start -->
+```zig
+const std = @import("std");
+const zigcss = @import("zigcss");
+
+const native = zigcss.experimental_native;
+
+const Example = struct {
+    syntax: native.Syntax,
+    filename: []const u8,
+    source: []const u8,
+    expected: []const u8,
+};
+
+const examples = [_]Example{
+    .{ .syntax = .scss, .filename = "example.scss", .source = "$color: red; .card { color: $color; }", .expected = ".card{color:red}" },
+    .{ .syntax = .sass, .filename = "example.sass", .source = "$color: red\n.card\n  color: $color\n", .expected = ".card{color:red}" },
+    .{ .syntax = .less, .filename = "example.less", .source = "@color: red; .card { color: @color; }", .expected = ".card{color:red}" },
+    .{ .syntax = .stylus, .filename = "example.styl", .source = "color = red\n.card\n  color color\n", .expected = ".card{color:#f00}" },
+};
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const root = try std.fs.cwd().realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+
+    var buffer: [1024]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&buffer);
+    inline for (examples) |example| {
+        const entry = try std.fs.path.join(allocator, &.{ root, example.filename });
+        defer allocator.free(entry);
+        var result = try native.compile(allocator, entry, example.source, .{
+            .syntax = example.syntax,
+            .root_paths = &.{root},
+            .format = .minified,
+        });
+        defer result.deinit();
+        if (result.diagnostics.len != 0 or !std.mem.eql(u8, result.css, example.expected)) {
+            return error.UnexpectedNativeResult;
+        }
+        try writer.interface.print("{s}\n", .{result.css});
+    }
+    try writer.interface.flush();
+}
+```
+<!-- native-api-example:end -->
+
+Arbitrary Sass plugins, custom functions/importers, Less JavaScript/plugins, Stylus plugins/evaluator hooks, and executable project code remain outside this API. The namespace starts no provider child process and exposes owned CSS, diagnostics, dependencies, and optional composed source maps.
 
 ## Local Zig package dependency
 
@@ -75,7 +132,7 @@ The package is also verified through a fresh `zig fetch .` cache so the allowlis
 
 A dependency build script imports `const zigcss_build = @import("zigcss")`, obtains the executable with `b.dependency("zigcss", ...).artifact("zigcss")`, and calls `zigcss_build.helpers.addCssCompile`. The exact working form is the committed `tests/package-consumer/build.zig`; its test runs in CI rather than relying on an uncompiled documentation fragment.
 
-Each call declares one CSS input as `std.Build.LazyPath` and one generated output through a portable `.css` basename of at most 128 bytes. The returned `getOutput()` path can feed `b.addCheckFile`, `b.addInstallFile`, or another step. Optional `optimize` and `minify` fields map only to the native compiler features. Source maps, browser targeting, prefixing, arbitrary extra arguments, batch output directories, and preprocessor syntaxes are deliberately absent from this Zig build-helper contract even though the npm product surface admits canonical preprocessors.
+Each call declares one CSS input as `std.Build.LazyPath` and one generated output through a portable `.css` basename of at most 128 bytes. The returned `getOutput()` path can feed `b.addCheckFile`, `b.addInstallFile`, or another step. Optional `optimize` and `minify` fields map only to the native compiler features. Source maps, browser targeting, prefixing, arbitrary extra arguments, batch output directories, and preprocessor syntaxes are deliberately absent from this CSS build-helper contract; native preprocessors use the direct CLI or the explicit Zig namespace.
 
 The executable passed to the helper must run on the build host. A cross-target project must obtain a separate host-target ZigCSS artifact for this run step instead of attempting to execute its application-target binary. The helper's file/output arguments make unchanged builds cacheable; the package fixture proves a second run is cached and a source-byte change reruns compilation while preserving exact output.
 
@@ -90,7 +147,17 @@ zig build test -Doptimize=ReleaseSafe --summary all
 zig build
 ```
 
-CI runs both test modes. A static enumeration gate requires every `.zig` file under `examples` to appear in either this project or the root compiled public-API example, preventing unbuilt snippets from accumulating.
+CI runs both test modes. A static enumeration gate requires every `.zig` file under `examples` to appear in the root build graph or the committed integration project, preventing unbuilt snippets from accumulating.
+
+The same gate parameterizes the exact finite binary example set instead of cloning one test per syntax:
+
+```bash
+zig-out/bin/zigcss examples/native/styles.css --syntax css --minify
+zig-out/bin/zigcss examples/native/styles.scss --syntax scss --minify
+zig-out/bin/zigcss examples/native/styles.sass --syntax sass --minify
+zig-out/bin/zigcss examples/native/styles.less --syntax less --minify
+zig-out/bin/zigcss examples/native/styles.styl --syntax stylus --minify
+```
 
 The independent parser gate additionally requires Node.js. After the Zig build has produced the executable, run:
 
@@ -108,7 +175,7 @@ npm run test:compat
 npm run test:transforms
 ```
 
-The documentation gate syntax-checks every tracked shell, JSON, Lua, and Vim fence, compiles every CSS fence, runs the canonical Zig examples through the build graph, and resolves every tracked internal Markdown/site link. Set `NVIM` to a Neovim 0.11.7-or-later executable so the checked Lua and Ex-command examples use the real editor parser without loading user configuration.
+The documentation gate syntax-checks every tracked shell, JSON, Lua, and Vim fence, compiles every CSS fence, runs the compiled Zig examples through the build graph, and resolves every tracked internal Markdown/site link. Set `NVIM` to a Neovim 0.11.7-or-later executable so the checked Lua and Ex-command examples use the real editor parser without loading user configuration.
 
 The dependency gate inventories the root, documentation, and VS Code npm manifests and version-3 lockfiles, requires exact direct dependency versions, and audits each production lock graph from the lockfile with high/critical findings as failures. The reviewed `.github/dependabot.yml` opens only bounded weekly version-update pull requests for those npm directories, GitHub Actions, and the root Docker ecosystem; it grants no automerge, registry credentials, publishing, or deployment authority.
 

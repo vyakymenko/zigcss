@@ -102,9 +102,10 @@ test('binds the development oracle row and lockfile to exact Less 4.6.7', () => 
   assert.match(adapterSource, /less\.render\(/)
   assert.doesNotMatch(adapterSource, /less\.renderSync\(/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'less')
-  assert.equal(adapter.availability, 'CanonicalCliApi')
-  assert.equal(adapter.compatibility, 'CanonicalVersion')
-  assert.equal(adapter.implementation, 'CanonicalProvider')
+  assert.equal(adapter.availability, 'NativeCliZigApi')
+  assert.equal(adapter.compatibility, 'NativeDifferential')
+  assert.equal(adapter.implementation, 'NativeFrontend')
+  assert.equal(adapter.referenceOracleId, 'less')
 })
 
 test('renders canonical Less semantics in exact expanded and compressed styles', async () => {

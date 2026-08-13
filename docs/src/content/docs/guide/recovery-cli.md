@@ -1,18 +1,20 @@
-# npm CLI contract
+# Native CLI contract
 
-The ZigCSS 0.5 development launcher owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. Run `zigcss --help` for the authoritative installed-package option list.
+The ZigCSS source-built binary owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. Run `zig-out/bin/zigcss --help` for the authoritative option list.
 
-The launcher routes CSS directly to the native Zig executable. Canonical preprocessor inputs enter a bounded Node host, then their generated CSS passes through the same native compile boundary before output. The public npm release candidate `0.4.0-rc.3` predates this five-language surface; this page describes the green source snapshot.
+CSS enters the stable native compile facade. SCSS, indented Sass, Less, and Stylus enter self-contained native Zig parser/evaluators, then their complete generated CSS passes through the same recovery-disabled core. The root JavaScript launcher only locates and invokes the binary; it hosts no language semantics. The public npm release candidate `0.4.0-rc.3` predates this five-language surface, so this page describes the green source snapshot rather than an installed public release.
 
-## Inputs and providers
+## Inputs and native frontends
 
-| Syntax | Detection | Engine |
+| Syntax | Selection | Engine |
 |---|---|---|
-| CSS | `.css` or `--syntax css` | Native ZigCSS |
-| SCSS | `.scss` or `--syntax scss` | Dart Sass 1.101.0 |
-| Indented Sass | `.sass` or `--syntax sass` | Dart Sass 1.101.0 |
-| Less | `.less` or `--syntax less` | Less 4.6.7 |
-| Stylus | `.styl` or `--syntax stylus` | Stylus 0.64.0 |
+| CSS | default or `--syntax css` | Native ZigCSS core |
+| SCSS | explicit `--syntax scss` | Native Zig Sass-family frontend |
+| Indented Sass | explicit `--syntax sass` | Native Zig Sass-family frontend |
+| Less | explicit `--syntax less` | Native Zig Less frontend |
+| Stylus | explicit `--syntax stylus` | Native Zig Stylus frontend |
+
+Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 are development-only reference oracles. They do not run during compilation and do not enter production dependencies, archives, installed packages, or runtime SBOM closure.
 
 CSS Modules, CSS-in-JS, PostCSS-like inputs, and Tailwind-like inputs do not fall back to CSS. They remain explicit unavailable-format errors.
 
@@ -26,8 +28,8 @@ CSS Modules, CSS-in-JS, PostCSS-like inputs, and Tailwind-like inputs do not fal
 | `--syntax <css or scss or sass or less or stylus>` | Select the input grammar explicitly. A file extension and explicit syntax must agree. |
 | `--load-path <directory>` | Add a confined preprocessor import root. It is repeatable, ordered, and unavailable for native CSS. |
 | `--minify` | Emit compact whitespace; this remains independent of `--optimize`. |
-| `--optimize` | Run the closed verified ZigCSS optimizer after canonical preprocessing. |
-| `--source-map` | For preprocessors, compose the provider and ZigCSS maps into one deterministic inline map. It cannot be combined with `--optimize`. Native CSS map output remains unavailable. |
+| `--optimize` | Run the closed verified ZigCSS optimizer after native preprocessing. |
+| `--source-map` | For the four native preprocessor frontends, compose their mappings with the ZigCSS core into one deterministic inline map. It cannot be combined with `--optimize`. Native CSS map output remains unavailable. |
 | `--watch` | Recompile one input when the entry or an owned confined dependency changes. |
 | `--profile` | Native CSS only: report public compile stages and requested-memory metrics. |
 | `--lsp` | Native CSS only: start the experimental language server. |
@@ -43,28 +45,28 @@ With no `-o`, one file or stdin emits CSS to stdout. `-o -` selects stdout expli
 | Status | Meaning |
 |---|---|
 | `0` | Successful compilation or informational command |
-| `1` | Compilation, provider, generated-CSS, read, write, or operational failure |
+| `1` | Compilation, native frontend, generated-CSS, read, write, or operational failure |
 | `2` | Invalid syntax selection, unknown option, missing value, or incoherent stream/batch/watch configuration |
 
-The npm launcher preserves exact native exit codes and re-raises POSIX termination signals. Provider cancellation terminates bounded work and cannot return partial CSS.
+The JavaScript launcher preserves exact native exit codes and re-raises POSIX termination signals. Native cancellation terminates bounded work and cannot return partial CSS.
 
 ## Import and execution boundary
 
 File compilation automatically confines the entry directory. Each `--load-path` adds another explicit root. The resolver rejects lexical or canonical escapes, symbolic links, special files, unstable reads, invalid UTF-8, cycles, excess ancestry, and resource exhaustion. Network schemes and ambient package discovery are disabled.
 
-The default contract does not enable project plugins, custom functions, custom importers, Less JavaScript, Stylus evaluator hooks, or arbitrary executable project code. Canonical language semantics do not grant those extension points implicitly.
+The native contract does not enable project plugins, custom functions, custom importers, Less JavaScript, Stylus evaluator hooks, or arbitrary executable project code. Matching a development oracle does not grant those extension points implicitly.
 
 ## Batch execution
 
-Mixed CSS/preprocessor batches are accepted in argument order. Worker count is bounded by the input count, available CPUs, and a process cap of eight. Each task owns its result and provider session. The first failure closes the queue; already-running tasks finish safely, unclaimed tasks never open, and no output commit begins unless every compilation succeeded.
+Mixed CSS/preprocessor batches are accepted in argument order. Worker count is bounded by the input count, available CPUs, and a process cap of eight. Each task owns its native compiler result. The first failure closes the queue; already-running tasks finish safely, unclaimed tasks never open, and no output commit begins unless every compilation succeeded.
 
 Unique input stems become `<stem>.css`. Colliding stems receive a deterministic 16-digit digest of the normalized working-directory-relative path. Final basenames have a 128-byte ceiling. Results and diagnostics are committed or rendered in original argument order, independent of scheduling.
 
 ## Watch behavior
 
-Watch mode hashes one owned entry snapshot and uses result dependency facts to track canonical local imports. It supports all five syntaxes. New, changed, missing, and recovered dependencies trigger one recompilation. A failed attempt keeps the last successful dependency set and retains the last successful output.
+Watch mode hashes one owned entry snapshot and uses result dependency facts to track native confined imports. It supports all five syntaxes. New, changed, missing, and recovered dependencies trigger one recompilation. A failed attempt keeps the last successful dependency set and retains the last successful output.
 
-Dependency polling uses the same confined roots as compilation. Remote URLs, protocol-relative URLs, absolute unowned paths, query/fragment aliases, links, and excessive dependency sets are not opened. Cancellation stops polling and provider work without one extra compile.
+Dependency polling uses the same confined roots as compilation. Remote URLs, protocol-relative URLs, absolute unowned paths, query/fragment aliases, links, and excessive dependency sets are not opened. Cancellation stops polling and native frontend work without one extra compile.
 
 ## Output safety
 
@@ -76,7 +78,7 @@ An operational failure while committing a later batch file can leave earlier fil
 
 `--optimize` admits exactly the verified order-preserving pass preset and repeats parse-transform-emit to a bounded byte-stable fixed point. Experimental extraction, compatibility rewriting, custom-property resolution, logical-to-physical conversion, and reorder authority are absent.
 
-Native CSS `--profile` reports one monotonic public compile total, actual stage intervals, and allocator-requested byte metrics. It does not claim RSS or operating-system memory. Profiling is not yet composed across the JavaScript provider host, so preprocessor requests reject that flag rather than report an incomplete number.
+Native CSS `--profile` reports one monotonic public compile total, actual stage intervals, and allocator-requested byte metrics. It does not claim RSS or operating-system memory. Profiling is not yet exposed across the native preprocessor bridge, so preprocessor requests reject that flag rather than report an incomplete number.
 
 - [Format compatibility](/guide/format-compatibility)
 - [Current status](/guide/status)

@@ -109,55 +109,55 @@
       ]
     },
     "preprocessor-sass": {
-      "command": "npm run test:preprocessor-sass",
+      "command": "zig build test-native-sass-conformance --summary all",
       "anchors": [
         {
-          "path": "tests/preprocessors/sass/corpus.test.mjs",
-          "contains": ["matches exact Dart Sass across all 80 success and negative corpus cases", "independent CSS parser"]
+          "path": "tests/native-preprocessor/sass_conformance.zig",
+          "contains": ["native Sass closes the finite pinned success corpus deterministically", "native Sass rejects the finite pinned error corpus deterministically"]
         }
       ]
     },
     "preprocessor-less": {
-      "command": "npm run test:preprocessor-less",
+      "command": "zig build test-native-less-conformance --summary all",
       "anchors": [
         {
-          "path": "tests/preprocessors/less/corpus.test.mjs",
-          "contains": ["matches exact Less across all 88 official success and negative cases", "independent CSS parser"]
+          "path": "tests/native-preprocessor/less_conformance.zig",
+          "contains": ["native Less closes the finite pinned success corpus deterministically", "native Less rejects the finite pinned error corpus deterministically"]
         }
       ]
     },
     "preprocessor-stylus": {
-      "command": "npm run test:preprocessor-stylus",
+      "command": "zig build test-native-stylus-conformance --summary all",
       "anchors": [
         {
-          "path": "tests/preprocessors/stylus/corpus.test.mjs",
-          "contains": ["matches exact Stylus across all 326 official successes and 20 integration errors", "independent CSS parser"]
+          "path": "tests/native-preprocessor/stylus_conformance.zig",
+          "contains": ["native Stylus measures the finite pinned success corpus without ordinal expansion", "native Stylus rejects the finite pinned error corpus deterministically"]
         }
       ]
     },
     "preprocessor-product": {
-      "command": "npm run test:preprocessor-product",
+      "command": "zig build test-native-product --summary all",
       "anchors": [
         {
-          "path": "tests/preprocessors/product/api.test.mjs",
-          "contains": ["npm API validates all four canonical preprocessor syntaxes through ZigCSS", "npm file API detects each syntax and confines entry-relative imports"]
+          "path": "tests/public-api/native_consumer.zig",
+          "contains": ["external Zig API routes the finite native syntax set through owned CSS results", "external Zig API composes deterministic source maps for the finite native syntax set"]
         },
         {
-          "path": "tests/preprocessors/product/site-examples.test.mjs",
-          "contains": ["website input/output lab is exact executable evidence for all five syntaxes"]
+          "path": "tests/cli/native_cli.zig",
+          "contains": ["stable native syntax selection and help agree with executable CLI tests", "binary CLI routes the finite native syntax set through deterministic batches"]
         }
       ]
     },
     "preprocessor-package": {
-      "command": "npm run check:preprocessor-package",
+      "command": "npm run test:native-package-evidence",
       "anchors": [
         {
-          "path": "scripts/validate-preprocessor-package.mjs",
-          "contains": ["PREPROCESSOR-SBOM.spdx.json", "validatePackageDescription", "validatePreprocessorPackage"]
+          "path": "scripts/validate-native-package-evidence.test.mjs",
+          "contains": ["native smoke validates one closed commit-bound receipt set across every release target", "native package evidence rejects lower, over-limit, drifted, and substituted target sets"]
         },
         {
-          "path": "scripts/smoke-release-artifact.mjs",
-          "contains": ["checkNativePreprocessors"]
+          "path": "tests/preprocessors/native/contract.json",
+          "contains": ["native npm package has zero production and optional dependencies", "offline installed native package compiles the finite five-language syntax set"]
         }
       ]
     },
@@ -302,8 +302,8 @@
       "surface": "Zig compile API",
       "status": "Experimental, consumer-tested",
       "statusKind": "experimental",
-      "behavior": "`zigcss.compile` returns owned CSS, maps, located diagnostics, ordered imports, optional module exports, and metrics; accepted transforms and borrowed canonical targets are explicit options.",
-      "evidence": ["public-api", "documentation"]
+      "behavior": "`zigcss.compile` retains the stable CSS facade; the explicit `zigcss.experimental_native` namespace returns owned CSS, composed maps, located diagnostics, and confined dependency facts for the four native differential frontends.",
+      "evidence": ["public-api", "preprocessor-product", "documentation"]
     },
     {
       "id": "zig-package",
@@ -380,9 +380,9 @@
     {
       "id": "source-maps",
       "surface": "Source maps",
-      "status": "Experimental, preprocessor CLI/API verified",
+      "status": "Experimental, native frontend CLI/API verified",
       "statusKind": "experimental",
-      "behavior": "Canonical preprocessors compose deterministic provider and ZigCSS maps for the npm CLI/API; the Zig library owns separate native CSS mappings, while native CSS CLI map output remains unavailable.",
+      "behavior": "The four native differential frontends compose deterministic source maps through the source-built binary and `zigcss.experimental_native`; stable CSS library mappings remain separate, while native CSS CLI map output remains unavailable.",
       "evidence": ["public-api", "compatibility", "preprocessor-product"]
     },
     {
@@ -404,33 +404,33 @@
     {
       "id": "scss",
       "surface": "SCSS input",
-      "status": "Canonical provider verified",
+      "status": "Native differential verified",
       "statusKind": "verified",
-      "behavior": "The npm CLI and API compile SCSS through exact Dart Sass 1.101.0, confined local imports, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. Arbitrary plugins, custom functions, custom importers, and project code are not enabled.",
+      "behavior": "The source-built binary and `zigcss.experimental_native` compile SCSS with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
       "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix"]
     },
     {
       "id": "sass",
       "surface": "Indented Sass input",
-      "status": "Canonical provider verified",
+      "status": "Native differential verified",
       "statusKind": "verified",
-      "behavior": "The npm CLI and API preserve indented Sass source bytes through exact Dart Sass 1.101.0, confined local imports, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. Arbitrary plugins, custom functions, custom importers, and project code are not enabled.",
+      "behavior": "The source-built binary and `zigcss.experimental_native` compile indented Sass with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
       "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix"]
     },
     {
       "id": "less",
       "surface": "Less input",
-      "status": "Canonical provider verified",
+      "status": "Native differential verified",
       "statusKind": "verified",
-      "behavior": "The npm CLI and API compile Less through exact Less 4.6.7, confined local imports and data helpers, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. JavaScript, arbitrary plugins, custom functions, and project code are not enabled.",
+      "behavior": "The source-built binary and `zigcss.experimental_native` compile Less with confined imports, bounded data helpers, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Less 4.6.7 development oracle does not run during compilation. JavaScript, plugins, custom functions, and project code remain outside the contract.",
       "evidence": ["preprocessor-less", "preprocessor-product", "preprocessor-package", "format-matrix"]
     },
     {
       "id": "stylus",
       "surface": "Stylus input",
-      "status": "Canonical provider verified",
+      "status": "Native differential verified",
       "statusKind": "verified",
-      "behavior": "The npm CLI and API compile Stylus through exact Stylus 0.64.0, confined local imports and bounded helpers, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. Arbitrary plugins, custom functions, hooks, and project code are not enabled.",
+      "behavior": "The source-built binary and `zigcss.experimental_native` compile Stylus with confined imports, bounded helpers/globs, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Stylus 0.64.0 development oracle does not run during compilation. Plugins, custom functions/hooks, and project code remain outside the contract.",
       "evidence": ["preprocessor-stylus", "preprocessor-product", "preprocessor-package", "format-matrix"]
     },
     {

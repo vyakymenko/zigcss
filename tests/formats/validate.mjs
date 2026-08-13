@@ -3,9 +3,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { runZigCssCore } from '../../preprocessor/core-runner.mjs'
-import { runProductCli } from '../../preprocessor/product-cli.mjs'
-import { runPreprocessorHost } from '../../preprocessor/runner.mjs'
 import { validateCssModules } from './css_modules_validate.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
@@ -15,6 +12,7 @@ const matrixPath = path.join(scriptDirectory, 'matrix.json')
 const strategyPaths = [
   path.join(repositoryRoot, 'docs/adr/ADR-005-preprocessor-strategy.md'),
   path.join(repositoryRoot, 'docs/adr/ADR-012-canonical-preprocessor-host.md'),
+  path.join(repositoryRoot, 'docs/adr/ADR-013-self-contained-native-frontends.md'),
 ]
 const expectedCanonicalProviders = {
   'dart-sass': {
@@ -47,12 +45,17 @@ const expectedAdapterIds = [
   'tailwind',
 ]
 const expectedCanonicalSourceFiles = [
-  'preprocessor/providers/dart-sass.mjs',
-  'preprocessor/providers/less-importer.mjs',
-  'preprocessor/providers/less.mjs',
-  'preprocessor/providers/sass-importer.mjs',
-  'preprocessor/providers/stylus-importer.mjs',
-  'preprocessor/providers/stylus.mjs',
+  'src/preprocessor/less.zig',
+  'src/preprocessor/less_evaluator.zig',
+  'src/preprocessor/sass.zig',
+  'src/preprocessor/sass_arguments.zig',
+  'src/preprocessor/sass_color.zig',
+  'src/preprocessor/sass_evaluator.zig',
+  'src/preprocessor/sass_numeric.zig',
+  'src/preprocessor/sass_selector.zig',
+  'src/preprocessor/sass_string.zig',
+  'src/preprocessor/stylus.zig',
+  'src/preprocessor/stylus_evaluator.zig',
 ]
 
 function fail(message) {
@@ -187,7 +190,7 @@ function validateCanonicalProviders(matrix) {
 
 function validateMatrix() {
   const matrix = JSON.parse(fs.readFileSync(matrixPath, 'utf8'))
-  if (matrix.schemaVersion !== 3) fail(`unsupported matrix schema: ${matrix.schemaVersion}`)
+  if (matrix.schemaVersion !== 4) fail(`unsupported matrix schema: ${matrix.schemaVersion}`)
   const availability = new Set(Object.keys(matrix.availabilityDefinitions ?? {}))
   const compatibility = new Set(Object.keys(matrix.compatibilityDefinitions ?? {}))
   const implementations = new Set(Object.keys(matrix.implementationDefinitions ?? {}))
@@ -207,7 +210,7 @@ function validateMatrix() {
 
   const ids = new Set()
   const publicSyntaxes = new Set()
-  const npmSyntaxes = new Set()
+  const nativeSyntaxes = new Set()
   const coveredSources = new Set()
   const coveredLegacySources = new Set()
   const strategyDocument = strategyPaths.map(strategyPath => fs.readFileSync(strategyPath, 'utf8')).join('\n')
@@ -231,32 +234,32 @@ function validateMatrix() {
       fail(`${adapter.id}: unknown implementation ${adapter.implementation}`)
     }
     if (!strategies.has(adapter.strategy)) fail(`${adapter.id}: unknown strategy ${adapter.strategy}`)
-    if (adapter.strategy === 'canonical-integration') {
-      if (typeof adapter.providerId !== 'string') {
-        fail(`${adapter.id}: canonical integration requires providerId`)
+    if (adapter.strategy === 'native-reimplementation') {
+      if (typeof adapter.referenceOracleId !== 'string') {
+        fail(`${adapter.id}: native reimplementation requires referenceOracleId`)
       }
-      const provider = matrix.canonicalProviders[adapter.providerId]
+      const provider = matrix.canonicalProviders[adapter.referenceOracleId]
       if (provider === undefined || !provider.adapters.includes(adapter.id)) {
-        fail(`${adapter.id}: providerId does not own the adapter`)
+        fail(`${adapter.id}: referenceOracleId does not own the adapter`)
       }
       if (
-        adapter.availability !== 'CanonicalCliApi' ||
-        adapter.compatibility !== 'CanonicalVersion' ||
-        adapter.implementation !== 'CanonicalProvider'
+        adapter.availability !== 'NativeCliZigApi' ||
+        adapter.compatibility !== 'NativeDifferential' ||
+        adapter.implementation !== 'NativeFrontend'
       ) {
-        fail(`${adapter.id}: admitted canonical integration has inconsistent public state`)
+        fail(`${adapter.id}: native differential row has inconsistent public state`)
       }
-      if (adapter.npmSyntax !== adapter.id || npmSyntaxes.has(adapter.npmSyntax)) {
-        fail(`${adapter.id}: canonical integration needs one unique matching npmSyntax`)
+      if (adapter.nativeSyntax !== adapter.id || nativeSyntaxes.has(adapter.nativeSyntax)) {
+        fail(`${adapter.id}: native frontend needs one unique matching nativeSyntax`)
       }
-      npmSyntaxes.add(adapter.npmSyntax)
+      nativeSyntaxes.add(adapter.nativeSyntax)
       if (typeof adapter.probeOutput !== 'string' || adapter.probeOutput.length === 0) {
-        fail(`${adapter.id}: admitted canonical integration needs probeOutput`)
+        fail(`${adapter.id}: native frontend needs probeOutput`)
       }
-    } else if (adapter.providerId !== undefined) {
-      fail(`${adapter.id}: non-canonical strategy cannot name providerId`)
-    } else if (adapter.npmSyntax !== undefined || adapter.probeOutput !== undefined) {
-      fail(`${adapter.id}: non-canonical strategy cannot name npmSyntax or probeOutput`)
+    } else if (adapter.referenceOracleId !== undefined) {
+      fail(`${adapter.id}: non-native strategy cannot name referenceOracleId`)
+    } else if (adapter.nativeSyntax !== undefined || adapter.probeOutput !== undefined) {
+      fail(`${adapter.id}: non-native strategy cannot name nativeSyntax or probeOutput`)
     }
     if (!Array.isArray(adapter.extensions) || adapter.extensions.length === 0) {
       fail(`${adapter.id}: extensions must be nonempty`)
@@ -297,11 +300,11 @@ function validateMatrix() {
       }
       publicSyntaxes.add(adapter.publicSyntax)
     }
-    if (adapter.implementation === 'CanonicalProvider') {
-      if (adapter.formatTag !== null) fail(`${adapter.id}: canonical provider retains a legacy Format tag`)
-      if (adapter.sourceFiles.length === 0) fail(`${adapter.id}: canonical provider sourceFiles must be nonempty`)
+    if (adapter.implementation === 'NativeFrontend') {
+      if (adapter.formatTag !== null) fail(`${adapter.id}: native frontend retains a legacy Format tag`)
+      if (adapter.sourceFiles.length === 0) fail(`${adapter.id}: native frontend sourceFiles must be nonempty`)
       if (!Array.isArray(adapter.sourceEvidence) || adapter.sourceEvidence.length === 0) {
-        fail(`${adapter.id}: canonical provider sourceEvidence must be nonempty`)
+        fail(`${adapter.id}: native frontend sourceEvidence must be nonempty`)
       }
       for (const evidence of adapter.sourceEvidence) {
         if (!adapter.sourceFiles.includes(evidence.file)) {
@@ -310,14 +313,14 @@ function validateMatrix() {
         validateEvidence(adapter.id, evidence)
       }
       if (!Array.isArray(adapter.containmentEvidence) || adapter.containmentEvidence.length === 0) {
-        fail(`${adapter.id}: canonical provider containmentEvidence must be nonempty`)
+        fail(`${adapter.id}: native frontend containmentEvidence must be nonempty`)
       }
       for (const evidence of adapter.containmentEvidence) validateEvidence(adapter.id, evidence)
       if (adapter.publicSyntax !== undefined) {
-        fail(`${adapter.id}: Node canonical provider cannot claim a Zig publicSyntax`)
+        fail(`${adapter.id}: native frontend must use the bounded native namespace rather than stable CSS Syntax`)
       }
       if (adapter.removedBy !== undefined || adapter.removedSourceFiles !== undefined) {
-        fail(`${adapter.id}: admitted canonical provider cannot retain removal metadata`)
+        fail(`${adapter.id}: native frontend cannot retain removal metadata`)
       }
     } else if (adapter.implementation === 'LegacyCharacterized') {
       if (adapter.availability !== 'Unavailable' || adapter.compatibility !== 'Unverified') {
@@ -405,15 +408,15 @@ function validateMatrix() {
   const legacySources = discoverLegacyAdapterSources(repositoryRoot)
   expectExactSet(coveredLegacySources, legacySources, 'legacy adapter source inventory')
   const nativeSources = matrix.adapters
-    .filter(adapter => adapter.implementation === 'LimitedNative')
+    .filter(adapter => adapter.implementation === 'LimitedNative' || adapter.implementation === 'NativeFrontend')
     .flatMap(adapter => adapter.sourceFiles)
-  const canonicalSources = matrix.adapters
-    .filter(adapter => adapter.implementation === 'CanonicalProvider')
+  const frontendSources = matrix.adapters
+    .filter(adapter => adapter.implementation === 'NativeFrontend')
     .flatMap(adapter => adapter.sourceFiles)
-  expectExactSet(canonicalSources, expectedCanonicalSourceFiles, 'canonical adapter source inventory')
+  expectExactSet(frontendSources, expectedCanonicalSourceFiles, 'native frontend source inventory')
   expectExactSet(
     coveredSources,
-    [...legacySources, ...nativeSources, ...canonicalSources],
+    [...legacySources, ...nativeSources],
     'complete adapter source inventory',
   )
 
@@ -458,8 +461,7 @@ async function validateCliProbes(compiler, matrix) {
   fs.accessSync(compiler, fs.constants.X_OK)
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-format-matrix-'))
   let rejectionCount = 0
-  let canonicalCount = 0
-  const runtime = Object.freeze({ binaryPath: compiler, runCore: runZigCssCore, runHost: runPreprocessorHost })
+  let nativeCount = 0
   try {
     for (const adapter of matrix.adapters) {
       for (const extension of adapter.extensions) {
@@ -467,22 +469,24 @@ async function validateCliProbes(compiler, matrix) {
         const input = path.join(temporary, `${stem}-${rejectionCount}${extension}`)
         const output = path.join(temporary, `${stem}-${rejectionCount}.css`)
         fs.writeFileSync(input, adapter.probe)
-        if (adapter.implementation === 'CanonicalProvider') {
-          let stdout = ''
-          let stderr = ''
-          const status = await runProductCli([input, '--minify'], {
+        if (adapter.implementation === 'NativeFrontend') {
+          const result = spawnSync(compiler, ['-', '--syntax', adapter.nativeSyntax, '--minify'], {
             cwd: temporary,
-            runtime,
-            writeStdout: value => { stdout += value },
-            writeStderr: value => { stderr += value },
+            encoding: 'utf8',
+            input: adapter.probe,
+            maxBuffer: 1024 * 1024,
           })
-          if (status !== 0) fail(`${adapter.id}/${extension}: expected exit 0, received ${status}\n${stderr}`)
-          if (stdout !== adapter.probeOutput) {
-            fail(`${adapter.id}/${extension}: canonical probe output changed`)
+          if (result.error) fail(`${adapter.id}/${extension}: launch failed: ${result.error.message}`)
+          if (result.signal) fail(`${adapter.id}/${extension}: compiler terminated by ${result.signal}`)
+          if (result.status !== 0) {
+            fail(`${adapter.id}/${extension}: expected exit 0, received ${result.status}\n${result.stderr}`)
           }
-          if (stderr !== '') fail(`${adapter.id}/${extension}: canonical probe emitted stderr`)
+          if (result.stdout !== adapter.probeOutput) fail(`${adapter.id}/${extension}: native probe output changed`)
+          if (!result.stderr.includes('experimental release candidate')) {
+            fail(`${adapter.id}/${extension}: native probe omitted the release warning`)
+          }
           if (fs.existsSync(output)) fail(`${adapter.id}/${extension}: stdout probe created an output file`)
-          canonicalCount += 1
+          nativeCount += 1
           continue
         }
         const result = spawnSync(compiler, [input, '-o', output], {
@@ -507,7 +511,7 @@ async function validateCliProbes(compiler, matrix) {
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
   }
-  return { canonicalCount, rejectionCount }
+  return { nativeCount, rejectionCount }
 }
 
 async function main(args) {
@@ -517,9 +521,9 @@ async function main(args) {
   const moduleEvidence = validateCssModules(moduleDriver)
   const removedCount = matrix.adapters.filter(adapter => adapter.implementation === 'Removed').length
   const nativeCount = matrix.adapters.filter(adapter => adapter.implementation === 'LimitedNative').length
-  const canonicalCount = matrix.adapters.filter(adapter => adapter.implementation === 'CanonicalProvider').length
+  const frontendCount = matrix.adapters.filter(adapter => adapter.implementation === 'NativeFrontend').length
   console.log(
-    `Format matrix verified: ${matrix.adapters.length} adapters, ${canonicalCount} canonical provider implementations, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${probes.canonicalCount} canonical CLI probes, ${probes.rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs (${moduleEvidence.valueFixtures} local-value fixture outputs), ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejections (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
+    `Format matrix verified: ${matrix.adapters.length} adapters, ${frontendCount} native differential frontends, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${probes.nativeCount} native CLI probes, ${probes.rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs (${moduleEvidence.valueFixtures} local-value fixture outputs), ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejections (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
   )
 }
 

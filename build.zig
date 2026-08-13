@@ -396,6 +396,25 @@ pub fn build(b: *std.Build) void {
     const run_public_api_example = b.addRunArtifact(public_api_example);
     run_public_api_example.expectStdOutEqual(".notice{color:red}");
 
+    const native_api_example_module = b.createModule(.{
+        .root_source_file = b.path("examples/native_api.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_api_example_module.addImport("zigcss", library_module);
+    const native_api_example = b.addExecutable(.{
+        .name = "zigcss-native-api-example",
+        .root_module = native_api_example_module,
+    });
+    const run_native_api_example = b.addRunArtifact(native_api_example);
+    run_native_api_example.setCwd(b.path("."));
+    run_native_api_example.expectStdOutEqual(
+        ".card{color:red}\n" ++
+            ".card{color:red}\n" ++
+            ".card{color:red}\n" ++
+            ".card{color:#f00}\n",
+    );
+
     const css_modules_example_module = b.createModule(.{
         .root_source_file = b.path("examples/css_modules.zig"),
         .target = target,
@@ -414,14 +433,35 @@ pub fn build(b: *std.Build) void {
         "Compile and run published Zig documentation examples",
     );
     documentation_examples_step.dependOn(&run_public_api_example.step);
+    documentation_examples_step.dependOn(&run_native_api_example.step);
     documentation_examples_step.dependOn(&run_css_modules_example.step);
+
+    const NativeCliExample = struct {
+        syntax: []const u8,
+        input: std.Build.LazyPath,
+        expected: []const u8,
+    };
+    const native_cli_examples = [_]NativeCliExample{
+        .{ .syntax = "css", .input = b.path("examples/native/styles.css"), .expected = ".card{color:red}" },
+        .{ .syntax = "scss", .input = b.path("examples/native/styles.scss"), .expected = ".card{color:red}" },
+        .{ .syntax = "sass", .input = b.path("examples/native/styles.sass"), .expected = ".card{color:red}" },
+        .{ .syntax = "less", .input = b.path("examples/native/styles.less"), .expected = ".card{color:red}" },
+        .{ .syntax = "stylus", .input = b.path("examples/native/styles.styl"), .expected = ".card{color:#f00}" },
+    };
+    for (native_cli_examples) |example| {
+        const run_native_cli_example = b.addRunArtifact(exe);
+        run_native_cli_example.addFileArg(example.input);
+        run_native_cli_example.addArgs(&.{ "--syntax", example.syntax, "--minify" });
+        run_native_cli_example.expectStdOutEqual(example.expected);
+        documentation_examples_step.dependOn(&run_native_cli_example.step);
+    }
 
     const public_api_step = b.step("test-public-api", "Test the external Zig library surface");
     public_api_step.dependOn(&run_public_api_tests.step);
     public_api_step.dependOn(documentation_examples_step);
     const native_zig_api_step = b.step(
         "test-native-zig-api",
-        "Test the pre-graduation native stylesheet Zig API route",
+        "Test the native-differential stylesheet Zig API route",
     );
     native_zig_api_step.dependOn(&run_native_zig_api_tests.step);
 
@@ -443,6 +483,12 @@ pub fn build(b: *std.Build) void {
         "Test stable native stylesheet syntax selection and binary CLI routing",
     );
     native_cli_step.dependOn(&run_native_cli_tests.step);
+    const native_product_step = b.step(
+        "test-native-product",
+        "Test the finite native stylesheet Zig API and binary routes",
+    );
+    native_product_step.dependOn(&run_native_zig_api_tests.step);
+    native_product_step.dependOn(&run_native_cli_tests.step);
 
     const audit_test_module = b.addModule("zigcss-audit-regressions", .{
         .root_source_file = b.path("tests/regressions/audit.zig"),

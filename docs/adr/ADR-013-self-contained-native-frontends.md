@@ -59,7 +59,18 @@ Each native adapter progresses through these states:
 3. `native-differential`: the native adapter passes its selected official corpus, strict negative cases, deterministic reruns, and exact generated-CSS validation;
 4. `native-graduated`: CLI, Zig API, JavaScript wrapper, batch, watch, source maps, diagnostics, dependencies, platform, package, and release gates all pass without a runtime provider.
 
-No migration step may replace a green public path with a partial native parser. The package and website must distinguish the current canonical reference implementation from the future self-contained release until graduation.
+No migration step may replace a green path with a partial native parser. The source snapshot now distinguishes the verified native-differential implementation from its development-only reference oracles and from the later immutable native release.
+
+The active machine compatibility strategy supersedes the four provider-runtime rows without rewriting their reference evidence:
+
+| Adapter | Strategy | Development oracle |
+|---|---|---|
+| `scss` | `native-reimplementation` | Dart Sass 1.101.0 |
+| `sass` | `native-reimplementation` | Dart Sass 1.101.0 |
+| `less` | `native-reimplementation` | Less 4.6.7 |
+| `stylus` | `native-reimplementation` | Stylus 0.64.0 |
+
+The exact providers remain development-only differential oracles. They do not enter production archives, the installed production graph, or stylesheet compilation.
 
 ### Shared native architecture
 

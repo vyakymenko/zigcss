@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "executableZigExamples": [
     "examples/public_api.zig",
+    "examples/native_api.zig",
     "examples/css_modules.zig"
   ],
   "cssModuleDocuments": [

@@ -106,6 +106,7 @@ test('every Zig example has an executable build gate', () => {
     'examples/build-integration/build.zig',
     'examples/build-integration/main.zig',
     'examples/css_modules.zig',
+    'examples/native_api.zig',
     'examples/public_api.zig',
   ])
 
@@ -114,6 +115,7 @@ test('every Zig example has an executable build gate', () => {
   const integrationManifest = read('examples/build-integration/build.zig.zon')
   const workflow = read('.github/workflows/build.yml')
   assert.match(rootBuild, /examples\/public_api\.zig/)
+  assert.match(rootBuild, /examples\/native_api\.zig/)
   assert.match(rootBuild, /examples\/css_modules\.zig/)
   assert.match(rootBuild, /test-documentation-examples/)
   assert.match(integrationManifest, /\.zigcss\s*=\s*\.\{\s*\.path\s*=\s*"\.\.\/\.\."\s*\}/)

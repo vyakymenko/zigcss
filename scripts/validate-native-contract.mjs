@@ -632,8 +632,8 @@ const expectedPackageMigration = Object.freeze({
 const expectedCapabilityGraduation = Object.freeze({
   ownerPackage: 'NATIVE-008',
   releaseGapFamily: 'native-capability-graduation',
-  state: 'in-progress',
-  packageState: 'in-progress',
+  state: 'closed',
+  packageState: 'verified',
   terminalContract: Object.freeze({
     adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
     surfaces: Object.freeze([
@@ -680,21 +680,21 @@ const expectedCapabilityGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'examples',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: Object.freeze([
         'public examples compile through the native binary and Zig API',
       ]),
     }),
     Object.freeze({
       id: 'guides-and-compatibility',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: Object.freeze([
         'machine capability rows and guides agree with native evidence',
       ]),
     }),
     Object.freeze({
       id: 'changelog-and-migration-notes',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: Object.freeze([
         'changelog and migration notes retain oracle and plugin boundaries',
       ]),
@@ -748,6 +748,46 @@ const expectedFormatLabMetadata = Object.freeze([
     pipeline: 'Stylus → native Stylus frontend → ZigCSS core → compact CSS',
   }),
 ])
+
+const expectedNativeExampleRows = Object.freeze([
+  Object.freeze({
+    path: 'examples/native/styles.css',
+    syntax: 'css',
+    source: '.card {\n  color: red;\n}\n',
+    output: '.card{color:red}',
+  }),
+  Object.freeze({
+    path: 'examples/native/styles.scss',
+    syntax: 'scss',
+    source: '$color: red;\n.card {\n  color: $color;\n}\n',
+    output: '.card{color:red}',
+  }),
+  Object.freeze({
+    path: 'examples/native/styles.sass',
+    syntax: 'sass',
+    source: '$color: red\n.card\n  color: $color\n',
+    output: '.card{color:red}',
+  }),
+  Object.freeze({
+    path: 'examples/native/styles.less',
+    syntax: 'less',
+    source: '@color: red;\n.card {\n  color: @color;\n}\n',
+    output: '.card{color:red}',
+  }),
+  Object.freeze({
+    path: 'examples/native/styles.styl',
+    syntax: 'stylus',
+    source: 'color = red\n.card\n  color color\n',
+    output: '.card{color:#f00}',
+  }),
+])
+
+const expectedNativeCapabilityOracles = Object.freeze({
+  scss: 'Dart Sass 1.101.0 development oracle',
+  sass: 'Dart Sass 1.101.0 development oracle',
+  less: 'Less 4.6.7 development oracle',
+  stylus: 'Stylus 0.64.0 development oracle',
+})
 
 const expectedDifferentialAdapterSources = Object.freeze({
   scss: Object.freeze([
@@ -1439,8 +1479,8 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   requireText(showcase, '{selected.frontend}', 'website native lab frontend label')
   requireText(
     features,
-    'The compatibility table below still records the unpublished provider-backed reference candidate and will advance in the separate guides-and-compatibility gate.',
-    'website compatibility transition boundary',
+    'The compatibility table below records the closed NATIVE-008 native-differential source snapshot; release graduation remains fail-closed under NATIVE-009.',
+    'website closed compatibility boundary',
   )
   requireText(playground, 'Playground unavailable', 'website public compile service boundary')
   requireText(playground, 'The public compile API is disabled', 'website disabled public compile API')
@@ -1532,6 +1572,17 @@ function validateCapabilityGraduation(
   websiteSources,
   formatExamples,
   siteExamplesTests,
+  buildFile,
+  documentationPolicy,
+  nativeApiExample,
+  nativeExampleSources,
+  buildGuide,
+  formatGuide,
+  recoveryGuide,
+  statusGuide,
+  formatMatrix,
+  capabilityMetadata,
+  changelog,
 ) {
   if (!same(graduation, expectedCapabilityGraduation)) {
     fail('capability graduation contract drifted')
@@ -1655,6 +1706,149 @@ function validateCapabilityGraduation(
   }
 
   validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesTests)
+
+  if (nativeExampleSources === null || typeof nativeExampleSources !== 'object' || Array.isArray(nativeExampleSources)) {
+    fail('native binary example inventory is missing')
+  }
+  if (!same(Object.keys(nativeExampleSources).sort(), expectedNativeExampleRows.map(row => row.path).sort())) {
+    fail('native binary example inventory drifted from its finite terminal set')
+  }
+  for (const row of expectedNativeExampleRows) {
+    if (nativeExampleSources[row.path] !== row.source) {
+      fail(`native binary example source drifted for ${row.path}`)
+    }
+    requireText(buildFile, `b.path("${row.path}")`, `native binary example build row ${row.path}`)
+    requireText(buildFile, `.syntax = "${row.syntax}"`, `native binary example syntax ${row.syntax}`)
+    requireText(buildFile, `.expected = "${row.output}"`, `native binary example output ${row.syntax}`)
+  }
+  for (const [needle, label] of [
+    ['const native_cli_examples = [_]NativeCliExample{', 'finite native binary example table'],
+    ['for (native_cli_examples) |example| {', 'parameterized native binary example execution'],
+    ['documentation_examples_step.dependOn(&run_native_cli_example.step);', 'documentation native binary example gate'],
+    ['b.path("examples/native_api.zig")', 'native Zig API example build input'],
+    ['documentation_examples_step.dependOn(&run_native_api_example.step);', 'documentation native Zig API example gate'],
+    ['"test-native-product"', 'focused native product evidence gate'],
+    ['native_product_step.dependOn(&run_native_zig_api_tests.step);', 'native product Zig API evidence ownership'],
+    ['native_product_step.dependOn(&run_native_cli_tests.step);', 'native product binary evidence ownership'],
+  ]) {
+    requireText(buildFile, needle, label)
+  }
+  for (const [needle, label] of [
+    ['const examples = [_]Example{', 'finite native Zig API example table'],
+    ['inline for (examples) |example| {', 'parameterized native Zig API example execution'],
+    ['var result = try native.compile(', 'native Zig API example compile call'],
+    ['.root_paths = &.{root}', 'native Zig API example confined root'],
+    ['.format = .minified', 'native Zig API example deterministic format'],
+  ]) {
+    requireText(nativeApiExample, needle, label)
+  }
+  for (const syntax of Object.keys(expectedNativeCapabilityOracles)) {
+    requireText(nativeApiExample, `.syntax = .${syntax}`, `native Zig API ${syntax} row`)
+  }
+  if (!same(documentationPolicy.executableZigExamples, [
+    'examples/public_api.zig',
+    'examples/native_api.zig',
+    'examples/css_modules.zig',
+  ])) {
+    fail('documentation executable Zig example inventory drifted')
+  }
+  const nativeFence = /<!-- native-api-example:start -->\s*```zig\n([\s\S]*?)\n```\s*<!-- native-api-example:end -->/
+  for (const [document, label] of [[readme, 'README'], [buildGuide, 'build-from-source guide']]) {
+    const example = document.match(nativeFence)?.[1]
+    if (example === undefined || example.trim() !== nativeApiExample.trim()) {
+      fail(`${label} native Zig API example drifted from the compiled source`)
+    }
+  }
+
+  if (formatMatrix.schemaVersion !== 4 || !Array.isArray(formatMatrix.adapters)) {
+    fail('format matrix must use native capability schema 4')
+  }
+  const nativeRows = formatMatrix.adapters.filter(row =>
+    Object.hasOwn(expectedNativeCapabilityOracles, row.id))
+  if (!same(nativeRows.map(row => row.id), Object.keys(expectedNativeCapabilityOracles))) {
+    fail('format matrix native adapter inventory drifted')
+  }
+  for (const row of nativeRows) {
+    if (row.nativeSyntax !== row.id || row.availability !== 'NativeCliZigApi' ||
+        row.compatibility !== 'NativeDifferential' || row.implementation !== 'NativeFrontend' ||
+        row.strategy !== 'native-reimplementation') {
+      fail(`format matrix native capability state drifted for ${row.id}`)
+    }
+    if (typeof row.referenceOracleId !== 'string' || row.referenceOracleId.length === 0) {
+      fail(`format matrix native reference oracle is missing for ${row.id}`)
+    }
+  }
+
+  if (!Array.isArray(capabilityMetadata.capabilities)) {
+    fail('capability metadata row inventory is missing')
+  }
+  const capabilities = new Map(capabilityMetadata.capabilities.map(row => [row.id, row]))
+  for (const [id, oracle] of Object.entries(expectedNativeCapabilityOracles)) {
+    const row = capabilities.get(id)
+    if (row?.status !== 'Native differential verified' || row.statusKind !== 'verified') {
+      fail(`capability metadata native status drifted for ${id}`)
+    }
+    requireText(row.behavior, '`zigcss.experimental_native`', `capability metadata native Zig API ${id}`)
+    requireText(row.behavior, oracle, `capability metadata development oracle ${id}`)
+    requireText(row.behavior, 'does not run during compilation', `capability metadata oracle execution boundary ${id}`)
+  }
+
+  for (const [document, label, needles] of [
+    [
+      formatGuide,
+      'format compatibility guide',
+      [
+        'The four preprocessor rows are `native-differential`, not yet `native-graduated`',
+        'These exact providers are development-only reference oracles.',
+        'they do not run during compilation',
+        'CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavailable.',
+      ],
+    ],
+    [
+      statusGuide,
+      'status guide',
+      [
+        'SCSS, indented Sass, Less, and Stylus route through self-contained native Zig parser/evaluators',
+        'The package JavaScript wrapper only locates and invokes that binary',
+        'The explicit `zigcss.experimental_native` namespace admits exactly SCSS, indented Sass, Less, and Stylus.',
+        '`NATIVE-009` release graduation is closed',
+      ],
+    ],
+    [
+      recoveryGuide,
+      'native CLI guide',
+      [
+        'SCSS, indented Sass, Less, and Stylus enter self-contained native Zig parser/evaluators',
+        'The root JavaScript launcher only locates and invokes the binary',
+        'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 are development-only reference oracles.',
+        'They do not run during compilation',
+        'Matching a development oracle does not grant those extension points implicitly.',
+      ],
+    ],
+    [
+      buildGuide,
+      'build-from-source guide',
+      [
+        'Exact Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 providers remain development-only reference oracles',
+        'do not run during compilation',
+        'examples/native/styles.styl',
+      ],
+    ],
+    [
+      changelog,
+      'changelog migration notes',
+      [
+        '`NATIVE-008` closes the finite source-capability inventory',
+        '`nativeReleaseReady` remains `false`',
+        'remain exact development-only reference oracles and do not run during compilation',
+        'zero production dependencies and zero optional dependencies',
+        'The former programmatic provider-backed JavaScript preprocessor API is not part of this source contract.',
+        'Keep arbitrary preprocessor plugins, custom functions/importers, Less JavaScript, Stylus evaluator hooks, executable project code',
+      ],
+    ],
+  ]) {
+    for (const needle of needles) requireText(document, needle, label)
+  }
 }
 
 function validateAdapter(adapter, index, plan) {
@@ -1688,7 +1882,7 @@ function validateAdapter(adapter, index, plan) {
     }
   } else {
     if (adapter.current !== 'native-differential') {
-      fail(`${adapter.id} must remain native-differential until its public capability package closes`)
+      fail(`${adapter.id} must remain native-differential until the NATIVE-009 release gate closes`)
     }
     if (!same(adapter.nativeSources, expectedDifferentialAdapterSources[adapter.id])) {
       fail(`${adapter.id} native source inventory drifted`)
@@ -2856,6 +3050,31 @@ export function validateContract(
       repositoryFile('tests/preprocessors/product/site-examples.test.mjs'),
       'utf8',
     ),
+    documentationPolicy = loadJson('docs/documentation-validation.json'),
+    nativeApiExample = fs.readFileSync(repositoryFile('examples/native_api.zig'), 'utf8'),
+    nativeExampleSources = Object.fromEntries(expectedNativeExampleRows.map(row => [
+      row.path,
+      fs.readFileSync(repositoryFile(row.path), 'utf8'),
+    ])),
+    buildGuide = fs.readFileSync(
+      repositoryFile('docs/src/content/docs/guide/build-from-source.md'),
+      'utf8',
+    ),
+    formatGuide = fs.readFileSync(
+      repositoryFile('docs/src/content/docs/guide/format-compatibility.md'),
+      'utf8',
+    ),
+    recoveryGuide = fs.readFileSync(
+      repositoryFile('docs/src/content/docs/guide/recovery-cli.md'),
+      'utf8',
+    ),
+    statusGuide = fs.readFileSync(
+      repositoryFile('docs/src/content/docs/guide/status.md'),
+      'utf8',
+    ),
+    formatMatrix = loadJson('tests/formats/matrix.json'),
+    capabilityMetadata = loadJson('docs/src/data/capabilities.json'),
+    changelog = fs.readFileSync(repositoryFile('CHANGELOG.md'), 'utf8'),
     buildWorkflow = fs.readFileSync(repositoryFile('.github/workflows/build.yml'), 'utf8'),
     releaseWorkflow = fs.readFileSync(repositoryFile('.github/workflows/release.yml'), 'utf8'),
     buildFile = fs.readFileSync(repositoryFile('build.zig'), 'utf8'),
@@ -2988,7 +3207,7 @@ export function validateContract(
   )
   if (contract.schemaVersion !== 8) fail('schemaVersion must be 8')
   if (contract.state !== 'native-differential') {
-    fail('state must remain native-differential until NATIVE-008 closes')
+    fail('state must remain native-differential until the NATIVE-009 release gate closes')
   }
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
@@ -3082,6 +3301,17 @@ export function validateContract(
     websiteSources,
     formatExamples,
     siteExamplesTests,
+    buildFile,
+    documentationPolicy,
+    nativeApiExample,
+    nativeExampleSources,
+    buildGuide,
+    formatGuide,
+    recoveryGuide,
+    statusGuide,
+    formatMatrix,
+    capabilityMetadata,
+    changelog,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

@@ -11,8 +11,9 @@ pub const css = @import("css.zig");
 pub const sourcemap = @import("sourcemap.zig");
 pub const transform = @import("transform.zig");
 pub const prefixing = @import("prefixing.zig");
-/// Explicit pre-graduation native stylesheet route. Its presence does not make
-/// any native preprocessor row a stable or publicly claimed capability.
+/// Explicit native-differential stylesheet route. It is source-tested and
+/// documented, but it does not mark a preprocessor row native-graduated or
+/// open the native release interlock.
 pub const experimental_native = @import("native_api.zig");
 
 pub const SourceId = source.SourceId;

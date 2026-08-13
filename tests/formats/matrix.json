@@ -1,23 +1,23 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "implementationDefinitions": {
-    "CanonicalProvider": "An exact canonical provider version runs through the bounded ZigCSS host and feeds strict generated CSS into the native compiler.",
+    "NativeFrontend": "A self-contained Zig parser and evaluator feeds complete generated CSS through the recovery-disabled ZigCSS core without a provider process.",
     "LegacyCharacterized": "Heuristic adapter source remains only behind the test-only legacy boundary.",
     "LimitedNative": "A closed ZigCSS-native subset uses the rebuilt parser and public result ownership boundary.",
     "Removed": "No adapter parser source or legacy Format tag remains; filename handling exists only to reject the unavailable input."
   },
   "availabilityDefinitions": {
-    "CanonicalCliApi": "Available through the npm CLI and API with extension detection or an explicit syntax value.",
+    "NativeCliZigApi": "Available in the source-built native binary and explicit experimental Zig namespace with an explicit syntax value.",
     "Unavailable": "Rejected by the recovery CLI before output and absent from the public compile syntax enum.",
     "ExperimentalLibrary": "Available only through an explicit Zig library syntax tag; the recovery CLI and LSP still reject the extension."
   },
   "compatibilityDefinitions": {
-    "CanonicalVersion": "Language behavior is owned by the exact published canonical provider version; ecosystem extension parity is separate.",
+    "NativeDifferential": "The native row passes its pinned oracle corpus, strict negative/resource, deterministic, generated-CSS, product, package, and five-target gates; release graduation remains separate.",
     "Unverified": "Legacy characterization is not a compatibility contract or supported subset.",
     "NativeSubset": "Only the exact published ZigCSS-native grammar and result contract are supported; this is not full ecosystem compatibility."
   },
   "strategyDefinitions": {
-    "canonical-integration": "Integrate an exact canonical provider version through the bounded zigcss-preprocessor-v1 host and graduate only after its complete admission gate passes.",
+    "native-reimplementation": "Implement the exact language boundary in self-contained Zig and retain the pinned canonical provider only as a development oracle.",
     "limited-native-subset": "Implement only a closed named grammar with strict errors outside it.",
     "remove-until-funded": "Expose no adapter or ecosystem claim unless a later funded program accepts a new decision."
   },
@@ -47,29 +47,29 @@
       "displayName": "SCSS",
       "cliDisplayName": "SCSS",
       "formatTag": null,
-      "npmSyntax": "scss",
+      "nativeSyntax": "scss",
       "extensions": [".scss"],
-      "availability": "CanonicalCliApi",
-      "compatibility": "CanonicalVersion",
-      "implementation": "CanonicalProvider",
-      "strategy": "canonical-integration",
-      "providerId": "dart-sass",
-      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012", "PRE-005", "PRE-006", "PRE-008"],
-      "sourceFiles": ["preprocessor/providers/dart-sass.mjs", "preprocessor/providers/sass-importer.mjs"],
-      "currentBoundary": "The npm CLI/API route SCSS through exact Dart Sass 1.101.0, confined imports, strict generated-CSS validation, deterministic output, and owned diagnostics, dependencies, and maps.",
+      "availability": "NativeCliZigApi",
+      "compatibility": "NativeDifferential",
+      "implementation": "NativeFrontend",
+      "strategy": "native-reimplementation",
+      "referenceOracleId": "dart-sass",
+      "ownerPackages": ["NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "sourceFiles": ["src/preprocessor/sass.zig", "src/preprocessor/sass_evaluator.zig", "src/preprocessor/sass_arguments.zig", "src/preprocessor/sass_numeric.zig", "src/preprocessor/sass_color.zig", "src/preprocessor/sass_string.zig", "src/preprocessor/sass_selector.zig"],
+      "currentBoundary": "The source-built binary and explicit Zig namespace route SCSS through the native Zig Sass-family parser/evaluator, confined imports, strict generated-CSS validation, deterministic output, and owned diagnostics, dependencies, and maps.",
       "knownRisks": [
-        "Canonical language behavior does not enable arbitrary Sass plugins, custom functions, custom importers, or future Dart Sass versions; executable project code requires a separate trusted mode."
+        "Dart Sass 1.101.0 remains a development-only oracle; arbitrary Sass plugins, custom functions/importers, executable project code, future oracle versions, and native release claims remain outside this source boundary."
       ],
       "probe": "$color: red;\n.card { color: $color; }\n",
       "probeOutput": ".card{color:red}",
       "sourceEvidence": [
-        { "file": "preprocessor/providers/dart-sass.mjs", "contains": "sass.compileStringAsync(request.source, options)" },
-        { "file": "preprocessor/providers/sass-importer.mjs", "contains": "export function createSassImportAuthority" }
+        { "file": "src/preprocessor/sass.zig", "contains": "pub const Parser = struct" },
+        { "file": "src/preprocessor/sass_evaluator.zig", "contains": "pub fn evaluate(" }
       ],
       "containmentEvidence": [
-        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
-        { "file": "preprocessor/provider-registry.mjs", "contains": "version: '1.101.0'" },
-        { "file": "preprocessor/network-policy.mjs", "contains": "Network access is disabled in the ZigCSS canonical preprocessor host" }
+        { "file": "src/main.zig", "contains": "--syntax <syntax>        Select css (default), scss, sass, less, or stylus" },
+        { "file": "src/lib.zig", "contains": "pub const experimental_native = @import(\"native_api.zig\");" },
+        { "file": "src/native_api.zig", "contains": "pub fn compile(" }
       ]
     },
     {
@@ -77,29 +77,29 @@
       "displayName": "Sass",
       "cliDisplayName": "Sass",
       "formatTag": null,
-      "npmSyntax": "sass",
+      "nativeSyntax": "sass",
       "extensions": [".sass"],
-      "availability": "CanonicalCliApi",
-      "compatibility": "CanonicalVersion",
-      "implementation": "CanonicalProvider",
-      "strategy": "canonical-integration",
-      "providerId": "dart-sass",
-      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012", "PRE-005", "PRE-006", "PRE-008"],
-      "sourceFiles": ["preprocessor/providers/dart-sass.mjs", "preprocessor/providers/sass-importer.mjs"],
-      "currentBoundary": "The npm CLI/API route indented Sass through exact Dart Sass 1.101.0 without source rewriting, with confined imports and strict ZigCSS validation of generated CSS.",
+      "availability": "NativeCliZigApi",
+      "compatibility": "NativeDifferential",
+      "implementation": "NativeFrontend",
+      "strategy": "native-reimplementation",
+      "referenceOracleId": "dart-sass",
+      "ownerPackages": ["NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "sourceFiles": ["src/preprocessor/sass.zig", "src/preprocessor/sass_evaluator.zig", "src/preprocessor/sass_arguments.zig", "src/preprocessor/sass_numeric.zig", "src/preprocessor/sass_color.zig", "src/preprocessor/sass_string.zig", "src/preprocessor/sass_selector.zig"],
+      "currentBoundary": "The source-built binary and explicit Zig namespace route original indented Sass bytes through the native Zig Sass-family parser/evaluator, confined imports, and strict ZigCSS validation of generated CSS.",
       "knownRisks": [
-        "Canonical language behavior does not enable arbitrary Sass plugins, custom functions, custom importers, or future Dart Sass versions; executable project code requires a separate trusted mode."
+        "Dart Sass 1.101.0 remains a development-only oracle; arbitrary Sass plugins, custom functions/importers, executable project code, future oracle versions, and native release claims remain outside this source boundary."
       ],
       "probe": "$color: red\n.card\n  color: $color\n",
       "probeOutput": ".card{color:red}",
       "sourceEvidence": [
-        { "file": "preprocessor/providers/dart-sass.mjs", "contains": "syntax: request.syntax === 'sass' ? 'indented' : 'scss'" },
-        { "file": "preprocessor/providers/sass-importer.mjs", "contains": "export function createSassImportAuthority" }
+        { "file": "src/preprocessor/sass.zig", "contains": "pub const Mode = enum" },
+        { "file": "src/preprocessor/sass_evaluator.zig", "contains": "pub fn evaluate(" }
       ],
       "containmentEvidence": [
-        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
-        { "file": "preprocessor/provider-registry.mjs", "contains": "adapters: Object.freeze(['scss', 'sass'])" },
-        { "file": "preprocessor/network-policy.mjs", "contains": "Network access is disabled in the ZigCSS canonical preprocessor host" }
+        { "file": "src/main.zig", "contains": "--syntax <syntax>        Select css (default), scss, sass, less, or stylus" },
+        { "file": "src/lib.zig", "contains": "pub const experimental_native = @import(\"native_api.zig\");" },
+        { "file": "src/native_api.zig", "contains": "pub fn compile(" }
       ]
     },
     {
@@ -107,29 +107,29 @@
       "displayName": "Less",
       "cliDisplayName": "Less",
       "formatTag": null,
-      "npmSyntax": "less",
+      "nativeSyntax": "less",
       "extensions": [".less"],
-      "availability": "CanonicalCliApi",
-      "compatibility": "CanonicalVersion",
-      "implementation": "CanonicalProvider",
-      "strategy": "canonical-integration",
-      "providerId": "less",
-      "ownerPackages": ["LESS-001", "LESS-010", "LESS-011", "LESS-012", "PRE-005", "PRE-006", "PRE-008"],
-      "sourceFiles": ["preprocessor/providers/less.mjs", "preprocessor/providers/less-importer.mjs"],
-      "currentBoundary": "The npm CLI/API route Less through exact Less 4.6.7 with confined imports/assets, executable JavaScript and plugins disabled, and strict ZigCSS validation of generated CSS.",
+      "availability": "NativeCliZigApi",
+      "compatibility": "NativeDifferential",
+      "implementation": "NativeFrontend",
+      "strategy": "native-reimplementation",
+      "referenceOracleId": "less",
+      "ownerPackages": ["NLESS-010", "NLESS-011", "NLESS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "sourceFiles": ["src/preprocessor/less.zig", "src/preprocessor/less_evaluator.zig"],
+      "currentBoundary": "The source-built binary and explicit Zig namespace route Less through the native Zig Less parser/evaluator with confined imports/assets, permanent JavaScript/plugin rejection, and strict ZigCSS validation of generated CSS.",
       "knownRisks": [
-        "Canonical language behavior does not enable Less plugins, JavaScript evaluation, custom file managers, or future Less versions; executable project code requires a separate trusted mode."
+        "Less 4.6.7 remains a development-only oracle; Less plugins, JavaScript evaluation, custom file managers/functions, executable project code, future oracle versions, and native release claims remain outside this source boundary."
       ],
       "probe": "@color: red;\n.card { color: @color; }\n",
       "probeOutput": ".card{color:red}",
       "sourceEvidence": [
-        { "file": "preprocessor/providers/less.mjs", "contains": "() => less.render(request.source, options)" },
-        { "file": "preprocessor/providers/less-importer.mjs", "contains": "export function createLessImportAuthority" }
+        { "file": "src/preprocessor/less.zig", "contains": "pub const Parser = struct" },
+        { "file": "src/preprocessor/less_evaluator.zig", "contains": "pub fn evaluate(" }
       ],
       "containmentEvidence": [
-        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
-        { "file": "preprocessor/provider-registry.mjs", "contains": "version: '4.6.7'" },
-        { "file": "preprocessor/providers/less.mjs", "contains": "javascriptEnabled: false" }
+        { "file": "src/main.zig", "contains": "--syntax <syntax>        Select css (default), scss, sass, less, or stylus" },
+        { "file": "src/lib.zig", "contains": "pub const experimental_native = @import(\"native_api.zig\");" },
+        { "file": "src/native_api.zig", "contains": "pub fn compile(" }
       ]
     },
     {
@@ -137,29 +137,29 @@
       "displayName": "Stylus",
       "cliDisplayName": "Stylus",
       "formatTag": null,
-      "npmSyntax": "stylus",
+      "nativeSyntax": "stylus",
       "extensions": [".styl"],
-      "availability": "CanonicalCliApi",
-      "compatibility": "CanonicalVersion",
-      "implementation": "CanonicalProvider",
-      "strategy": "canonical-integration",
-      "providerId": "stylus",
-      "ownerPackages": ["STYLUS-001", "STYLUS-010", "STYLUS-011", "STYLUS-012", "PRE-005", "PRE-006", "PRE-008"],
-      "sourceFiles": ["preprocessor/providers/stylus.mjs", "preprocessor/providers/stylus-importer.mjs"],
-      "currentBoundary": "The npm CLI/API route Stylus through exact Stylus 0.64.0 with resolver-owned imports/assets, project plugins denied, and strict ZigCSS validation of generated CSS.",
+      "availability": "NativeCliZigApi",
+      "compatibility": "NativeDifferential",
+      "implementation": "NativeFrontend",
+      "strategy": "native-reimplementation",
+      "referenceOracleId": "stylus",
+      "ownerPackages": ["NSTYLUS-010", "NSTYLUS-011", "NSTYLUS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "sourceFiles": ["src/preprocessor/stylus.zig", "src/preprocessor/stylus_evaluator.zig"],
+      "currentBoundary": "The source-built binary and explicit Zig namespace route Stylus through the native Zig Stylus parser/evaluator with resolver-owned imports/assets, permanent project-plugin/hook rejection, and strict ZigCSS validation of generated CSS.",
       "knownRisks": [
-        "Canonical language behavior does not enable Stylus use() plugins, custom functions, custom evaluators, or future Stylus versions; executable project code requires a separate trusted mode."
+        "Stylus 0.64.0 remains a development-only oracle; use() plugins, custom functions/evaluators, executable project code, future oracle versions, and native release claims remain outside this source boundary."
       ],
-      "probe": "$color = red\n.card\n  color: $color\n",
+      "probe": "color = red\n.card\n  color color\n",
       "probeOutput": ".card{color:#f00}",
       "sourceEvidence": [
-        { "file": "preprocessor/providers/stylus.mjs", "contains": "renderer.render((error, css) =>" },
-        { "file": "preprocessor/providers/stylus-importer.mjs", "contains": "export function createStylusImportAuthority" }
+        { "file": "src/preprocessor/stylus.zig", "contains": "pub const Parser = struct" },
+        { "file": "src/preprocessor/stylus_evaluator.zig", "contains": "pub fn evaluate(" }
       ],
       "containmentEvidence": [
-        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
-        { "file": "preprocessor/provider-registry.mjs", "contains": "version: '0.64.0'" },
-        { "file": "preprocessor/providers/stylus.mjs", "contains": "'STYLUS_PLUGIN_DISABLED'," }
+        { "file": "src/main.zig", "contains": "--syntax <syntax>        Select css (default), scss, sass, less, or stylus" },
+        { "file": "src/lib.zig", "contains": "pub const experimental_native = @import(\"native_api.zig\");" },
+        { "file": "src/native_api.zig", "contains": "pub fn compile(" }
       ]
     },
     {

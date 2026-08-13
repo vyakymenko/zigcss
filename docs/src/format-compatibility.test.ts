@@ -18,6 +18,10 @@ const canonicalStrategy = fs.readFileSync(
   path.join(repoRoot, 'docs/adr/ADR-012-canonical-preprocessor-host.md'),
   'utf8',
 )
+const nativeStrategy = fs.readFileSync(
+  path.join(repoRoot, 'docs/adr/ADR-013-self-contained-native-frontends.md'),
+  'utf8',
+)
 const packageMetadata = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
 const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/build.yml'), 'utf8')
 const sidebar = fs.readFileSync(
@@ -43,15 +47,16 @@ describe('published version-pinned format matrix', () => {
   test('binds every adapter to the accepted ADR strategy', () => {
     expect(strategy).toContain('- Status: Accepted')
     expect(canonicalStrategy).toContain('- Status: Accepted')
+    expect(nativeStrategy).toContain('- Status: Accepted')
     expect(strategy).toContain('structured diagnostic and no partial CSS')
     for (const adapter of matrix.adapters) {
-      expect(`${strategy}\n${canonicalStrategy}`).toContain(
+      expect(`${strategy}\n${canonicalStrategy}\n${nativeStrategy}`).toContain(
         `| \`${adapter.id}\` | \`${adapter.strategy}\` |`,
       )
     }
   })
 
-  test('graduates every canonical provider row without claiming extension parity', () => {
+  test('publishes every native differential row with exact development-only oracles', () => {
     expect(matrix.canonicalProviders).toEqual({
       'dart-sass': {
         package: 'sass',
@@ -75,15 +80,18 @@ describe('published version-pinned format matrix', () => {
 
     for (const id of ['scss', 'sass', 'less', 'stylus']) {
       const adapter = matrix.adapters.find(candidate => candidate.id === id)
-      expect(adapter.strategy).toBe('canonical-integration')
-      expect(adapter.availability).toBe('CanonicalCliApi')
-      expect(adapter.compatibility).toBe('CanonicalVersion')
-      expect(adapter.implementation).toBe('CanonicalProvider')
-      expect(adapter.providerId).toBeTypeOf('string')
-      expect(adapter.npmSyntax).toBe(id)
+      expect(adapter.strategy).toBe('native-reimplementation')
+      expect(adapter.availability).toBe('NativeCliZigApi')
+      expect(adapter.compatibility).toBe('NativeDifferential')
+      expect(adapter.implementation).toBe('NativeFrontend')
+      expect(adapter.referenceOracleId).toBeTypeOf('string')
+      expect(adapter.nativeSyntax).toBe(id)
       expect(adapter.probeOutput).toMatch(/^\.[a-z]+\{color:/)
       expect(adapter.knownRisks.join(' ')).toMatch(/plugin|custom function|project code/i)
+      expect(adapter.currentBoundary).toMatch(/native Zig/i)
     }
+    expect(guide).toMatch(/development-only reference oracles/i)
+    expect(guide).toMatch(/do not run during compilation/i)
   })
 
   test('keeps the executable matrix in package scripts and CI', () => {

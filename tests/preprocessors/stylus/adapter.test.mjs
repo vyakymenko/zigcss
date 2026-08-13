@@ -135,9 +135,10 @@ test('binds the development oracle row and lockfile to exact Stylus 0.64.0', () 
   assert.match(importerSource, /globIterateSync\(/)
   assert.doesNotMatch(importerSource, /node:child_process|\b(?:exec|spawn)(?:File|Sync)?\s*\(/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'stylus')
-  assert.equal(adapter.availability, 'CanonicalCliApi')
-  assert.equal(adapter.compatibility, 'CanonicalVersion')
-  assert.equal(adapter.implementation, 'CanonicalProvider')
+  assert.equal(adapter.availability, 'NativeCliZigApi')
+  assert.equal(adapter.compatibility, 'NativeDifferential')
+  assert.equal(adapter.implementation, 'NativeFrontend')
+  assert.equal(adapter.referenceOracleId, 'stylus')
 })
 
 test('renders canonical Stylus semantics in exact expanded and compressed styles', async () => {

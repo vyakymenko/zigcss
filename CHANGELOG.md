@@ -11,22 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Target release: `0.5.0-rc.1` (not published).
 
-This candidate graduates the canonical five-language package surface. `PRE-009` binds it to one immutable source archive and completes every release gate before any separately authorized publication.
+This historical reference identity is not eligible for publication. The native target line is `0.6.0`; its exact immutable candidate remains unset until `NATIVE-009`.
+
+`NATIVE-008` closes the finite source-capability inventory for the self-contained native stylesheet frontends: machine rows, binary help, README, website lab, compiled examples, compatibility guides, and these migration notes now describe one `native-differential` snapshot. This does not graduate or publish a release. `nativeReleaseReady` remains `false`, and `NATIVE-009` alone owns candidate selection and release validation.
 
 ### Added
 
-- Add canonical SCSS and indented Sass compilation through exact Dart Sass 1.101.0, with official-version corpus evidence, confined imports, owned diagnostics/dependencies, deterministic maps, and strict ZigCSS validation of generated CSS.
-- Add canonical Less compilation through exact Less 4.6.7 with JavaScript/plugins disabled, resolver-owned imports and bounded asset helpers, official-version corpus evidence, and the same generated-CSS boundary.
-- Add canonical Stylus compilation through exact Stylus 0.64.0 with project plugins/hooks disabled, resolver-owned imports and bounded helpers/globs, official-version corpus evidence, and the same generated-CSS boundary.
-- Add one five-syntax npm CLI and JavaScript API for CSS, SCSS, Sass, Less, and Stylus, including syntax detection, confined load paths, mixed deterministic batches, watch invalidation, atomic writes, and two-stage source-map composition.
-- Add a five-tab website input/output lab whose exact examples are recompiled in the product test suite.
+- Add self-contained native Zig parser/evaluators for SCSS, indented Sass, Less, and Stylus, with confined imports, owned diagnostics/dependencies, deterministic composed maps, bounded resources, cancellation, and strict recovery-disabled validation of generated CSS.
+- Add the explicit `zigcss.experimental_native` Zig namespace and stable source-built binary routes for the finite `scss`, `sass`, `less`, and `stylus` syntax set. CSS remains on the stable `zigcss.compile` facade.
+- Add a parameterized compiled Zig API example and five finite binary input examples. The documentation build executes every row and checks exact minified output.
+- Add a five-tab native website input/output lab whose recorded fixtures execute through the source-built ZigCSS binary.
 
 ### Changed
 
 - Replace the prototype's stable CSS path with the tested tokenizer, typed parser/emitter, bounded CLI/API, verified transform plan, LSP/editor integrations, and release-integrity gates described by the generated capability matrix.
-- Keep arbitrary preprocessor plugins, custom functions/importers, executable project code, CSS-in-JS/PostCSS/Tailwind-like adapters, native plugins, extraction passes, editor packages, and the public compile service explicitly experimental, unpublished, or disabled according to their tested boundaries.
-- Execute every release archive on an architecture-matched runner and prove the same bytes through an offline npm pack, postinstall, and wrapper smoke before attestation or publication can proceed.
-- Prepare the exact provider/runtime closure for five platform targets while keeping `0.5.0` npm and GitHub publication behind separate explicit authorization.
+- Remove canonical providers from the production stylesheet path and package closure. Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain exact development-only reference oracles and do not run during compilation.
+- Reduce the native package contract to zero production dependencies and zero optional dependencies. The compiler starts no child language process, performs no network access, and requires no runtime download; the JavaScript wrapper only locates and invokes the native binary.
+- Keep arbitrary preprocessor plugins, custom functions/importers, Less JavaScript, Stylus evaluator hooks, executable project code, CSS-in-JS/PostCSS/Tailwind-like adapters, native plugins, extraction passes, editor packages, and the public compile service outside the graduated contract.
+- Preserve explicit CLI migration: source users select `--syntax scss|sass|less|stylus` and optional confined `--load-path` roots. Zig consumers use `zigcss.experimental_native`; the stable CSS API and build helper remain CSS-only. The former programmatic provider-backed JavaScript preprocessor API is not part of this source contract.
+- Keep the unpublished provider-backed `0.5.0-rc.1` identity ineligible for release. Every future native archive must pass the architecture-matched offline package, provenance, artifact, consumer, and hosted gates under `NATIVE-009` before any separately authorized publication.
 
 ## [0.3.0] - 2026-03-20
 

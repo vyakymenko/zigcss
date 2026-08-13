@@ -32,7 +32,7 @@ export function Features() {
             This site describes the green native source snapshot. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version; npm still serves the older CSS-only candidate.
           </p>
           <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#6e776e]">
-            The compatibility table below still records the unpublished provider-backed reference candidate and will advance in the separate guides-and-compatibility gate.
+            The compatibility table below records the closed NATIVE-008 native-differential source snapshot; release graduation remains fail-closed under NATIVE-009.
           </p>
         </div>
 

@@ -1,20 +1,20 @@
 # Format compatibility
 
-The ZigCSS 0.5 development snapshot admits five stylesheet syntaxes through one npm CLI and JavaScript API: CSS, SCSS, indented Sass, Less, and Stylus. CSS enters the native compiler directly. Each preprocessor grammar is owned by an exact canonical engine, then its complete generated CSS is parsed without recovery by ZigCSS before output can be returned or committed.
+The ZigCSS source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. CSS enters the verified core directly. Each preprocessor frontend evaluates to complete CSS, which is then parsed with recovery disabled before output can be returned or committed.
 
-This page describes the green source snapshot. The public npm release candidate `0.4.0-rc.3` is still CSS-only; the five-language package has not been published.
+The public npm release candidate `0.4.0-rc.3` remains CSS-only. The repository still carries the unpublished `0.5.0-rc.1` source identity while `NATIVE-009` release selection remains closed.
 
-Publication of the provider-backed `0.5.0-rc.1` snapshot was cancelled before tag creation. ADR-013 now governs a staged self-contained native replacement targeting zero production package dependencies. Until each new native row passes its own corpus, security, package, and platform gates, the canonical adapters below remain reference behavior rather than a native-binary claim.
+The four preprocessor rows are `native-differential`, not yet `native-graduated`: their pinned corpora, strict negative/resource cases, deterministic reruns, generated-CSS validation, product routing, zero-dependency package, and five-target gates pass. Release identity, final hosted validation, and publication remain separate.
 
-The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` verifies the closed adapter inventory, accepted ADR strategy, provider binding, containment evidence, and real CLI probes. Provider-focused suites additionally own official corpora, diagnostics, imports, limits, concurrency, source maps, package contents, and platform smoke tests.
+The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` verifies the closed adapter inventory, accepted ADR strategy, exact native source inventory, development-oracle binding, containment evidence, and direct native CLI probes. The native contract additionally binds every language source, package state, and the closed release interlock.
 
 ## What the status terms mean
 
 | Term | Meaning |
 |---|---|
-| CanonicalCliApi | Available through the npm CLI and API by extension detection or explicit syntax. |
-| CanonicalVersion | Language behavior is owned by the exact provider version; ecosystem extensions are separate. |
-| CanonicalProvider | The provider runs through the bounded host and feeds strict generated CSS into the native compiler. |
+| NativeCliZigApi | Available in the source-built native binary and explicit `zigcss.experimental_native` namespace with an explicit syntax value. |
+| NativeDifferential | The native row passes its pinned oracle, strict failure/resource, deterministic, product, package, and five-target gates; release graduation remains separate. |
+| NativeFrontend | A self-contained Zig parser/evaluator feeds complete CSS through the recovery-disabled ZigCSS core without a provider process. |
 | ExperimentalLibrary | Available only through an explicit Zig library syntax tag. |
 | NativeSubset | Only the named ZigCSS-native grammar and result contract are admitted. |
 | Unavailable | The extension is rejected and no public compile syntax exists. |
@@ -25,65 +25,67 @@ The machine-readable authority is `tests/formats/matrix.json`. `npm run test:for
 
 | Adapter ID | Recognized extension | Availability | Compatibility | Implementation | Accepted strategy | Owning package |
 |---|---|---|---|---|---|---|
-| `scss` | `.scss` | CanonicalCliApi | CanonicalVersion | CanonicalProvider | `canonical-integration` | `SCSS-001`, `SCSS-002`, `SASS-010`, `SASS-011`, `SASS-012`, `PRE-005`, `PRE-006`, `PRE-008` |
-| `sass` | `.sass` | CanonicalCliApi | CanonicalVersion | CanonicalProvider | `canonical-integration` | `SCSS-001`, `SCSS-002`, `SASS-010`, `SASS-011`, `SASS-012`, `PRE-005`, `PRE-006`, `PRE-008` |
-| `less` | `.less` | CanonicalCliApi | CanonicalVersion | CanonicalProvider | `canonical-integration` | `LESS-001`, `LESS-010`, `LESS-011`, `LESS-012`, `PRE-005`, `PRE-006`, `PRE-008` |
-| `stylus` | `.styl` | CanonicalCliApi | CanonicalVersion | CanonicalProvider | `canonical-integration` | `STYLUS-001`, `STYLUS-010`, `STYLUS-011`, `STYLUS-012`, `PRE-005`, `PRE-006`, `PRE-008` |
+| `scss` | `.scss` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NSASS-010`, `NSASS-011`, `NSASS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
+| `sass` | `.sass` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NSASS-010`, `NSASS-011`, `NSASS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
+| `less` | `.less` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NLESS-010`, `NLESS-011`, `NLESS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
+| `stylus` | `.styl` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NSTYLUS-010`, `NSTYLUS-011`, `NSTYLUS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
 | `css-modules` | `.module.css` | ExperimentalLibrary | NativeSubset | LimitedNative | `limited-native-subset` | `MODULE-001`, `MODULE-002` |
 | `css-in-js` | `.css.js`, `.css.ts` | Unavailable | Unverified | Removed | `remove-until-funded` | `JS-001` |
 | `postcss` | `.postcss` | Unavailable | Unverified | Removed | `remove-until-funded` | `POSTCSS-001` |
 | `tailwind` | `.postcss` | Unavailable | Unverified | Removed | `remove-until-funded` | `TAILWIND-001` |
 
-## Canonical language frontends
+## Development-only reference oracles
 
-| Input | Provider | Version | License | Default extension boundary |
+| Input | Oracle | Version | License | Permanent execution boundary |
 |---|---|---|---|---|
-| SCSS | Dart Sass (`sass`) | `1.101.0` | MIT | No plugins, custom functions, custom importers, package importers, or project code |
+| SCSS | Dart Sass (`sass`) | `1.101.0` | MIT | No plugins, custom functions/importers, package importers, or project code |
 | Indented Sass | Dart Sass (`sass`) | `1.101.0` | MIT | Original indented bytes; same executable-extension boundary |
 | Less | Less (`less`) | `4.6.7` | Apache-2.0 | JavaScript, plugins, and custom file managers disabled |
 | Stylus | Stylus (`stylus`) | `0.64.0` | MIT | Project plugins, custom functions, prefix hooks, and custom evaluators disabled |
 
-Canonical support means the language semantics of these exact provider versions plus ZigCSS's documented option surface. It does not imply compatibility with every plugin, JavaScript hook, framework wrapper, ambient configuration, or future provider release. Such execution would require a separately authorized trusted-project-code mode; the default CLI and API never infer that authority.
+These exact providers are development-only reference oracles. They judge differential tests but do not enter production dependencies, archives, installed packages, SBOM runtime closure, or stylesheet compilation, and they do not run during compilation. Matching an oracle version does not imply ecosystem-plugin compatibility or future-version compatibility.
 
-Every local dependency byte passes through the confined resolver. Entry-relative imports are allowed inside the entry root. Additional roots require repeated `--load-path` values or API `loadPaths`. Network schemes, traversal escapes, symlinks, special files, unstable reads, invalid UTF-8, cycles, and exhausted resource ceilings fail without CSS.
+Every local dependency byte passes through the confined native resolver. Entry-relative imports are allowed inside the entry root. Additional roots require repeated `--load-path` values or API `root_paths`. Network schemes, traversal escapes, symlinks, special files, unstable reads, invalid UTF-8, cycles, and exhausted resource ceilings fail without CSS.
 
-## CLI examples
+## Native CLI examples
 
-Syntax is normally detected from the filename:
+The native route is explicit; filename extension alone does not select a preprocessor:
 
 ```bash
-node index.js src/app.scss -o dist/app.css --minify
-node index.js src/app.sass -o dist/app.css --minify
-node index.js src/app.less -o dist/app.css --minify
-node index.js src/app.styl -o dist/app.css --minify
+zig-out/bin/zigcss src/app.scss --syntax scss -o dist/app.css --minify
+zig-out/bin/zigcss src/app.sass --syntax sass -o dist/app.css --minify
+zig-out/bin/zigcss src/app.less --syntax less -o dist/app.css --minify
+zig-out/bin/zigcss src/app.styl --syntax stylus -o dist/app.css --minify
 ```
 
-Stdin requires explicit preprocessor syntax:
+Stdin also requires an explicit syntax:
 
 ```bash
-node index.js - --syntax scss -o - --minify
+zig-out/bin/zigcss - --syntax scss -o - --minify
 ```
 
-Run the executable matrix and focused frontend gates with:
+The [compiled public examples](/guide/build-from-source) parameterize all four Zig API rows and all five binary inputs. Run the focused gates with:
 
 ```bash
-npm run test:formats
-npm run test:preprocessor-sass
-npm run test:preprocessor-less
-npm run test:preprocessor-stylus
-npm run test:preprocessor-product
-npm run check:preprocessor-package
+zig build test-native-sass-conformance --summary all
+zig build test-native-less-conformance --summary all
+zig build test-native-stylus-conformance --summary all
+zig build test-native-zig-api --summary all
+zig build test-native-cli --summary all
+npm run test:native-contract
+npm run test:native-package-evidence
 ```
 
 ## Other format boundaries
 
-The [native CSS Modules subset](/guide/css-modules) remains a deliberately closed Zig-library surface. It provides source-specific class names, functional scope, plain-class composition, and local values with owned exports and dependency facts, but the npm CLI and LSP do not admit `.module.css`.
+The [native CSS Modules subset](/guide/css-modules) remains a deliberately closed Zig-library surface. It provides source-specific class names, functional scope, plain-class composition, and local values with owned exports and dependency facts, but the CLI and LSP do not admit `.module.css`.
 
-CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavailable. Their former heuristic implementations were removed because byte scanning could not preserve the semantics of JavaScript execution, plugin lifecycle, configuration, content scanning, variants, or arbitrary values.
+CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavailable. Their former heuristic implementations were removed because byte scanning could not preserve JavaScript execution, plugin lifecycle, configuration, content scanning, variants, or arbitrary values.
 
 - [Current status](/guide/status)
 - [CSS grammar compatibility](/guide/css-compatibility)
 - [Native CSS Modules subset](/guide/css-modules)
+- [Build from source](/guide/build-from-source)
 - [Recovery CLI](/guide/recovery-cli)
-- [ADR-012: canonical preprocessor host](https://github.com/vyakymenko/zigcss/blob/main/docs/adr/ADR-012-canonical-preprocessor-host.md)
+- [ADR-012: canonical reference host](https://github.com/vyakymenko/zigcss/blob/main/docs/adr/ADR-012-canonical-preprocessor-host.md)
 - [ADR-013: self-contained native frontends](https://github.com/vyakymenko/zigcss/blob/main/docs/adr/ADR-013-self-contained-native-frontends.md)
