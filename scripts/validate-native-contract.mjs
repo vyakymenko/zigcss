@@ -765,7 +765,7 @@ const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'hosted-validation',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'one automatic Build on the exact integrated candidate passes Test Suite five targets and aggregate evidence within runtime budgets',
       ]),

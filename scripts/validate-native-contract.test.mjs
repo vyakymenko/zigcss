@@ -82,7 +82,7 @@ const expectedReleaseGraduation = {
     ],
   }, {
     id: 'hosted-validation',
-    state: 'pending',
+    state: 'verified',
     evidenceRequirements: [
       'one automatic Build on the exact integrated candidate passes Test Suite five targets and aggregate evidence within runtime budgets',
     ],
@@ -1576,7 +1576,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   }
 })
 
-test('binds the finite NATIVE-009 candidate and local-validation evidence', () => {
+test('binds the finite NATIVE-009 candidate and hosted-validation evidence', () => {
   const contract = loadContract()
   assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
 
@@ -1597,6 +1597,7 @@ test('binds the finite NATIVE-009 candidate and local-validation evidence', () =
     release => { release.gates[0].state = 'pending' },
     release => { release.gates[1].state = 'pending' },
     release => { release.gates[2].state = 'pending' },
+    release => { release.gates[3].state = 'pending' },
     release => release.gates.push(clone(release.gates[0])),
   ]) {
     const changed = clone(contract)
