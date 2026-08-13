@@ -756,7 +756,7 @@
       },
       {
         "id": "provenance-validation",
-        "state": "pending",
+        "state": "verified",
         "evidenceRequirements": [
           "five exact archives and SBOMs are bound by verified GitHub attestations"
         ]

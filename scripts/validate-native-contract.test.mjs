@@ -1470,7 +1470,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   }
 })
 
-test('binds the finite NATIVE-009 candidate and artifact-validation evidence', () => {
+test('binds the finite NATIVE-009 candidate and provenance-validation evidence', () => {
   const contract = loadContract()
   assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
   assert.deepEqual(
@@ -1481,20 +1481,19 @@ test('binds the finite NATIVE-009 candidate and artifact-validation evidence', (
     ],
   )
 
-  const artifactValidationIndex = expectedReleaseGraduation.gates.findIndex(
-    gate => gate.id === 'artifact-validation',
+  const provenanceValidationIndex = expectedReleaseGraduation.gates.findIndex(
+    gate => gate.id === 'provenance-validation',
   )
-  assert.notEqual(artifactValidationIndex, -1)
+  assert.notEqual(provenanceValidationIndex, -1)
   assert.equal(
-    contract.releaseGraduation.gates[artifactValidationIndex].state,
+    contract.releaseGraduation.gates[provenanceValidationIndex].state,
     'verified',
   )
   assert.deepEqual(
     contract.releaseGraduation.gates
-      .slice(artifactValidationIndex + 1)
+      .slice(provenanceValidationIndex + 1)
       .map(gate => [gate.id, gate.state]),
     [
-      ['provenance-validation', 'pending'],
       ['consumer-validation', 'pending'],
       ['origin-main-integration', 'pending'],
       ['tag-workflow-publication', 'pending'],

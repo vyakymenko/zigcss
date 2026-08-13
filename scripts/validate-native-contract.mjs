@@ -786,7 +786,7 @@ export const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'provenance-validation',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'five exact archives and SBOMs are bound by verified GitHub attestations',
       ]),
