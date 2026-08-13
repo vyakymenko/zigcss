@@ -139,7 +139,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       closureEvidence: ['README describes the exact self-contained native source snapshot'],
     }, {
       id: 'website',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: ['website claims and input/output lab execute the native product path'],
     }, {
       id: 'examples',
@@ -1324,6 +1324,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
     graduation => { graduation.terminalContract.pluginParity = true },
     graduation => { graduation.gates[0].state = 'pending' },
     graduation => { graduation.gates[1].state = 'pending' },
+    graduation => { graduation.gates[3].state = 'pending' },
     graduation => graduation.gates.push(structuredClone(graduation.gates[0])),
   ]) {
     const changed = clone(loadContract())
@@ -1445,6 +1446,86 @@ test('binds the README to the exact self-contained native source snapshot', () =
       readme: `${readme}\nThe four preprocessor frontends are moving through private native conformance gates.\n`,
     }),
     /README retains stale provider-era source claims/,
+  )
+})
+
+test('binds website claims and the recorded lab to the native product path', () => {
+  const websiteSources = Object.fromEntries([
+    'docs/src/app/components/Home.tsx',
+    'docs/src/app/components/GettingStarted.tsx',
+    'docs/src/app/components/Convergence.tsx',
+    'docs/src/app/components/FormatShowcase.tsx',
+    'docs/src/app/components/Features.tsx',
+    'docs/src/app/components/Playground.tsx',
+  ].map(relativePath => [
+    relativePath,
+    fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8'),
+  ]))
+  const formatExamples = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'docs/src/data/format-examples.json'),
+    'utf8',
+  ))
+  const siteExamplesTests = fs.readFileSync(
+    path.join(repositoryRoot, 'tests/preprocessors/product/site-examples.test.mjs'),
+    'utf8',
+  )
+
+  for (const [relativePath, needle, replacement, expectedError] of [
+    [
+      'docs/src/app/components/Home.tsx',
+      'All five source inputs run through self-contained native Zig frontends.',
+      'Only CSS runs through a native Zig frontend.',
+      /website native five-language source claim is missing/,
+    ],
+    [
+      'docs/src/app/components/GettingStarted.tsx',
+      'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles; they do not run during compilation.',
+      'Canonical providers run during compilation.',
+      /website development-only oracle boundary is missing/,
+    ],
+    [
+      'docs/src/app/components/Convergence.tsx',
+      'Native frontends feed one fail-closed Zig core.',
+      'Exact pinned providers feed one fail-closed Zig core.',
+      /website native convergence claim is missing/,
+    ],
+    [
+      'docs/src/app/components/FormatShowcase.tsx',
+      'Every recorded fixture is executed by the source-built native ZigCSS binary.',
+      'Every recorded fixture is executed by the canonical provider host.',
+      /website native lab claim is missing/,
+    ],
+    [
+      'docs/src/app/components/Features.tsx',
+      'The compatibility table below still records the unpublished provider-backed reference candidate and will advance in the separate guides-and-compatibility gate.',
+      'The compatibility table describes the current native product path.',
+      /website compatibility transition boundary is missing/,
+    ],
+  ]) {
+    const changed = { ...websiteSources }
+    changed[relativePath] = changed[relativePath].replaceAll(needle, replacement)
+    assert.notEqual(changed[relativePath], websiteSources[relativePath], `website fixture is missing ${JSON.stringify(needle)}`)
+    assert.throws(
+      () => validateContract(loadContract(), { websiteSources: changed }),
+      expectedError,
+    )
+  }
+
+  const changedExamples = structuredClone(formatExamples)
+  changedExamples[1].frontend = 'Dart Sass 1.101.0'
+  assert.throws(
+    () => validateContract(loadContract(), { formatExamples: changedExamples }),
+    /website native lab metadata drifted/,
+  )
+
+  const hostRoutedTest = siteExamplesTests.replace(
+    "spawnSync(binaryPath, ['-', '--syntax', example.id, '--minify'],",
+    'compileStringWithRuntime(example.input,',
+  )
+  assert.notEqual(hostRoutedTest, siteExamplesTests, 'native site-lab executable fixture is missing')
+  assert.throws(
+    () => validateContract(loadContract(), { siteExamplesTests: hostRoutedTest }),
+    /website lab native executable evidence is missing/,
   )
 })
 

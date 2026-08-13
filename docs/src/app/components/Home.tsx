@@ -18,8 +18,8 @@ const deploymentModes = [
   {
     id: "source",
     label: "from source",
-    code: "npm ci\nzig build\nnode index.js input.scss -o output.css --minify",
-    note: "Green main is the 0.5.0-rc.1 five-language source candidate.",
+    code: "zig build\nzig-out/bin/zigcss --syntax scss input.scss -o output.css --minify",
+    note: "Green main is the native five-language 0.5.0-rc.1 source candidate; no provider runtime is used.",
   },
   {
     id: "zig",
@@ -109,9 +109,9 @@ function Manifesto() {
         <div className="manifesto-inner">
           <p className="gate-label">── GATE 05 · ONE COMPILER PATH ──</p>
           <h2 className="manifesto-statement">One path. <span>No parser drift.</span></h2>
-          <p className="manifesto-detail">CLI, JS API, Zig API, build helper, profiling, and editor tooling consume the same owned compile result.</p>
+          <p className="manifesto-detail">CLI, the thin JavaScript wrapper, Zig API, build helper, profiling, and editor tooling consume the same owned compile result.</p>
           <div className="path-map" aria-label="Compiler consumers converging on one owned result">
-            {['CLI', 'JS API', 'ZIG API', 'BUILD', 'PROFILE', 'EDITOR'].map(label => <span key={label}>{label}</span>)}
+            {['CLI', 'JS WRAPPER', 'ZIG API', 'BUILD', 'PROFILE', 'EDITOR'].map(label => <span key={label}>{label}</span>)}
             <strong>OWNED COMPILE RESULT</strong>
           </div>
         </div>
@@ -152,32 +152,32 @@ function Endgame() {
       <div className="relative mx-auto max-w-[96rem] px-5 py-28 sm:px-8 md:py-44 lg:px-12">
         <div className="flex flex-wrap items-center justify-between gap-5">
           <p className="gate-label">── GATE 07 · ADR-013 ──</p>
-          <span className="target-chip">TARGET STATE · NOT SHIPPED</span>
+          <span className="target-chip">NATIVE SNAPSHOT · RELEASE NOT SHIPPED</span>
         </div>
         <h2 id="endgame-title" className="display-type mt-10 max-w-6xl text-[clamp(3.8rem,9vw,9rem)] leading-[0.8] tracking-[-0.08em]">
-          The providers were <span className="text-[#b7f34a]">scaffolding.</span>
+          The providers are <span className="text-[#b7f34a]">oracles.</span>
         </h2>
         <p className="mt-10 max-w-3xl font-mono text-sm leading-7 text-[#8d9a8b] sm:text-base">
-          The target replaces Dart Sass, Less, and Stylus with native Zig frontends. One self-contained compiler. Zero production package dependencies. No provider process. No runtime download.
+          All five source inputs run through self-contained native Zig frontends. One self-contained compiler. Zero production package dependencies. No provider process. No runtime download.
         </p>
 
         <div className="endgame-corridor mt-16 grid gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr] lg:items-stretch">
           <article>
-            <span>NOW</span>
-            <strong>PINNED PROVIDERS</strong>
-            <p>Dart Sass 1.101.0 · Less 4.6.7 · Stylus 0.64.0</p>
+            <span>REFERENCE</span>
+            <strong>DEVELOPMENT ORACLES</strong>
+            <p>Dart Sass 1.101.0 · Less 4.6.7 · Stylus 0.64.0 · tests only</p>
           </article>
           <div className="corridor-arrow" aria-hidden="true">→</div>
           <article>
-            <span>MIGRATION</span>
-            <strong>NATIVE CONFORMANCE</strong>
-            <p>Parser correctness. Semantic preservation. Fail-closed graduation.</p>
+            <span>CURRENT SOURCE</span>
+            <strong>NATIVE DIFFERENTIAL</strong>
+            <p>All four preprocessor rows pass their bounded native evidence.</p>
           </article>
           <div className="corridor-arrow" aria-hidden="true">→</div>
           <article className="endgame-target">
-            <span>ADR-013</span>
-            <strong>SELF-CONTAINED ZIGCSS</strong>
-            <p>Five native frontends. One owned result. Zero production dependencies.</p>
+            <span>RELEASE GATE</span>
+            <strong>FAIL-CLOSED</strong>
+            <p>nativeReleaseReady: false · exact NATIVE-009 candidate not selected</p>
           </article>
         </div>
       </div>
@@ -250,7 +250,7 @@ function Deploy() {
               {['Linux x64', 'Linux arm64', 'macOS x64', 'macOS arm64', 'Windows x64'].map(target => <span key={target} className="terminal-chip">{target}</span>)}
             </div>
             <p className="mt-9 terminal-label">interfaces</p>
-            <p className="mt-3 font-mono text-xs leading-6 text-[#a6b2a4]">CLI · JS API · Zig API · helpers.addCssCompile · CSS LSP</p>
+            <p className="mt-3 font-mono text-xs leading-6 text-[#a6b2a4]">CLI · JS wrapper · Zig API · helpers.addCssCompile · CSS LSP</p>
           </aside>
         </div>
 
@@ -285,7 +285,7 @@ export function Home() {
             <div>
               <p className="max-w-3xl text-xl leading-8 text-[#cdd6cb] sm:text-2xl">Compile CSS. Keep the meaning.</p>
               <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#81907f] sm:text-sm">
-                An experimental native CSS compiler written in Zig. Green main is the 0.5.0-rc.1 five-language source candidate. Published zigcss@next is 0.4.0-rc.3 with the earlier CSS-only surface.
+                An experimental self-contained five-language compiler written in Zig. Green main is the 0.5.0-rc.1 five-language source candidate. Published zigcss@next is 0.4.0-rc.3 with the earlier CSS-only surface. All five source inputs run through self-contained native Zig frontends.
               </p>
             </div>
             <a href="#convergence" className="terminal-link justify-self-start font-mono text-sm uppercase tracking-[0.16em] text-[#b7f34a] lg:justify-self-end">five inputs converge ↓</a>

@@ -673,7 +673,7 @@ const expectedCapabilityGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'website',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: Object.freeze([
         'website claims and input/output lab execute the native product path',
       ]),
@@ -701,6 +701,53 @@ const expectedCapabilityGraduation = Object.freeze({
     }),
   ]),
 })
+
+const websiteSourcePaths = Object.freeze([
+  'docs/src/app/components/Home.tsx',
+  'docs/src/app/components/GettingStarted.tsx',
+  'docs/src/app/components/Convergence.tsx',
+  'docs/src/app/components/FormatShowcase.tsx',
+  'docs/src/app/components/Features.tsx',
+  'docs/src/app/components/Playground.tsx',
+])
+
+const expectedFormatLabMetadata = Object.freeze([
+  Object.freeze({
+    id: 'css',
+    label: 'CSS',
+    extension: '.css',
+    frontend: 'Native ZigCSS',
+    pipeline: 'CSS → native ZigCSS core → compact CSS',
+  }),
+  Object.freeze({
+    id: 'scss',
+    label: 'SCSS',
+    extension: '.scss',
+    frontend: 'Native Sass frontend',
+    pipeline: 'SCSS → native Sass frontend → ZigCSS core → compact CSS',
+  }),
+  Object.freeze({
+    id: 'sass',
+    label: 'Sass',
+    extension: '.sass',
+    frontend: 'Native Sass frontend',
+    pipeline: 'Indented Sass → native Sass frontend → ZigCSS core → compact CSS',
+  }),
+  Object.freeze({
+    id: 'less',
+    label: 'Less',
+    extension: '.less',
+    frontend: 'Native Less frontend',
+    pipeline: 'Less → native Less frontend → ZigCSS core → compact CSS',
+  }),
+  Object.freeze({
+    id: 'stylus',
+    label: 'Stylus',
+    extension: '.styl',
+    frontend: 'Native Stylus frontend',
+    pipeline: 'Stylus → native Stylus frontend → ZigCSS core → compact CSS',
+  }),
+])
 
 const expectedDifferentialAdapterSources = Object.freeze({
   scss: Object.freeze([
@@ -1330,7 +1377,162 @@ function requireText(source, needle, label) {
   if (!source.includes(needle)) fail(`${label} is missing ${JSON.stringify(needle)}`)
 }
 
-function validateCapabilityGraduation(graduation, productionSources, cliTests, plan, readme) {
+function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesTests) {
+  if (websiteSources === null || typeof websiteSources !== 'object' || Array.isArray(websiteSources)) {
+    fail('website native source inventory is missing')
+  }
+  if (!same(Object.keys(websiteSources).sort(), [...websiteSourcePaths].sort())) {
+    fail('website native source inventory drifted')
+  }
+
+  const home = websiteSources['docs/src/app/components/Home.tsx']
+  const gettingStarted = websiteSources['docs/src/app/components/GettingStarted.tsx']
+  const convergence = websiteSources['docs/src/app/components/Convergence.tsx']
+  const showcase = websiteSources['docs/src/app/components/FormatShowcase.tsx']
+  const features = websiteSources['docs/src/app/components/Features.tsx']
+  const playground = websiteSources['docs/src/app/components/Playground.tsx']
+
+  requireText(
+    home,
+    'All five source inputs run through self-contained native Zig frontends.',
+    'website native five-language source claim',
+  )
+  requireText(
+    home,
+    'zig-out/bin/zigcss --syntax scss input.scss -o output.css --minify',
+    'website native source command',
+  )
+  requireText(home, 'NATIVE SNAPSHOT · RELEASE NOT SHIPPED', 'website unpublished native release boundary')
+  requireText(home, 'The providers are ', 'website development-oracle heading')
+  requireText(home, 'nativeReleaseReady: false', 'website closed native release interlock')
+  requireText(home, 'CLI · JS wrapper · Zig API', 'website thin wrapper interface claim')
+  requireText(
+    gettingStarted,
+    'The source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig frontends and one strict output boundary.',
+    'website native getting-started boundary',
+  )
+  requireText(
+    gettingStarted,
+    'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles; they do not run during compilation.',
+    'website development-only oracle boundary',
+  )
+  requireText(
+    gettingStarted,
+    'Stylesheet compilation itself requires no Node.js, provider process, network service, or runtime download.',
+    'website zero-runtime compilation boundary',
+  )
+  requireText(
+    gettingStarted,
+    'The package JavaScript wrapper only locates and invokes that binary; it does not host language semantics.',
+    'website thin JavaScript wrapper boundary',
+  )
+  requireText(
+    convergence,
+    'Native frontends feed one fail-closed Zig core.',
+    'website native convergence claim',
+  )
+  requireText(
+    showcase,
+    'Every recorded fixture is executed by the source-built native ZigCSS binary.',
+    'website native lab claim',
+  )
+  requireText(showcase, '{selected.frontend}', 'website native lab frontend label')
+  requireText(
+    features,
+    'The compatibility table below still records the unpublished provider-backed reference candidate and will advance in the separate guides-and-compatibility gate.',
+    'website compatibility transition boundary',
+  )
+  requireText(playground, 'Playground unavailable', 'website public compile service boundary')
+  requireText(playground, 'The public compile API is disabled', 'website disabled public compile API')
+
+  const combinedWebsite = Object.values(websiteSources).join('\n').toLowerCase()
+  for (const staleClaim of [
+    'npm ci\\nzig build\\nnode index.js input.scss',
+    'Five canonical inputs, one bounded host',
+    'CSS runs natively. SCSS and Sass run through Dart Sass',
+    'Node.js 20.19 or newer is also required for the canonical frontend host',
+    'executable remains the CSS-only core',
+    'Exact pinned frontends feed one fail-closed Zig core',
+    'inspect the exact provider, bytes, digest',
+    'Canonical preprocessor behavior remains version-pinned',
+    'The target replaces Dart Sass, Less, and Stylus with native Zig frontends',
+    'CLI · JS API · Zig API',
+  ]) {
+    if (combinedWebsite.includes(staleClaim.toLowerCase())) {
+      fail(`website retains stale provider-era source claim: ${JSON.stringify(staleClaim)}`)
+    }
+  }
+
+  if (!Array.isArray(formatExamples) || formatExamples.length !== expectedFormatLabMetadata.length) {
+    fail(`website native lab must contain ${expectedFormatLabMetadata.length} exact syntax rows`)
+  }
+  for (const [index, example] of formatExamples.entries()) {
+    exactKeys(
+      example,
+      ['id', 'label', 'extension', 'frontend', 'input', 'output', 'pipeline', 'note'],
+      `website format examples[${index}]`,
+    )
+    const metadata = {
+      id: example.id,
+      label: example.label,
+      extension: example.extension,
+      frontend: example.frontend,
+      pipeline: example.pipeline,
+    }
+    if (!same(metadata, expectedFormatLabMetadata[index])) {
+      fail(`website native lab metadata drifted at row ${index}`)
+    }
+    if (typeof example.input !== 'string' || example.input.length === 0 ||
+        typeof example.output !== 'string' || example.output.length === 0) {
+      fail(`website native lab row ${example.id} must own nonempty input and output`)
+    }
+  }
+  for (const [id, oracle] of [
+    ['scss', 'Dart Sass 1.101.0'],
+    ['sass', 'Dart Sass 1.101.0'],
+    ['less', 'Less 4.6.7'],
+    ['stylus', 'Stylus 0.64.0'],
+  ]) {
+    const example = formatExamples.find(row => row.id === id)
+    requireText(example?.note ?? '', 'development-only', `website ${id} lab oracle role`)
+    requireText(example?.note ?? '', oracle, `website ${id} lab oracle identity`)
+  }
+
+  for (const [needle, label] of [
+    ["import { spawnSync } from 'node:child_process'", 'website lab native process harness'],
+    [
+      "spawnSync(binaryPath, ['-', '--syntax', example.id, '--minify'],",
+      'website lab native executable evidence',
+    ],
+    ['assert.equal(result.status, 0', 'website lab native exit evidence'],
+    ['assert.equal(result.stdout, example.output, example.id)', 'website lab exact output evidence'],
+    ['assert.match(result.stderr, /experimental release candidate/)', 'website lab warning evidence'],
+  ]) {
+    requireText(siteExamplesTests, needle, label)
+  }
+  for (const forbidden of [
+    'compileStringWithRuntime',
+    'runPreprocessorHost',
+    'preprocessor/product-api.mjs',
+    'preprocessor/runner.mjs',
+    'preprocessor/core-runner.mjs',
+  ]) {
+    if (siteExamplesTests.includes(forbidden)) {
+      fail(`website lab executable evidence retains provider host path ${JSON.stringify(forbidden)}`)
+    }
+  }
+}
+
+function validateCapabilityGraduation(
+  graduation,
+  productionSources,
+  cliTests,
+  plan,
+  readme,
+  websiteSources,
+  formatExamples,
+  siteExamplesTests,
+) {
   if (!same(graduation, expectedCapabilityGraduation)) {
     fail('capability graduation contract drifted')
   }
@@ -1451,6 +1653,8 @@ function validateCapabilityGraduation(graduation, productionSources, cliTests, p
       fail(`README retains stale provider-era source claims: ${JSON.stringify(staleClaim)}`)
     }
   }
+
+  validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesTests)
 }
 
 function validateAdapter(adapter, index, plan) {
@@ -2643,6 +2847,15 @@ export function validateContract(
       'utf8',
     ),
     readme = fs.readFileSync(repositoryFile('README.md'), 'utf8'),
+    websiteSources = Object.fromEntries(websiteSourcePaths.map(relativePath => [
+      relativePath,
+      fs.readFileSync(repositoryFile(relativePath), 'utf8'),
+    ])),
+    formatExamples = loadJson('docs/src/data/format-examples.json'),
+    siteExamplesTests = fs.readFileSync(
+      repositoryFile('tests/preprocessors/product/site-examples.test.mjs'),
+      'utf8',
+    ),
     buildWorkflow = fs.readFileSync(repositoryFile('.github/workflows/build.yml'), 'utf8'),
     releaseWorkflow = fs.readFileSync(repositoryFile('.github/workflows/release.yml'), 'utf8'),
     buildFile = fs.readFileSync(repositoryFile('build.zig'), 'utf8'),
@@ -2866,6 +3079,9 @@ export function validateContract(
     cliTests,
     plan,
     readme,
+    websiteSources,
+    formatExamples,
+    siteExamplesTests,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

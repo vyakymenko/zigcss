@@ -29,7 +29,10 @@ export function Features() {
           </div>
           <h1 className="display-type text-5xl tracking-[-0.05em] sm:text-6xl">Current capability status</h1>
           <p className="mt-6 max-w-3xl text-xl leading-8 text-[#5f675f]">
-            This table describes the green 0.5 source snapshot. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future provider version; npm still serves the older CSS-only candidate.
+            This site describes the green native source snapshot. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version; npm still serves the older CSS-only candidate.
+          </p>
+          <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#6e776e]">
+            The compatibility table below still records the unpublished provider-backed reference candidate and will advance in the separate guides-and-compatibility gate.
           </p>
         </div>
 

@@ -40,7 +40,7 @@ export function FormatShowcase() {
             Five syntaxes. <span className="text-[#b7f34a]">One CSS destination.</span>
           </h2>
           <p className="max-w-2xl font-mono text-sm leading-7 text-[#8d9a8b] lg:justify-self-end">
-            Recorded compiler fixtures. Not a browser simulation. Select an input and inspect the exact provider, bytes, digest, and admitted CSS output.
+            Recorded compiler fixtures. Not a browser simulation. Select an input and inspect the exact native frontend, bytes, digest, and admitted CSS output.
           </p>
         </div>
 
@@ -80,7 +80,7 @@ export function FormatShowcase() {
             <div className="min-w-0 border-b border-[#b7f34a]/20 p-5 sm:p-8 xl:border-b-0 xl:border-r">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <p className="terminal-label">input {selected.extension}</p>
-                <span className="terminal-chip">{selected.provider}</span>
+                <span className="terminal-chip">{selected.frontend}</span>
               </div>
               <pre className="lab-code mt-6 min-h-72 overflow-x-auto border border-[#b7f34a]/10 bg-[#080d0a] p-5 text-sm leading-7 text-[#e5ece3]"><code data-language="text">{selected.input}</code><span className="block-caret ml-1 inline-block" aria-hidden="true" /></pre>
             </div>
@@ -125,7 +125,7 @@ export function FormatShowcase() {
 
         <div className="mt-8 flex flex-col gap-4 border-l border-[#b7f34a] pl-5 font-mono text-xs leading-6 text-[#81907f] sm:flex-row sm:items-center sm:justify-between">
           <p className="max-w-4xl">
-            CSS is native. Canonical preprocessor behavior remains version-pinned and fail-closed while SCSS, Sass, Less, and Stylus earn native graduation.
+            Every recorded fixture is executed by the source-built native ZigCSS binary. Reference providers judge differential tests only; they do not enter this lab path or production runtime.
           </p>
           <Link to="/docs/guide/format-compatibility" className="terminal-link flex-shrink-0 text-[#b7f34a]">
             format policy →

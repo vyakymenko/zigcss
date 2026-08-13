@@ -90,7 +90,7 @@ test('every tracked internal link and code fence has an owned validation path', 
   const siteFences = extractSiteCodeFences(repositoryRoot)
   assert.deepEqual(
     siteFences.map(fence => fence.language),
-    ['text', 'text', 'bash', 'bash', 'bash', 'css', 'bash', 'text'],
+    ['text', 'text', 'bash', 'bash', 'bash', 'scss', 'bash', 'text'],
   )
   assert.equal(siteFences[0].content, '{selected.input}')
   assert.equal(siteFences[1].content, '{selected.output}')
@@ -100,7 +100,7 @@ test('every tracked internal link and code fence has an owned validation path', 
   )
 })
 
-test('executable fence validation fails closed on invalid shell, JSON, CSS, Lua, and Vim input', () => {
+test('executable fence validation fails closed on invalid shell, JSON, CSS, SCSS, Lua, and Vim input', () => {
   const policy = { cssModuleDocuments: [] }
   const fence = (language, content) => ({
     source: 'invalid.md',
@@ -112,6 +112,7 @@ test('executable fence validation fails closed on invalid shell, JSON, CSS, Lua,
   assert.throws(() => validateExecutableFences([fence('bash', 'if then')], policy, repositoryRoot), /bash syntax exited/)
   assert.throws(() => validateExecutableFences([fence('json', '{')], policy, repositoryRoot), /JSON syntax/)
   assert.throws(() => validateExecutableFences([fence('css', '.broken { color }')], policy, repositoryRoot), /CSS example exited/)
+  assert.throws(() => validateExecutableFences([fence('scss', '$accent: ;\n.a { color: $accent; }')], policy, repositoryRoot), /SCSS example exited/)
   assert.throws(() => validateExecutableFences([fence('lua', 'local =')], policy, repositoryRoot), /Lua syntax exited/)
   assert.throws(() => validateExecutableFences([fence('vim', ':definitely-not-a-command')], policy, repositoryRoot), /Vim command syntax exited/)
 })

@@ -227,7 +227,7 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 - SCSS, indented Sass, Less, and Stylus: `native-differential` after parser/evaluator, pinned conformance, native product-routing, package, and five-target gates.
 - Production package closure: verified with zero production dependencies and no provider or host bytes; the compiler itself starts no child process and performs no network access.
 - Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
-- Public capability graduation: README and binary help now match native evidence; website, examples, guides/compatibility, and changelog/migration notes remain pending in their declared order.
+- Public capability graduation: README, binary help, and the website lab now match native evidence; examples, guides/compatibility, and changelog/migration notes remain pending in their declared order.
 - Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
 - Publication: fail-closed until the exact later native candidate passes every local, hosted, artifact, provenance, and consumer gate.
 

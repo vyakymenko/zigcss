@@ -129,7 +129,7 @@ export function Convergence() {
           Five languages in. <span className="text-[#b7f34a]">One deterministic compiler out.</span>
         </h2>
         <p className="mt-8 max-w-3xl font-mono text-sm leading-7 text-[#8d9a8b] sm:text-base">
-          Exact pinned frontends feed one fail-closed Zig core. It re-parses, validates, transforms, and emits the final CSS.
+          Native frontends feed one fail-closed Zig core. It validates and emits the final CSS; exact pinned providers remain development-only differential oracles.
         </p>
 
         <figure className="convergence-stage relative mt-16 h-[34rem] border-y border-[#b7f34a]/15 sm:h-[38rem]" aria-describedby="convergence-description">
@@ -145,14 +145,14 @@ export function Convergence() {
             <span className="terminal-node terminal-node-output">CSS</span>
           </div>
           <figcaption id="convergence-description" className="sr-only">
-            CSS, SCSS, indented Sass, Less, and Stylus converge through exact pinned language frontends into one ZigCSS core, which emits one deterministic CSS result.
+            CSS, SCSS, indented Sass, Less, and Stylus converge through native Zig language frontends into one ZigCSS core, which emits one deterministic CSS result.
           </figcaption>
         </figure>
 
         <div className="mt-8 grid gap-5 border-l border-[#b7f34a] pl-5 font-mono text-xs leading-6 text-[#7f8d7d] md:grid-cols-3">
-          <p><span className="text-[#b7f34a]">CSS</span> · native Zig path</p>
-          <p><span className="text-[#b7f34a]">SCSS / SASS</span> · Dart Sass 1.101.0</p>
-          <p><span className="text-[#b7f34a]">LESS / STYLUS</span> · Less 4.6.7 / Stylus 0.64.0</p>
+          <p><span className="text-[#b7f34a]">CSS</span> · native-graduated core</p>
+          <p><span className="text-[#b7f34a]">SCSS / SASS</span> · native Sass-family frontend</p>
+          <p><span className="text-[#b7f34a]">LESS / STYLUS</span> · native Less / Stylus frontends</p>
         </div>
       </div>
     </section>

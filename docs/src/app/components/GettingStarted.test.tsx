@@ -18,13 +18,13 @@ describe('GettingStarted', () => {
   it('shows the verified source build and test commands', () => {
     renderGettingStarted()
     expect(screen.getByText(/zig build test --summary all/)).toBeInTheDocument()
-    expect(screen.getByText(/zig-out\/bin\/zigcss input\.css -o output\.css/)).toBeInTheDocument()
+    expect(screen.getAllByText(/zig-out\/bin\/zigcss --syntax scss input\.scss -o output\.css --minify/)).toHaveLength(2)
   })
 
-  it('presents the exact canonical language and provider boundary', () => {
+  it('presents the exact native language and development-oracle boundary', () => {
     renderGettingStarted()
-    expect(screen.getByText(/css, scss, indented sass, less, and stylus/i)).toBeInTheDocument()
-    expect(screen.getByText(/dart sass 1\.101\.0.*less 4\.6\.7.*stylus 0\.64\.0/i)).toBeInTheDocument()
+    expect(screen.getByText(/the source snapshot compiles css, scss, indented sass, less, and stylus through self-contained native zig frontends/i)).toBeInTheDocument()
+    expect(screen.getByText(/dart sass 1\.101\.0.*less 4\.6\.7.*stylus 0\.64\.0.*development-only reference oracles/i)).toBeInTheDocument()
     expect(screen.getByText(/does not enable arbitrary plugins/i)).toBeInTheDocument()
   })
 

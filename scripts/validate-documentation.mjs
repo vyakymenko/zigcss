@@ -12,7 +12,7 @@ const { transform: parseCss } = require('lightningcss')
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 export const policyPath = path.join(repositoryRoot, 'docs', 'documentation-validation.json')
 
-const executableLanguages = new Set(['bash', 'css', 'json', 'lua', 'vim', 'zig'])
+const executableLanguages = new Set(['bash', 'css', 'scss', 'json', 'lua', 'vim', 'zig'])
 const presentationLanguages = new Set(['mermaid', 'text'])
 const siteRoutes = new Set(['/', '/docs', '/features', '/getting-started', '/playground'])
 
@@ -510,10 +510,12 @@ function validateEmittedCss(css, label) {
   }
 }
 
-function validateCss(fence, policy, root, tempRoot) {
-  const input = path.join(tempRoot, `${sha256(`${fence.source}:${fence.startLine}`).slice(0, 16)}.css`)
+function validateStylesheet(fence, policy, root, tempRoot) {
+  const syntax = fence.language
+  const label = `${fence.source}:${fence.startLine} ${syntax.toUpperCase()} example`
+  const input = path.join(tempRoot, `${sha256(`${fence.source}:${fence.startLine}`).slice(0, 16)}.${syntax}`)
   fs.writeFileSync(input, fence.content)
-  if (policy.cssModuleDocuments.includes(fence.source)) {
+  if (syntax === 'css' && policy.cssModuleDocuments.includes(fence.source)) {
     const driver = executablePath(root, 'zigcss-css-modules-test-driver')
     const result = run(driver, [input, `documentation/${path.basename(input)}`, '--minify'], {}, `${fence.source}:${fence.startLine} CSS Modules example`)
     let output
@@ -527,8 +529,8 @@ function validateCss(fence, policy, root, tempRoot) {
     return
   }
   const compiler = executablePath(root, 'zigcss')
-  const result = run(compiler, [input, '--syntax', 'css', '-o', '-'], {}, `${fence.source}:${fence.startLine} CSS example`)
-  validateEmittedCss(result.stdout, `${fence.source}:${fence.startLine} CSS example`)
+  const result = run(compiler, [input, '--syntax', syntax, '-o', '-'], {}, label)
+  validateEmittedCss(result.stdout, label)
 }
 
 function validateLua(fence, nvim, tempRoot) {
@@ -576,7 +578,9 @@ export function validateExecutableFences(fences, policy, root = repositoryRoot) 
     for (const fence of fences) {
       if (fence.language === 'bash') validateBash(fence)
       if (fence.language === 'json') validateJson(fence)
-      if (fence.language === 'css') validateCss(fence, policy, root, tempRoot)
+      if (fence.language === 'css' || fence.language === 'scss') {
+        validateStylesheet(fence, policy, root, tempRoot)
+      }
       if (fence.language === 'lua') validateLua(fence, nvim, tempRoot)
       if (fence.language === 'vim') validateVim(fence, nvim, tempRoot)
     }

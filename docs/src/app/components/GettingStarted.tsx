@@ -9,7 +9,7 @@ export function GettingStarted() {
           <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#b7f34a]">Get started</p>
           <h1 className="display-type mt-5 max-w-3xl text-5xl tracking-[-0.05em] sm:text-6xl">Start with any of five stylesheet languages.</h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-[#cbd4cc]">
-            The 0.5 source snapshot brings five canonical stylesheet inputs into one npm CLI and API, with exact provider versions and one strict ZigCSS output boundary.
+            The source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig frontends and one strict output boundary.
           </p>
         </div>
       </section>
@@ -39,10 +39,13 @@ export function GettingStarted() {
         </section>
 
         <section className="mt-10 border-l-4 border-[#7b493f] bg-[#f9f6ed] p-7 sm:p-8">
-          <h2 className="text-2xl font-semibold">Five canonical inputs, one bounded host</h2>
+          <h2 className="text-2xl font-semibold">Five native inputs, one self-contained compiler</h2>
           <p className="mt-4 text-lg font-semibold">CSS, SCSS, indented Sass, Less, and Stylus are admitted in the 0.5 source snapshot.</p>
           <p className="mt-2 leading-7 text-[#5f675f]">
-            CSS runs natively. SCSS and Sass run through Dart Sass 1.101.0; Less uses Less 4.6.7; Stylus uses Stylus 0.64.0. Every generated result must parse through ZigCSS before CSS is returned.
+            The native Sass-family, Less, and Stylus frontends evaluate complete stylesheets before recovery-disabled ZigCSS validation returns CSS.
+          </p>
+          <p className="mt-2 leading-7 text-[#5f675f]">
+            Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles; they do not run during compilation.
           </p>
           <p className="mt-3 leading-7 text-[#5f675f]">
             The default contract does not enable arbitrary plugins, custom functions, custom importers, hooks, JavaScript, or executable project code. Local imports require explicit confined roots.
@@ -57,29 +60,31 @@ export function GettingStarted() {
             <Terminal className="size-7 text-[#476f14]" />
             <h2 className="text-3xl font-semibold tracking-[-0.03em]">Build from source</h2>
           </div>
-          <p className="mt-5 text-[#5f675f]">Use Zig 0.15.2 and run: Node.js 20.19 or newer is also required for the canonical frontend host.</p>
+          <p className="mt-5 text-[#5f675f]">Use Zig 0.15.2 and run:</p>
+          <p className="mt-2 text-[#5f675f]">Stylesheet compilation itself requires no Node.js, provider process, network service, or runtime download.</p>
           <pre className="mt-5 overflow-x-auto border border-[#334139] bg-[#101914] p-5 text-sm leading-7 text-[#e5ece6]"><code data-language="bash">{`git clone https://github.com/vyakymenko/zigcss.git
 cd zigcss
-npm ci
 zig build
-zig build test --summary all`}</code></pre>
+zig build test --summary all
+zig-out/bin/zigcss --syntax scss input.scss -o output.css --minify`}</code></pre>
           <p className="mt-4 text-[#5f675f]">
-            The npm launcher <code className="bg-[#e2ded2] px-1.5 py-0.5 font-mono text-sm">node index.js</code> owns all five languages. The native <code className="bg-[#e2ded2] px-1.5 py-0.5 font-mono text-sm">zig-out/bin/zigcss</code> executable remains the CSS-only core.
+            The <code className="bg-[#e2ded2] px-1.5 py-0.5 font-mono text-sm">zig-out/bin/zigcss</code> executable owns all five languages. The package JavaScript wrapper only locates and invokes that binary; it does not host language semantics.
           </p>
         </section>
 
         <section className="mt-14 grid gap-7 lg:grid-cols-2">
           <div className="border border-[#bdb8aa] bg-[#f9f6ed] p-7">
-            <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#476f14]">input.css</p>
-            <pre className="mt-5 overflow-x-auto text-sm leading-7"><code data-language="css">{`.notice {
-  color: red;
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#476f14]">input.scss</p>
+            <pre className="mt-5 overflow-x-auto text-sm leading-7"><code data-language="scss">{`$accent: #b7f34a;
+.notice {
+  color: $accent;
 }`}</code></pre>
           </div>
           <div className="border border-[#334139] bg-[#101914] p-7 text-[#f7f3e8]">
             <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Run the local binary</p>
-            <pre className="mt-5 overflow-x-auto text-sm leading-7 text-[#dce5dd]"><code data-language="bash">zig-out/bin/zigcss input.css -o output.css</code></pre>
+            <pre className="mt-5 overflow-x-auto text-sm leading-7 text-[#dce5dd]"><code data-language="bash">zig-out/bin/zigcss --syntax scss input.scss -o output.css --minify</code></pre>
             <p className="mt-5 text-sm leading-6 text-[#9daaa0]">
-              This direct native command exercises the CSS core. Use <code className="font-mono">node index.js input.scss -o output.css --minify</code> to exercise the source snapshot&apos;s canonical preprocessor pipeline.
+              This direct command exercises the native Sass-family frontend and the same owned validation result used by the other native syntax routes.
             </p>
           </div>
         </section>

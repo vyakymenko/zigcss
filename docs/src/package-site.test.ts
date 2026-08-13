@@ -105,7 +105,16 @@ describe('consumer package website', () => {
 
     expect(read('docs/src/app/components/Home.tsx')).toMatch(/<FormatShowcase\s*\/>/)
     const showcase = read('docs/src/app/components/FormatShowcase.tsx')
-    for (const format of ['SCSS', 'Sass', 'Less', 'Stylus']) expect(showcase).toMatch(new RegExp(format, 'i'))
+    const examples = JSON.parse(read('docs/src/data/format-examples.json'))
+    expect(examples.map((example: { label: string }) => example.label)).toEqual(['CSS', 'SCSS', 'Sass', 'Less', 'Stylus'])
+    expect(examples.slice(1).map((example: { frontend: string }) => example.frontend)).toEqual([
+      'Native Sass frontend',
+      'Native Sass frontend',
+      'Native Less frontend',
+      'Native Stylus frontend',
+    ])
+    expect(showcase).toMatch(/selected\.frontend/)
+    expect(showcase).not.toMatch(/selected\.provider/)
     expect(showcase).toMatch(/recorded compiler output/i)
     expect(showcase).toMatch(/format-examples\.json/)
   })

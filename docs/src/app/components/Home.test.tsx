@@ -19,6 +19,7 @@ describe('Home', () => {
     expect(screen.getByText(/0\.5\.0-rc\.1.*experimental.*evaluate before production/i)).toBeInTheDocument()
     expect(screen.getByText(/green main is the 0\.5\.0-rc\.1 five-language source candidate/i)).toBeInTheDocument()
     expect(screen.getByText(/published zigcss@next is 0\.4\.0-rc\.3.*css-only surface/i)).toBeInTheDocument()
+    expect(screen.getByText(/^all five source inputs run through self-contained native zig frontends\. one self-contained compiler/i)).toBeInTheDocument()
   })
 
   it('puts the real install command and lab entry in the hero', () => {
@@ -44,11 +45,11 @@ describe('Home', () => {
     expect(screen.getByText('OWNED COMPILE RESULT')).toBeInTheDocument()
   })
 
-  it('marks the native endgame as unshipped and exposes real deployment surfaces', () => {
+  it('marks the native release as unshipped and exposes real deployment surfaces', () => {
     renderHome()
 
-    expect(screen.getByText('TARGET STATE · NOT SHIPPED')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /the providers were scaffolding/i })).toBeInTheDocument()
+    expect(screen.getByText('NATIVE SNAPSHOT · RELEASE NOT SHIPPED')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /the providers are oracles/i })).toBeInTheDocument()
     expect(screen.getByText(/one self-contained compiler\. zero production package dependencies/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /choose your entry point/i })).toBeInTheDocument()
     for (const target of ['Linux x64', 'Linux arm64', 'macOS x64', 'macOS arm64', 'Windows x64']) {

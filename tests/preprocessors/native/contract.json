@@ -647,7 +647,7 @@
       },
       {
         "id": "website",
-        "state": "pending",
+        "state": "verified",
         "closureEvidence": ["website claims and input/output lab execute the native product path"]
       },
       {
