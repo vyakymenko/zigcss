@@ -245,14 +245,39 @@ test('native package evidence CLI owns one exact finite input and create-only ou
 
 test('build aggregates every matching runner receipt before package verification', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/build.yml', import.meta.url), 'utf8')
-  assert.deepEqual(validateNativePackageEvidenceWorkflow(workflow), {
+  const expected = {
     targets: 5,
     downloadedArtifacts: 5,
     aggregateReceipts: 5,
-  })
+  }
+  assert.deepEqual(validateNativePackageEvidenceWorkflow(workflow), expected)
+
+  const provenanceDependency = [
+    '  native-provenance-evidence:',
+    '    name: Native Provenance ${{ matrix.target }}',
+    "    if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+    '    needs: build',
+  ].join('\n')
+  const aggregateDependency = [
+    '  native-package-evidence:',
+    '    name: Native Package Evidence',
+    '    needs: build',
+  ].join('\n')
+  assert.equal(workflow.split(provenanceDependency).length, 2)
+  assert.equal(workflow.split(aggregateDependency).length, 2)
+  assert.deepEqual(
+    validateNativePackageEvidenceWorkflow(workflow.replace(
+      provenanceDependency,
+      provenanceDependency.replace('    needs: build', '    needs: test'),
+    )),
+    expected,
+  )
 
   for (const changed of [
-    workflow.replace('    needs: build', '    needs: test'),
+    workflow.replace(
+      aggregateDependency,
+      aggregateDependency.replace('    needs: build', '    needs: test'),
+    ),
     workflow.replace('          pattern: zigcss-*', '          pattern: zigcss-x86_64-linux'),
     workflow.replace(
       '            --output native-package-evidence.json',
