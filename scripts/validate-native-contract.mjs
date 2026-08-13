@@ -793,7 +793,7 @@ export const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'consumer-validation',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'direct archives and offline installed packages compile all five syntaxes on all five targets',
       ]),
