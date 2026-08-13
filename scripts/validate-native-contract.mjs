@@ -629,6 +629,108 @@ const expectedPackageMigration = Object.freeze({
   ]),
 })
 
+const expectedCapabilityGraduation = Object.freeze({
+  ownerPackage: 'NATIVE-008',
+  releaseGapFamily: 'native-capability-graduation',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  terminalContract: Object.freeze({
+    adapters: Object.freeze(['scss', 'sass', 'less', 'stylus']),
+    surfaces: Object.freeze([
+      'machine-rows',
+      'binary-help',
+      'readme',
+      'website',
+      'examples',
+      'guides-and-compatibility',
+      'changelog-and-migration-notes',
+    ]),
+    pluginParity: false,
+  }),
+  gates: Object.freeze([
+    Object.freeze({
+      id: 'machine-rows',
+      state: 'verified',
+      closureEvidence: Object.freeze([
+        'all four native preprocessor conformance packages are verified',
+        'native product routing and zero-dependency packaging are verified',
+        'exact native source inventories are bound while public claims remain unchanged',
+      ]),
+    }),
+    Object.freeze({
+      id: 'binary-help',
+      state: 'pending',
+      closureEvidence: Object.freeze([
+        'stable native syntax selection and help agree with executable CLI tests',
+      ]),
+    }),
+    Object.freeze({
+      id: 'readme',
+      state: 'pending',
+      closureEvidence: Object.freeze([
+        'README describes the exact self-contained native source snapshot',
+      ]),
+    }),
+    Object.freeze({
+      id: 'website',
+      state: 'pending',
+      closureEvidence: Object.freeze([
+        'website claims and input/output lab execute the native product path',
+      ]),
+    }),
+    Object.freeze({
+      id: 'examples',
+      state: 'pending',
+      closureEvidence: Object.freeze([
+        'public examples compile through the native binary and Zig API',
+      ]),
+    }),
+    Object.freeze({
+      id: 'guides-and-compatibility',
+      state: 'pending',
+      closureEvidence: Object.freeze([
+        'machine capability rows and guides agree with native evidence',
+      ]),
+    }),
+    Object.freeze({
+      id: 'changelog-and-migration-notes',
+      state: 'pending',
+      closureEvidence: Object.freeze([
+        'changelog and migration notes retain oracle and plugin boundaries',
+      ]),
+    }),
+  ]),
+})
+
+const expectedDifferentialAdapterSources = Object.freeze({
+  scss: Object.freeze([
+    'src/preprocessor/sass.zig',
+    'src/preprocessor/sass_evaluator.zig',
+    'src/preprocessor/sass_arguments.zig',
+    'src/preprocessor/sass_numeric.zig',
+    'src/preprocessor/sass_color.zig',
+    'src/preprocessor/sass_string.zig',
+    'src/preprocessor/sass_selector.zig',
+  ]),
+  sass: Object.freeze([
+    'src/preprocessor/sass.zig',
+    'src/preprocessor/sass_evaluator.zig',
+    'src/preprocessor/sass_arguments.zig',
+    'src/preprocessor/sass_numeric.zig',
+    'src/preprocessor/sass_color.zig',
+    'src/preprocessor/sass_string.zig',
+    'src/preprocessor/sass_selector.zig',
+  ]),
+  less: Object.freeze([
+    'src/preprocessor/less.zig',
+    'src/preprocessor/less_evaluator.zig',
+  ]),
+  stylus: Object.freeze([
+    'src/preprocessor/stylus.zig',
+    'src/preprocessor/stylus_evaluator.zig',
+  ]),
+})
+
 const expectedReferenceDevelopmentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
@@ -1258,11 +1360,11 @@ function validateAdapter(adapter, index, plan) {
       fail('CSS native source inventory drifted')
     }
   } else {
-    if (adapter.current !== 'reference-only') {
-      fail(`${adapter.id} must remain reference-only until its native graduation package`)
+    if (adapter.current !== 'native-differential') {
+      fail(`${adapter.id} must remain native-differential until its public capability package closes`)
     }
-    if (adapter.nativeSources.length !== 0) {
-      fail(`${adapter.id} cannot claim native sources before native graduation`)
+    if (!same(adapter.nativeSources, expectedDifferentialAdapterSources[adapter.id])) {
+      fail(`${adapter.id} native source inventory drifted`)
     }
   }
 }
@@ -1307,8 +1409,8 @@ function validateImplementation(implementation, index, contract, plan) {
   for (const adapterId of implementation.adapters) {
     const adapter = contract.adapters.find(candidate => candidate.id === adapterId)
     if (adapter === undefined) fail(`${label} references unknown adapter ${adapterId}`)
-    if (adapter.current !== 'reference-only') {
-      fail(`${label} cannot coexist with a prematurely graduated ${adapterId} adapter`)
+    if (adapter.current !== 'native-differential') {
+      fail(`${label} requires the bounded native-differential ${adapterId} adapter state`)
     }
   }
   for (const source of implementation.nativeSources) repositoryFile(source)
@@ -2541,14 +2643,17 @@ export function validateContract(
       'stylusConformance',
       'productRouting',
       'packageMigration',
+      'capabilityGraduation',
       'foundations',
       'implementations',
       'adapters',
     ],
     'root',
   )
-  if (contract.schemaVersion !== 7) fail('schemaVersion must be 7')
-  if (contract.state !== 'native-foundation') fail('state must remain native-foundation during Milestone 10')
+  if (contract.schemaVersion !== 8) fail('schemaVersion must be 8')
+  if (contract.state !== 'native-differential') {
+    fail('state must remain native-differential until NATIVE-008 closes')
+  }
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
   if (!same(contract.nativePublicationAuthority, expectedPublicationAuthority)) {
@@ -2631,6 +2736,15 @@ export function validateContract(
     releaseConsumerTests,
     releaseSmokePreloadSource,
     productionSources,
+  )
+  if (!same(contract.capabilityGraduation, expectedCapabilityGraduation)) {
+    fail('capability graduation contract drifted')
+  }
+  requireText(plan, '`NATIVE-008` | Graduate native rows in machine metadata', 'NATIVE-008 plan package')
+  requireText(
+    readme,
+    'the four preprocessor frontends are moving through private native conformance gates',
+    'pre-graduation README claim boundary',
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

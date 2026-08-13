@@ -20,8 +20,8 @@ function clone(value) {
 
 test('accepts the bounded native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 7)
-  assert.equal(contract.state, 'native-foundation')
+  assert.equal(contract.schemaVersion, 8)
+  assert.equal(contract.state, 'native-differential')
   assert.equal(contract.nativeReleaseReady, false)
   assert.deepEqual(contract.nativePublicationAuthority, {
     authorized: true,
@@ -57,6 +57,104 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     'less',
     'stylus',
   ])
+  assert.deepEqual(
+    contract.adapters.slice(1).map(adapter => ({
+      id: adapter.id,
+      current: adapter.current,
+      nativeSources: adapter.nativeSources,
+    })),
+    [{
+      id: 'scss',
+      current: 'native-differential',
+      nativeSources: [
+        'src/preprocessor/sass.zig',
+        'src/preprocessor/sass_evaluator.zig',
+        'src/preprocessor/sass_arguments.zig',
+        'src/preprocessor/sass_numeric.zig',
+        'src/preprocessor/sass_color.zig',
+        'src/preprocessor/sass_string.zig',
+        'src/preprocessor/sass_selector.zig',
+      ],
+    }, {
+      id: 'sass',
+      current: 'native-differential',
+      nativeSources: [
+        'src/preprocessor/sass.zig',
+        'src/preprocessor/sass_evaluator.zig',
+        'src/preprocessor/sass_arguments.zig',
+        'src/preprocessor/sass_numeric.zig',
+        'src/preprocessor/sass_color.zig',
+        'src/preprocessor/sass_string.zig',
+        'src/preprocessor/sass_selector.zig',
+      ],
+    }, {
+      id: 'less',
+      current: 'native-differential',
+      nativeSources: [
+        'src/preprocessor/less.zig',
+        'src/preprocessor/less_evaluator.zig',
+      ],
+    }, {
+      id: 'stylus',
+      current: 'native-differential',
+      nativeSources: [
+        'src/preprocessor/stylus.zig',
+        'src/preprocessor/stylus_evaluator.zig',
+      ],
+    }],
+  )
+  assert.deepEqual(contract.capabilityGraduation, {
+    ownerPackage: 'NATIVE-008',
+    releaseGapFamily: 'native-capability-graduation',
+    state: 'in-progress',
+    packageState: 'in-progress',
+    terminalContract: {
+      adapters: ['scss', 'sass', 'less', 'stylus'],
+      surfaces: [
+        'machine-rows',
+        'binary-help',
+        'readme',
+        'website',
+        'examples',
+        'guides-and-compatibility',
+        'changelog-and-migration-notes',
+      ],
+      pluginParity: false,
+    },
+    gates: [{
+      id: 'machine-rows',
+      state: 'verified',
+      closureEvidence: [
+        'all four native preprocessor conformance packages are verified',
+        'native product routing and zero-dependency packaging are verified',
+        'exact native source inventories are bound while public claims remain unchanged',
+      ],
+    }, {
+      id: 'binary-help',
+      state: 'pending',
+      closureEvidence: ['stable native syntax selection and help agree with executable CLI tests'],
+    }, {
+      id: 'readme',
+      state: 'pending',
+      closureEvidence: ['README describes the exact self-contained native source snapshot'],
+    }, {
+      id: 'website',
+      state: 'pending',
+      closureEvidence: ['website claims and input/output lab execute the native product path'],
+    }, {
+      id: 'examples',
+      state: 'pending',
+      closureEvidence: ['public examples compile through the native binary and Zig API'],
+    }, {
+      id: 'guides-and-compatibility',
+      state: 'pending',
+      closureEvidence: ['machine capability rows and guides agree with native evidence'],
+    }, {
+      id: 'changelog-and-migration-notes',
+      state: 'pending',
+      closureEvidence: ['changelog and migration notes retain oracle and plugin boundaries'],
+    }],
+  })
   assert.deepEqual(contract.implementations.map(implementation => implementation.id), [
     'native-sass-parser',
     'native-sass-semantic-core',
@@ -1197,18 +1295,41 @@ test('rejects external modules and escaped files in the native Zig import closur
   }
 })
 
-test('rejects premature native adapter and release claims', () => {
+test('binds differential native adapter rows while release claims remain closed', () => {
   const adapterClaim = clone(loadContract())
   adapterClaim.adapters[1].current = 'native-graduated'
-  assert.throws(() => validateContract(adapterClaim), /must remain reference-only/)
+  assert.throws(() => validateContract(adapterClaim), /must remain native-differential/)
+
+  const staleAdapter = clone(loadContract())
+  staleAdapter.adapters[1].current = 'reference-only'
+  assert.throws(() => validateContract(staleAdapter), /must remain native-differential/)
 
   const releaseClaim = clone(loadContract())
   releaseClaim.nativeReleaseReady = true
   assert.throws(() => validateContract(releaseClaim), /native release must remain fail-closed/)
 
   const sourceClaim = clone(loadContract())
-  sourceClaim.adapters[1].nativeSources = ['src/preprocessor/lexer.zig']
-  assert.throws(() => validateContract(sourceClaim), /cannot claim native sources/)
+  sourceClaim.adapters[1].nativeSources.pop()
+  assert.throws(() => validateContract(sourceClaim), /native source inventory drifted/)
+})
+
+test('binds the finite NATIVE-008 capability graduation terminal', () => {
+  for (const mutate of [
+    graduation => { graduation.ownerPackage = 'NATIVE-009' },
+    graduation => { graduation.releaseGapFamily = 'renamed-capability-family' },
+    graduation => { graduation.state = 'closed' },
+    graduation => { graduation.packageState = 'verified' },
+    graduation => graduation.terminalContract.adapters.pop(),
+    graduation => graduation.terminalContract.surfaces.reverse(),
+    graduation => { graduation.terminalContract.pluginParity = true },
+    graduation => { graduation.gates[0].state = 'pending' },
+    graduation => { graduation.gates[1].state = 'verified' },
+    graduation => graduation.gates.push(structuredClone(graduation.gates[0])),
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed.capabilityGraduation)
+    assert.throws(() => validateContract(changed), /capability graduation contract drifted/)
+  }
 })
 
 test('binds the owner-authorized native publication boundary', () => {
@@ -1235,7 +1356,7 @@ test('binds implemented native foundation sources and focused test inventories',
   assert.throws(() => validateContract(ownerChanged), /foundation.*inventory drifted/)
 })
 
-test('binds unavailable native rows and the pre-graduation product bridges', () => {
+test('binds internal native implementations behind the differential product bridge', () => {
   for (const index of loadContract().implementations.keys()) {
     const publicChanged = clone(loadContract())
     publicChanged.implementations[index].publicAvailable = true
@@ -1630,7 +1751,7 @@ test('binds the finite native product routing inventory and verified closed pack
 
 test('owns the finite native zero-dependency package migration contract', () => {
   const contract = loadContract()
-  assert.equal(contract.schemaVersion, 7)
+  assert.equal(contract.schemaVersion, 8)
   assert.deepEqual(contract.packageMigration, {
     ownerPackage: 'NATIVE-007',
     releaseGapFamily: 'native-zero-dependency-package',

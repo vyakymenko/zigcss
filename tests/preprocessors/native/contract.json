@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 7,
-  "state": "native-foundation",
+  "schemaVersion": 8,
+  "state": "native-differential",
   "nativeReleaseReady": false,
   "nativeReleaseVersion": null,
   "nativePublicationAuthority": {
@@ -607,6 +607,66 @@
       }
     ]
   },
+  "capabilityGraduation": {
+    "ownerPackage": "NATIVE-008",
+    "releaseGapFamily": "native-capability-graduation",
+    "state": "in-progress",
+    "packageState": "in-progress",
+    "terminalContract": {
+      "adapters": ["scss", "sass", "less", "stylus"],
+      "surfaces": [
+        "machine-rows",
+        "binary-help",
+        "readme",
+        "website",
+        "examples",
+        "guides-and-compatibility",
+        "changelog-and-migration-notes"
+      ],
+      "pluginParity": false
+    },
+    "gates": [
+      {
+        "id": "machine-rows",
+        "state": "verified",
+        "closureEvidence": [
+          "all four native preprocessor conformance packages are verified",
+          "native product routing and zero-dependency packaging are verified",
+          "exact native source inventories are bound while public claims remain unchanged"
+        ]
+      },
+      {
+        "id": "binary-help",
+        "state": "pending",
+        "closureEvidence": ["stable native syntax selection and help agree with executable CLI tests"]
+      },
+      {
+        "id": "readme",
+        "state": "pending",
+        "closureEvidence": ["README describes the exact self-contained native source snapshot"]
+      },
+      {
+        "id": "website",
+        "state": "pending",
+        "closureEvidence": ["website claims and input/output lab execute the native product path"]
+      },
+      {
+        "id": "examples",
+        "state": "pending",
+        "closureEvidence": ["public examples compile through the native binary and Zig API"]
+      },
+      {
+        "id": "guides-and-compatibility",
+        "state": "pending",
+        "closureEvidence": ["machine capability rows and guides agree with native evidence"]
+      },
+      {
+        "id": "changelog-and-migration-notes",
+        "state": "pending",
+        "closureEvidence": ["changelog and migration notes retain oracle and plugin boundaries"]
+      }
+    ]
+  },
   "foundations": [
     {
       "id": "shared-lossless-lexer",
@@ -1131,31 +1191,53 @@
     },
     {
       "id": "scss",
-      "current": "reference-only",
+      "current": "native-differential",
       "target": "native-graduated",
       "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
-      "nativeSources": []
+      "nativeSources": [
+        "src/preprocessor/sass.zig",
+        "src/preprocessor/sass_evaluator.zig",
+        "src/preprocessor/sass_arguments.zig",
+        "src/preprocessor/sass_numeric.zig",
+        "src/preprocessor/sass_color.zig",
+        "src/preprocessor/sass_string.zig",
+        "src/preprocessor/sass_selector.zig"
+      ]
     },
     {
       "id": "sass",
-      "current": "reference-only",
+      "current": "native-differential",
       "target": "native-graduated",
       "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
-      "nativeSources": []
+      "nativeSources": [
+        "src/preprocessor/sass.zig",
+        "src/preprocessor/sass_evaluator.zig",
+        "src/preprocessor/sass_arguments.zig",
+        "src/preprocessor/sass_numeric.zig",
+        "src/preprocessor/sass_color.zig",
+        "src/preprocessor/sass_string.zig",
+        "src/preprocessor/sass_selector.zig"
+      ]
     },
     {
       "id": "less",
-      "current": "reference-only",
+      "current": "native-differential",
       "target": "native-graduated",
       "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NLESS-010", "NLESS-011", "NLESS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
-      "nativeSources": []
+      "nativeSources": [
+        "src/preprocessor/less.zig",
+        "src/preprocessor/less_evaluator.zig"
+      ]
     },
     {
       "id": "stylus",
-      "current": "reference-only",
+      "current": "native-differential",
       "target": "native-graduated",
       "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSTYLUS-010", "NSTYLUS-011", "NSTYLUS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
-      "nativeSources": []
+      "nativeSources": [
+        "src/preprocessor/stylus.zig",
+        "src/preprocessor/stylus_evaluator.zig"
+      ]
     }
   ]
 }
