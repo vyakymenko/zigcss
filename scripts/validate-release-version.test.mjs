@@ -114,10 +114,10 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
 
   const changelog = cloneSources()
   replace(changelog, 'CHANGELOG.md', 'Target release: `0.6.0-rc.2`', 'Target release: `0.6.0`')
-  assert.throws(() => validateReleaseSources(changelog), /unreleased changelog target/)
+  assert.throws(() => validateReleaseSources(changelog), /published changelog target/)
 
   const docs = cloneSources()
-  replace(docs, 'README.md', 'Source candidate: 0.6.0-rc.2', 'Source candidate: 9.9.9')
+  replace(docs, 'README.md', 'Native prerelease: 0.6.0-rc.2', 'Native prerelease: 9.9.9')
   assert.throws(() => validateReleaseSources(docs), /README release claims/)
 
   const npmGuide = cloneSources()

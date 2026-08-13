@@ -670,8 +670,8 @@
   "releaseGraduation": {
     "ownerPackage": "NATIVE-009",
     "releaseGapFamily": "native-release-evidence",
-    "state": "candidate-ready",
-    "packageState": "in-progress",
+    "state": "closed",
+    "packageState": "verified",
     "candidateVersion": "0.6.0-rc.2",
     "candidateTag": "v0.6.0-rc.2",
     "candidateSelection": {
@@ -682,6 +682,25 @@
       "npmPackage": "zigcss",
       "npmVersionStateAtSelection": "absent",
       "observedPublishedNpmVersions": ["0.2.0", "0.2.1", "0.3.0", "0.4.0-rc.3"]
+    },
+    "publicationEvidence": {
+      "tagCommit": "b63e190f7edeccd829abe34bfb96d9e1a8a320e2",
+      "workflowRunId": 31694233958,
+      "workflowAttempt": 1,
+      "workflowConclusion": "success",
+      "workflowCompletedAt": "2026-08-13T11:13:44Z",
+      "githubReleaseId": 369856953,
+      "githubPrerelease": true,
+      "githubDraft": false,
+      "githubPublishedAt": "2026-08-13T11:13:25Z",
+      "githubAssetCount": 25,
+      "assetsPerTarget": 5,
+      "npmVersion": "0.6.0-rc.2",
+      "npmDistTag": "next",
+      "npmLatest": "0.3.0",
+      "npmFileCount": 7,
+      "npmIntegrity": "sha512-Vm2rXUNvfDADtAyuuMeLwKZh+SWqWKJp1nwNMTi/b1RCAMGFO7wAPCAAQlfL1YBZ59WTb6+kBFnA+Gd6Ckjuyw==",
+      "npmProvenancePredicateType": "https://slsa.dev/provenance/v1"
     },
     "terminalContract": {
       "syntaxes": ["css", "scss", "sass", "less", "stylus"],
@@ -715,7 +734,7 @@
         "evidenceRequirements": [
           "finite local hosted release artifact provenance consumer and publication surfaces are machine-bound",
           "five native syntax and target inventories are resource-derived",
-          "candidate version and tag are bound to the release-ready interlock while immutable publication remains pending"
+          "candidate version and tag were bound to the release-ready interlock before immutable publication"
         ]
       },
       {
@@ -777,9 +796,10 @@
       },
       {
         "id": "tag-workflow-publication",
-        "state": "pending",
+        "state": "verified",
         "evidenceRequirements": [
-          "one immutable tag produces one GitHub prerelease and the exact npm next publication"
+          "one immutable tag produces one GitHub prerelease with five native archives and 25 release assets",
+          "npm 0.6.0-rc.2 is published on next with provenance while latest remains stable"
         ]
       }
     ]

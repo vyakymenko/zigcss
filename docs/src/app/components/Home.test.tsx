@@ -17,8 +17,8 @@ describe('Home', () => {
     expect(screen.getByRole('heading', { name: /exact in\. deterministic out\. denied by default/i })).toBeInTheDocument()
     expect(screen.getByText('Compile CSS. Keep the meaning.')).toBeInTheDocument()
     expect(screen.getByText(/0\.6\.0-rc\.2.*experimental.*evaluate before production/i)).toBeInTheDocument()
-    expect(screen.getByText(/release-ready 0\.6\.0-rc\.2 candidate remains unpublished pending its immutable tag workflow/i)).toBeInTheDocument()
-    expect(screen.getByText(/published zigcss@next is 0\.4\.0-rc\.3.*css-only surface/i)).toBeInTheDocument()
+    expect(screen.getByText(/version 0\.6\.0-rc\.2 is published from one immutable tag as a GitHub prerelease and on npm next/i)).toBeInTheDocument()
+    expect(screen.getByText(/npm latest remains stable/i)).toBeInTheDocument()
     expect(screen.getByText(/^all five source inputs run through self-contained native zig frontends\. one self-contained compiler/i)).toBeInTheDocument()
   })
 
@@ -45,10 +45,10 @@ describe('Home', () => {
     expect(screen.getByText('OWNED COMPILE RESULT')).toBeInTheDocument()
   })
 
-  it('marks the native release as unshipped and exposes real deployment surfaces', () => {
+  it('marks the native prerelease as published and exposes real deployment surfaces', () => {
     renderHome()
 
-    expect(screen.getByText('NATIVE SNAPSHOT · RELEASE NOT SHIPPED')).toBeInTheDocument()
+    expect(screen.getByText('NATIVE PRERELEASE · PUBLISHED ON NEXT')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /the providers are oracles/i })).toBeInTheDocument()
     expect(screen.getByText(/one self-contained compiler\. zero production package dependencies/i)).toBeInTheDocument()
     expect(screen.getByText(/nativeReleaseReady: true.*0\.6\.0-rc\.2/i)).toBeInTheDocument()

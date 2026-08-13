@@ -13,13 +13,13 @@ const deploymentModes = [
     id: "npm",
     label: "npm",
     code: `${installCommand}\nnpx zigcss input.css -o output.css --minify`,
-    note: "Published next is 0.4.0-rc.3 and exposes the earlier CSS-only surface.",
+    note: "Published next is 0.6.0-rc.2 and exposes the self-contained five-language surface.",
   },
   {
     id: "source",
     label: "from source",
     code: "zig build\nzig-out/bin/zigcss --syntax scss input.scss -o output.css --minify",
-    note: "The native five-language 0.6.0-rc.2 candidate is release-ready and unpublished; no provider runtime is used.",
+    note: "The native five-language 0.6.0-rc.2 prerelease is published; no provider runtime is used.",
   },
   {
     id: "zig",
@@ -152,7 +152,7 @@ function Endgame() {
       <div className="relative mx-auto max-w-[96rem] px-5 py-28 sm:px-8 md:py-44 lg:px-12">
         <div className="flex flex-wrap items-center justify-between gap-5">
           <p className="gate-label">── GATE 07 · ADR-013 ──</p>
-          <span className="target-chip">NATIVE SNAPSHOT · RELEASE NOT SHIPPED</span>
+          <span className="target-chip">NATIVE PRERELEASE · PUBLISHED ON NEXT</span>
         </div>
         <h2 id="endgame-title" className="display-type mt-10 max-w-6xl text-[clamp(3.8rem,9vw,9rem)] leading-[0.8] tracking-[-0.08em]">
           The providers are <span className="text-[#b7f34a]">oracles.</span>
@@ -176,8 +176,8 @@ function Endgame() {
           <div className="corridor-arrow" aria-hidden="true">→</div>
           <article className="endgame-target">
             <span>RELEASE GATE</span>
-            <strong>RELEASE READY</strong>
-            <p>nativeReleaseReady: true · 0.6.0-rc.2 · tag pending</p>
+            <strong>PUBLICATION VERIFIED</strong>
+            <p>nativeReleaseReady: true · 0.6.0-rc.2 · publication verified</p>
           </article>
         </div>
       </div>
@@ -276,7 +276,7 @@ export function Home() {
         <div className="perspective-horizon" aria-hidden="true" />
         <div className="hero-glow" aria-hidden="true" />
         <div className="relative mx-auto flex min-h-[calc(100svh-4rem)] max-w-[96rem] flex-col justify-center px-5 py-20 sm:px-8 md:py-28 lg:px-12">
-          <p className="gate-label">TERMINAL 00 · ZIGCSS SOURCE CANDIDATE</p>
+          <p className="gate-label">TERMINAL 00 · ZIGCSS NATIVE PRERELEASE</p>
           <div className="experimental-chip mt-7 w-fit">⚠ 0.6.0-rc.2 · EXPERIMENTAL · evaluate before production</div>
           <h1 id="hero-title" className="hero-display display-type mt-9 max-w-[90rem] text-[clamp(4.1rem,12vw,12rem)] leading-[0.74] tracking-[-0.085em]">
             Exact in.<br /><span>Deterministic out.</span><br />Denied by default.
@@ -285,7 +285,7 @@ export function Home() {
             <div>
               <p className="max-w-3xl text-xl leading-8 text-[#cdd6cb] sm:text-2xl">Compile CSS. Keep the meaning.</p>
               <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#81907f] sm:text-sm">
-                An experimental self-contained five-language compiler written in Zig. The release-ready 0.6.0-rc.2 candidate remains unpublished pending its immutable tag workflow. Published zigcss@next is 0.4.0-rc.3 with the earlier CSS-only surface. All five source inputs run through self-contained native Zig frontends.
+                An experimental self-contained five-language compiler written in Zig. Version 0.6.0-rc.2 is published from one immutable tag as a GitHub prerelease and on npm next. npm latest remains stable. All five source inputs run through self-contained native Zig frontends.
               </p>
             </div>
             <a href="#convergence" className="terminal-link justify-self-start font-mono text-sm uppercase tracking-[0.16em] text-[#b7f34a] lg:justify-self-end">five inputs converge ↓</a>

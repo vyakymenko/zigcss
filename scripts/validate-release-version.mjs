@@ -158,15 +158,15 @@ export function validateReleaseSources(sources) {
   expectEqual(nativeContract.state, 'native-graduated', 'native migration state')
   expectEqual(nativeContract.nativeReleaseReady, true, 'native release interlock')
   expectEqual(nativeContract.nativeReleaseVersion, version, 'graduated native release version')
-  expectEqual(nativeContract.releaseGraduation?.state, 'candidate-ready', 'native release candidate state')
-  expectEqual(nativeContract.releaseGraduation?.packageState, 'in-progress', 'native publication state')
+  expectEqual(nativeContract.releaseGraduation?.state, 'closed', 'native release candidate state')
+  expectEqual(nativeContract.releaseGraduation?.packageState, 'verified', 'native publication state')
   expectEqual(nativeContract.adapters?.length, 5, 'native adapter inventory')
   for (const adapter of nativeContract.adapters ?? []) {
     expectEqual(adapter.current, 'native-graduated', `${adapter.id} native adapter state`)
   }
   expectEqual(
     nativeContract.releaseGraduation?.gates?.find(gate => gate.id === 'tag-workflow-publication')?.state,
-    'pending',
+    'verified',
     'native tag workflow publication gate',
   )
 
@@ -239,16 +239,20 @@ export function validateReleaseSources(sources) {
   const status = sources.get('docs/src/content/docs/guide/status.md')
   expectLiteralCount(readme, version, 3, 'README release claims')
   expectLiteralCount(sources.get('NPM_PUBLISH.md'), version, 2, 'npm publishing guide release claims')
-  expectLiteralCount(status, version, 5, 'status guide release claims')
+  expectLiteralCount(status, version, 11, 'status guide release claims')
   expectLiteralCount(sources.get('docs/src/content/docs/guide/build-from-source.md'), version, 1, 'build guide release claims')
   expectLiteralCount(sources.get('docs/src/app/components/GettingStarted.tsx'), version, 1, 'getting-started release claims')
-  expectLiteralCount(sources.get('docs/src/app/components/Home.tsx'), version, 4, 'homepage release claims')
+  expectLiteralCount(sources.get('docs/src/app/components/Home.tsx'), version, 5, 'homepage release claims')
   expectLiteralCount(sources.get('neovim-config/README.md'), version, 2, 'Neovim release claims')
   expectContains(readme, `Marketplace version ${vscodeVersion}`, 'README VS Code mapping')
   expectContains(status, `Marketplace version ${vscodeVersion}`, 'status VS Code mapping')
 
   const changelog = sources.get('CHANGELOG.md')
-  expectContains(changelog, `Target release: \`${version}\` (selected, not published).`, 'unreleased changelog target')
+  expectContains(
+    changelog,
+    `Target release: \`${version}\` (published as a GitHub prerelease and on npm \`next\`).`,
+    'published changelog target',
+  )
   if (/ZigCSS 0\.3 (?:is|and)/.test(changelog)) fail('changelog recovery note still claims the 0.3 line is current')
 
   const buildWorkflow = sources.get('.github/workflows/build.yml')

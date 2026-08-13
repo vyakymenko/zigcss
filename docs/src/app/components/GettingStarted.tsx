@@ -18,7 +18,7 @@ export function GettingStarted() {
         <div className="mb-10 flex gap-4 border border-[#d0a43f] bg-[#fff2bf] p-5 text-[#4d3a0e]">
           <AlertTriangle className="mt-0.5 size-5 flex-shrink-0" />
           <p className="leading-7">
-            The public npm release candidate is still 0.4.0-rc.3 and CSS-only. The five-language 0.6.0-rc.2 candidate is release-ready but remains experimental and unpublished pending its immutable tag workflow; evaluate before production.
+            The five-language 0.6.0-rc.2 prerelease is published on npm next and remains experimental; npm latest stays on the stable 0.3.0 line. Evaluate before production.
           </p>
         </div>
 
@@ -27,7 +27,7 @@ export function GettingStarted() {
             <Package className="size-7 text-[#476f14]" />
             <h2 className="mt-5 text-3xl font-semibold tracking-[-0.03em]">Install from npm</h2>
             <p className="mt-4 leading-7 text-[#5f675f]">
-              This release candidate installs the matching native binary for your OS and architecture. Its npm bytes predate the five-language product surface shown below.
+              This release candidate installs the matching native binary for your OS and architecture. Its npm package exposes the five-language product surface shown below.
             </p>
           </div>
           <div className="bg-[#101914] p-7 text-[#f7f3e8] sm:p-9">

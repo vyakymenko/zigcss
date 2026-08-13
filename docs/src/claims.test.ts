@@ -44,7 +44,7 @@ describe('public recovery claims', () => {
 
   test('marks package, compiler documentation, and editor integration experimental', () => {
     expect(JSON.parse(read('package.json')).description).toMatch(/experimental/i)
-    expect(read('README.md')).toMatch(/experimental release candidate/i)
+    expect(read('README.md')).toMatch(/experimental prerelease/i)
     expect(JSON.parse(read('vscode-extension/package.json')).description).toMatch(/experimental/i)
     expect(read('Formula/zigcss.rb')).toMatch(/experimental/i)
   })

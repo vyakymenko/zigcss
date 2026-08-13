@@ -706,8 +706,8 @@ const expectedCapabilityGraduation = Object.freeze({
 export const expectedReleaseGraduation = Object.freeze({
   ownerPackage: 'NATIVE-009',
   releaseGapFamily: 'native-release-evidence',
-  state: 'candidate-ready',
-  packageState: 'in-progress',
+  state: 'closed',
+  packageState: 'verified',
   candidateVersion: '0.6.0-rc.2',
   candidateTag: 'v0.6.0-rc.2',
   candidateSelection: Object.freeze({
@@ -718,6 +718,25 @@ export const expectedReleaseGraduation = Object.freeze({
     npmPackage: 'zigcss',
     npmVersionStateAtSelection: 'absent',
     observedPublishedNpmVersions: Object.freeze(['0.2.0', '0.2.1', '0.3.0', '0.4.0-rc.3']),
+  }),
+  publicationEvidence: Object.freeze({
+    tagCommit: 'b63e190f7edeccd829abe34bfb96d9e1a8a320e2',
+    workflowRunId: 31694233958,
+    workflowAttempt: 1,
+    workflowConclusion: 'success',
+    workflowCompletedAt: '2026-08-13T11:13:44Z',
+    githubReleaseId: 369856953,
+    githubPrerelease: true,
+    githubDraft: false,
+    githubPublishedAt: '2026-08-13T11:13:25Z',
+    githubAssetCount: 25,
+    assetsPerTarget: 5,
+    npmVersion: '0.6.0-rc.2',
+    npmDistTag: 'next',
+    npmLatest: '0.3.0',
+    npmFileCount: 7,
+    npmIntegrity: 'sha512-Vm2rXUNvfDADtAyuuMeLwKZh+SWqWKJp1nwNMTi/b1RCAMGFO7wAPCAAQlfL1YBZ59WTb6+kBFnA+Gd6Ckjuyw==',
+    npmProvenancePredicateType: 'https://slsa.dev/provenance/v1',
   }),
   terminalContract: Object.freeze({
     syntaxes: Object.freeze(['css', 'scss', 'sass', 'less', 'stylus']),
@@ -745,7 +764,7 @@ export const expectedReleaseGraduation = Object.freeze({
       evidenceRequirements: Object.freeze([
         'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
         'five native syntax and target inventories are resource-derived',
-        'candidate version and tag are bound to the release-ready interlock while immutable publication remains pending',
+        'candidate version and tag were bound to the release-ready interlock before immutable publication',
       ]),
     }),
     Object.freeze({
@@ -807,9 +826,10 @@ export const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'tag-workflow-publication',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
-        'one immutable tag produces one GitHub prerelease and the exact npm next publication',
+        'one immutable tag produces one GitHub prerelease with five native archives and 25 release assets',
+        'npm 0.6.0-rc.2 is published on next with provenance while latest remains stable',
       ]),
     }),
   ]),
@@ -1555,9 +1575,9 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
     'zig-out/bin/zigcss --syntax scss input.scss -o output.css --minify',
     'website native source command',
   )
-  requireText(home, 'NATIVE SNAPSHOT · RELEASE NOT SHIPPED', 'website unpublished native release boundary')
+  requireText(home, 'NATIVE PRERELEASE · PUBLISHED ON NEXT', 'website published native release boundary')
   requireText(home, 'The providers are ', 'website development-oracle heading')
-  requireText(home, 'nativeReleaseReady: true · 0.6.0-rc.2 · tag pending', 'website release-ready native interlock')
+  requireText(home, 'nativeReleaseReady: true · 0.6.0-rc.2 · publication verified', 'website published native interlock')
   requireText(home, 'CLI · JS wrapper · Zig API', 'website thin wrapper interface claim')
   requireText(
     gettingStarted,
@@ -1592,8 +1612,8 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   requireText(showcase, '{selected.frontend}', 'website native lab frontend label')
   requireText(
     features,
-    'The compatibility table below records the release-ready NATIVE-009 native-graduated candidate; immutable tag publication remains pending.',
-    'website release-ready compatibility boundary',
+    'The compatibility table below records the published NATIVE-009 native-graduated prerelease; GitHub prerelease and npm next publication are verified.',
+    'website published compatibility boundary',
   )
   requireText(playground, 'Playground unavailable', 'website public compile service boundary')
   requireText(playground, 'The public compile API is disabled', 'website disabled public compile API')
@@ -1781,6 +1801,10 @@ function validateCapabilityGraduation(
       'README thin JavaScript wrapper boundary',
     ],
     ['`nativeReleaseReady: true`', 'README release-ready native interlock'],
+    [
+      'GitHub prerelease and npm `next` publication are verified',
+      'README published native release terminal',
+    ],
   ]) {
     requireText(readme, needle, label)
   }
@@ -1909,12 +1933,22 @@ function validateCapabilityGraduation(
     }
   }
 
+  const releaseArtifacts = capabilities.get('release-artifacts')
+  if (releaseArtifacts?.status !== 'Experimental, published and native-smoke-gated') {
+    fail('capability metadata published release status drifted')
+  }
+  requireText(
+    releaseArtifacts.behavior,
+    'Immutable tag `v0.6.0-rc.2` produced one GitHub prerelease with five architecture-matched archives and 25 exact assets',
+    'capability metadata published release terminal',
+  )
+
   for (const [document, label, needles] of [
     [
       formatGuide,
       'format compatibility guide',
       [
-        'The four preprocessor rows are `native-graduated` on the release-ready candidate',
+        'The four preprocessor rows are `native-graduated` on the published prerelease',
         'These exact providers are development-only reference oracles.',
         'they do not run during compilation',
         'CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavailable.',
@@ -1927,7 +1961,7 @@ function validateCapabilityGraduation(
         'SCSS, indented Sass, Less, and Stylus route through self-contained native Zig parser/evaluators',
         'The package JavaScript wrapper only locates and invokes that binary',
         'The explicit `zigcss.experimental_native` namespace admits exactly SCSS, indented Sass, Less, and Stylus.',
-        '`NATIVE-009` release candidate is ready while immutable tag publication remains pending',
+        '`NATIVE-009` published candidate `0.6.0-rc.2` is verified on the GitHub prerelease and npm `next` channels',
       ],
     ],
     [
@@ -1956,6 +1990,7 @@ function validateCapabilityGraduation(
       [
         '`NATIVE-008` closes the finite source-capability inventory',
         '`nativeReleaseReady` is `true` for exact candidate `0.6.0-rc.2`',
+        'one immutable tag workflow produced the verified GitHub prerelease, 25 release assets, and npm `next` package with provenance',
         'remain exact development-only reference oracles and do not run during compilation',
         'zero production dependencies and zero optional dependencies',
         'The former programmatic provider-backed JavaScript preprocessor API is not part of this source contract.',
@@ -3609,8 +3644,15 @@ export function validateReleaseTag(contract, tag, candidateCommit, originMainCom
       && same(actual.evidenceRequirements, expected.evidenceRequirements)
   })
   const publication = actualGates.get('tag-workflow-publication')
+  if (
+    release?.state === 'closed'
+    || release?.packageState === 'verified'
+    || publication?.state === 'verified'
+  ) {
+    fail(`release ${tag} rejected: native release is already published`)
+  }
   const publicationStateValid = publication !== undefined
-    && (publication.state === 'pending' || publication.state === 'verified')
+    && publication.state === 'pending'
     && same(
       publication.evidenceRequirements,
       expectedGates.get('tag-workflow-publication').evidenceRequirements,
@@ -3629,8 +3671,8 @@ export function validateReleaseTag(contract, tag, candidateCommit, originMainCom
     && contract.capabilityGraduation?.packageState === 'verified'
     && release?.ownerPackage === 'NATIVE-009'
     && release.releaseGapFamily === 'native-release-evidence'
-    && (release.state === 'candidate-ready' || release.state === 'closed')
-    && (release.packageState === 'in-progress' || release.packageState === 'verified')
+    && release.state === 'candidate-ready'
+    && release.packageState === 'in-progress'
     && release.candidateVersion === contract.nativeReleaseVersion
     && release.candidateVersion !== contract.referenceCandidate
     && /^0\.6\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release.candidateVersion)
@@ -3691,8 +3733,13 @@ function main() {
       options.originMainCommit,
     )
   }
+  const releaseGate = contract.releaseGraduation?.packageState === 'verified'
+    ? 'closed (published)'
+    : contract.nativeReleaseReady
+      ? 'open'
+      : 'closed'
   process.stdout.write(
-    `Native contract verified: ${contract.adapters.length} adapters, target ${contract.targetRelease}, release gate ${contract.nativeReleaseReady ? 'open' : 'closed'}.\n`,
+    `Native contract verified: ${contract.adapters.length} adapters, target ${contract.targetRelease}, release gate ${releaseGate}.\n`,
   )
 }
 

@@ -406,7 +406,7 @@
       "surface": "SCSS input",
       "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile SCSS with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
+      "behavior": "The published 0.6.0-rc.2 native binary and `zigcss.experimental_native` compile SCSS with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
       "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
@@ -414,7 +414,7 @@
       "surface": "Indented Sass input",
       "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile indented Sass with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
+      "behavior": "The published 0.6.0-rc.2 native binary and `zigcss.experimental_native` compile indented Sass with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
       "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
@@ -422,7 +422,7 @@
       "surface": "Less input",
       "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile Less with confined imports, bounded data helpers, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Less 4.6.7 development oracle does not run during compilation. JavaScript, plugins, custom functions, and project code remain outside the contract.",
+      "behavior": "The published 0.6.0-rc.2 native binary and `zigcss.experimental_native` compile Less with confined imports, bounded data helpers, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Less 4.6.7 development oracle does not run during compilation. JavaScript, plugins, custom functions, and project code remain outside the contract.",
       "evidence": ["preprocessor-less", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
@@ -430,7 +430,7 @@
       "surface": "Stylus input",
       "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile Stylus with confined imports, bounded helpers/globs, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Stylus 0.64.0 development oracle does not run during compilation. Plugins, custom functions/hooks, and project code remain outside the contract.",
+      "behavior": "The published 0.6.0-rc.2 native binary and `zigcss.experimental_native` compile Stylus with confined imports, bounded helpers/globs, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Stylus 0.64.0 development oracle does not run during compilation. Plugins, custom functions/hooks, and project code remain outside the contract.",
       "evidence": ["preprocessor-stylus", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
@@ -468,9 +468,9 @@
     {
       "id": "release-artifacts",
       "surface": "Release archives",
-      "status": "Experimental, native-smoke-gated",
+      "status": "Experimental, published and native-smoke-gated",
       "statusKind": "experimental",
-      "behavior": "The tag workflow builds on five architecture-matched runners, then executes each archive directly and through an offline real npm pack/postinstall/wrapper lifecycle before attestation; SHA-256 manifests, deterministic SPDX 2.3 SBOMs, and signed SLSA/SBOM verification remain mandatory before upload. This recovery run has not published a release.",
+      "behavior": "Immutable tag `v0.6.0-rc.2` produced one GitHub prerelease with five architecture-matched archives and 25 exact assets after direct/offline package smokes, SHA-256 manifests, deterministic SPDX 2.3 SBOMs, and signed SLSA/SBOM verification passed.",
       "evidence": ["release-version", "release-artifacts", "release-smoke"]
     },
     {

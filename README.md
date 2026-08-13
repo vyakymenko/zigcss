@@ -18,7 +18,7 @@ The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus 
 
 [Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. The release-ready native 0.6.0-rc.2 candidate remains unpublished pending its immutable tag workflow; evaluate it before production.
+> **Experimental prerelease:** ZigCSS 0.6.0-rc.2 is published through its immutable matching tag as a GitHub prerelease and on npm `next`. npm `latest` remains the stable 0.3.0 line; evaluate the prerelease before production.
 
 ## Native dependency-free migration
 
@@ -26,9 +26,9 @@ Publication of the provider-backed 0.5 candidate was cancelled before tagging. D
 
 The current native package contract has zero `dependencies` and zero `optionalDependencies`. The compiler itself starts no child process, performs no network access, and requires no runtime download. Five archive and offline-package jobs cover Linux x64/arm64, macOS x64/arm64, and Windows x64.
 
-Publication remains a separate gate: `nativeReleaseReady: true` is bound to exact version 0.6.0-rc.2 after all nine pre-tag evidence surfaces passed. The tag workflow must still prove that this exact candidate checkpoint is live on `origin/main` before creating one immutable tag, GitHub prerelease, or npm `next` package.
+Publication is verified: `nativeReleaseReady: true` remains bound to exact version 0.6.0-rc.2 after all nine pre-tag evidence surfaces passed. GitHub prerelease and npm `next` publication are verified from the one immutable tag workflow; the published package carries npm provenance, and npm `latest` remains unchanged.
 
-`NATIVE-008` closed the finite source-capability inventory. `NATIVE-009` now graduates the four preprocessor machine rows together and opens only the exact release-candidate interlock; immutable tag-workflow publication remains pending, and executable plugin parity remains outside the contract.
+`NATIVE-008` closed the finite source-capability inventory. `NATIVE-009` graduates the four preprocessor machine rows together and closes the exact release terminal with five native archives, 25 release assets, one GitHub prerelease, and npm `next`; executable plugin parity remains outside the contract.
 
 ## Why ZigCSS
 
@@ -45,7 +45,7 @@ Your CSS deserves a real compiler: bounded input, a recovery-disabled parser, ex
 
 ## Install
 
-Install the public CSS-only prerelease:
+Install the public five-language prerelease:
 
 ```bash
 npm install --save-dev zigcss@next
@@ -76,7 +76,7 @@ Successful commands exit `0`; compilation and I/O failures exit `1`; usage or co
 
 ## Five syntaxes, one CSS destination
 
-The source snapshot exposes explicit native CLI selection while keeping implementation evidence separate from public release state.
+The published prerelease exposes explicit native CLI selection while keeping executable plugin boundaries separate from language graduation.
 
 | Input | Source snapshot execution path | Machine migration state |
 |---|---|---|
@@ -86,9 +86,9 @@ The source snapshot exposes explicit native CLI selection while keeping implemen
 | Less (`.less`) | Native Less parser/evaluator | `native-graduated` |
 | Stylus (`.styl`) | Native Stylus parser/evaluator | `native-graduated` |
 
-`native-graduated` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, five-target, documentation, and pre-tag release gates pass on the same candidate. It does not grant executable provider or plugin extension points.
+`native-graduated` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, five-target, documentation, release, and publication gates pass on the same immutable candidate. It does not grant executable provider or plugin extension points.
 
-To evaluate the unpublished five-language source snapshot:
+To build the published five-language source snapshot locally:
 
 ```bash
 git clone https://github.com/vyakymenko/zigcss.git
@@ -278,14 +278,14 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 
 ## Project status
 
-- Source candidate: 0.6.0-rc.2 is release-ready, experimental, unpublished, and pending its immutable tag workflow.
+- Native prerelease: 0.6.0-rc.2 is published from its immutable tag on GitHub and npm `next`; it remains experimental.
 - CSS core: `native-graduated`.
 - SCSS, indented Sass, Less, and Stylus: `native-graduated` after parser/evaluator, pinned conformance, native product-routing, package, five-target, and pre-tag release gates.
 - Production package closure: verified with zero production dependencies and no provider or host bytes; the compiler itself starts no child process and performs no network access.
 - Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
-- Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; `NATIVE-009` binds the exact release-ready identity while immutable publication remains pending.
+- Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; `NATIVE-009` binds the exact published identity and verified two-channel terminal.
 - Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
-- Publication: pending until the existing workflow rechecks the exact candidate against live `origin/main`, then produces the single authorized immutable tag outcome, GitHub prerelease, and npm `next` publication.
+- Publication: verified through the single authorized immutable tag outcome, one GitHub prerelease with 25 assets, and npm `next` with provenance; npm `latest` remains 0.3.0.
 
 The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.
 

@@ -12,7 +12,8 @@ describe('GettingStarted', () => {
     renderGettingStarted()
     expect(screen.getByRole('heading', { name: /start with any of five stylesheet languages/i })).toBeInTheDocument()
     expect(screen.getByText('npm install --save-dev zigcss@next')).toBeInTheDocument()
-    expect(screen.getAllByText(/release candidate/i)).toHaveLength(2)
+    expect(screen.getByText(/five-language 0\.6\.0-rc\.2 prerelease is published on npm next/i)).toBeInTheDocument()
+    expect(screen.getByText(/npm latest stays on the stable 0\.3\.0 line/i)).toBeInTheDocument()
   })
 
   it('shows the verified source build and test commands', () => {

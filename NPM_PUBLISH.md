@@ -2,26 +2,28 @@
 
 ZigCSS packages are published only by the tag-triggered GitHub release workflow. Do not run `npm publish` manually from a workstation.
 
-## Release-candidate contract
+## Published release-candidate evidence
 
-The selected `v0.6.0-rc.2` tag is currently absent. The machine release interlock is ready, but the tag must not be created until it can point at the exact integrated `main` commit whose synchronized version, release metadata, consumers, native targets, and workflow policy are green.
+Immutable tag `v0.6.0-rc.2` points to release-ready commit `b63e190f7edeccd829abe34bfb96d9e1a8a320e2`. Its automatic workflow completed successfully on attempt 1, created the GitHub prerelease with the exact 25-asset inventory, and published `zigcss@0.6.0-rc.2` with provenance on npm `next`. npm `latest` remains 0.3.0. The tag and package version must never be moved, recreated, reused, or republished.
 
-Before any release asset is built, the workflow:
+Before any release asset was built, the workflow:
 
 1. checks the tag against every versioned surface;
 2. authenticates the repository-owned npm token with `npm whoami`;
 3. obtains the registry's complete immutable `zigcss` version inventory; and
-4. fails if `0.6.0-rc.2` already exists or the registry response is malformed.
+4. failed unless the selected candidate version was absent and the registry response was valid.
 
-All five native jobs then build and execute architecture-matched archives, validate the npm install path offline, generate checksums and SPDX SBOMs, sign provenance and SBOM attestations, and upload the closed release inventory. GitHub Release creation occurs only after every native job passes.
+All five native jobs then built and executed architecture-matched archives, validated the npm install path offline, generated checksums and SPDX SBOMs, signed provenance and SBOM attestations, and uploaded the closed release inventory. GitHub Release creation occurred only after every native job passed.
 
-The npm job publishes with:
+The npm job published with:
 
 ```bash
 npm publish --tag next --provenance
 ```
 
-The explicit `next` channel prevents an experimental release candidate from replacing stable `latest`. OIDC-backed npm provenance is mandatory. The workflow finally reads back both the immutable version and `dist-tags.next`; any mismatch fails the release run.
+The explicit `next` channel prevented the experimental release candidate from replacing stable `latest`. OIDC-backed npm provenance was retained in the registry metadata. The workflow read back both the immutable version and `dist-tags.next`; both matched on its first bounded attempt.
+
+Any later candidate requires a new version and tag identity plus the complete release gate. Do not rerun this publication as a substitute for a new immutable candidate.
 
 ## Required repository authority
 

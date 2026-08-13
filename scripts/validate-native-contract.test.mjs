@@ -29,16 +29,18 @@ function makeReleaseReady(version = '0.6.0-rc.2') {
   contract.nativeReleaseVersion = version
   for (const adapter of contract.adapters) adapter.current = 'native-graduated'
   contract.releaseGraduation.state = 'candidate-ready'
+  contract.releaseGraduation.packageState = 'in-progress'
   contract.releaseGraduation.candidateVersion = version
   contract.releaseGraduation.candidateTag = `v${version}`
   const preTagSurfaces = new Set(contract.releaseGraduation.terminalContract.preTagSurfaces)
   for (const gate of contract.releaseGraduation.gates) {
     if (preTagSurfaces.has(gate.id)) gate.state = 'verified'
+    else gate.state = 'pending'
   }
   return contract
 }
 
-test('accepts the release-ready native stylesheet implementation contract', () => {
+test('accepts the published native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
   assert.equal(contract.schemaVersion, 9)
   assert.equal(contract.state, 'native-graduated')
@@ -78,6 +80,16 @@ test('accepts the release-ready native stylesheet implementation contract', () =
     'less',
     'stylus',
   ])
+  const check = spawnSync(process.execPath, [
+    path.join(repositoryRoot, 'scripts/validate-native-contract.mjs'),
+    '--check',
+  ], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  })
+  assert.equal(check.status, 0, check.stderr)
+  assert.match(check.stdout, /release gate closed \(published\)/)
+  assert.equal(check.stderr, '')
   assert.deepEqual(
     contract.adapters.slice(1).map(adapter => ({
       id: adapter.id,
@@ -1478,7 +1490,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   }
 })
 
-test('binds the finite NATIVE-009 release-ready candidate and pending publication evidence', () => {
+test('binds the finite NATIVE-009 published release terminal', () => {
   const contract = loadContract()
   assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
   assert.deepEqual(
@@ -1502,31 +1514,37 @@ test('binds the finite NATIVE-009 release-ready candidate and pending publicatio
       .slice(originMainIntegrationIndex + 1)
       .map(gate => [gate.id, gate.state]),
     [
-      ['tag-workflow-publication', 'pending'],
+      ['tag-workflow-publication', 'verified'],
     ],
   )
   assert.equal(contract.state, 'native-graduated')
   assert.equal(contract.nativeReleaseReady, true)
   assert.equal(contract.nativeReleaseVersion, '0.6.0-rc.2')
-  assert.equal(contract.releaseGraduation.state, 'candidate-ready')
-  assert.equal(contract.releaseGraduation.packageState, 'in-progress')
+  assert.equal(contract.releaseGraduation.state, 'closed')
+  assert.equal(contract.releaseGraduation.packageState, 'verified')
   assert.ok(contract.adapters.every(adapter => adapter.current === 'native-graduated'))
-  assert.doesNotThrow(() => validateReleaseTag(
-    contract,
-    'v0.6.0-rc.2',
-    candidateCommit,
-    candidateCommit,
-  ))
+  assert.throws(
+    () => validateReleaseTag(
+      contract,
+      'v0.6.0-rc.2',
+      candidateCommit,
+      candidateCommit,
+    ),
+    /native release is already published/,
+  )
 
   for (const mutate of [
     release => { release.ownerPackage = 'NATIVE-008' },
     release => { release.releaseGapFamily = 'renamed-release-family' },
-    release => { release.state = 'closed' },
-    release => { release.packageState = 'verified' },
+    release => { release.state = 'candidate-ready' },
+    release => { release.packageState = 'in-progress' },
     release => { release.candidateVersion = '0.6.0-rc.3' },
     release => { release.candidateTag = 'v0.6.0-rc.3' },
     release => { release.candidateSelection.githubTagStateAtSelection = 'present' },
     release => { release.candidateSelection.observedPublishedNpmVersions.push('0.6.0-rc.2') },
+    release => { release.publicationEvidence.workflowRunId += 1 },
+    release => { release.publicationEvidence.githubAssetCount = 24 },
+    release => { release.publicationEvidence.npmLatest = '0.6.0-rc.2' },
     release => release.terminalContract.syntaxes.pop(),
     release => release.terminalContract.targets.reverse(),
     release => release.terminalContract.preTagSurfaces.reverse(),
@@ -1560,7 +1578,7 @@ test('binds the finite NATIVE-009 release-ready candidate and pending publicatio
     )
   }
 
-  const ready = clone(contract)
+  const ready = makeReleaseReady()
   ready.releaseGraduation.gates
     .find(gate => gate.id === 'origin-main-integration').state = 'pending'
   assert.throws(
@@ -1690,6 +1708,11 @@ test('binds the README to the exact self-contained native source snapshot', () =
       '`nativeReleaseReady: false`',
       /README release-ready native interlock is missing/,
     ],
+    [
+      'GitHub prerelease and npm `next` publication are verified',
+      'immutable publication remains pending',
+      /README published native release terminal is missing/,
+    ],
   ]) {
     const changed = readme.replace(needle, replacement)
     assert.notEqual(changed, readme, `README fixture is missing ${JSON.stringify(needle)}`)
@@ -1755,9 +1778,9 @@ test('binds website claims and the recorded lab to the native product path', () 
     ],
     [
       'docs/src/app/components/Features.tsx',
-      'The compatibility table below records the release-ready NATIVE-009 native-graduated candidate; immutable tag publication remains pending.',
+      'The compatibility table below records the published NATIVE-009 native-graduated prerelease; GitHub prerelease and npm next publication are verified.',
       'The compatibility table describes an unbounded future product path.',
-      /website release-ready compatibility boundary is missing/,
+      /website published compatibility boundary is missing/,
     ],
   ]) {
     const changed = { ...websiteSources }
@@ -2525,12 +2548,15 @@ test('release tags require the exact owner publication authority after graduatio
   const recordedPublication = makeReleaseReady()
   recordedPublication.releaseGraduation.gates
     .find(gate => gate.id === 'tag-workflow-publication').state = 'verified'
-  assert.doesNotThrow(() => validateReleaseTag(
-    recordedPublication,
-    'v0.6.0-rc.2',
-    candidateCommit,
-    candidateCommit,
-  ))
+  assert.throws(
+    () => validateReleaseTag(
+      recordedPublication,
+      'v0.6.0-rc.2',
+      candidateCommit,
+      candidateCommit,
+    ),
+    /native release is already published/,
+  )
 
   for (const mutate of [
     release => release.gates.pop(),
@@ -2597,7 +2623,7 @@ test('requires the native interlock before npm publication preflight', () => {
   )
 })
 
-test('accepts the npm-appended release arguments for the exact release-ready candidate', () => {
+test('rejects npm-appended release arguments after the exact candidate is published', () => {
   const result = spawnSync(process.execPath, [
     path.join(repositoryRoot, 'scripts/validate-native-contract.mjs'),
     '--check',
@@ -2611,9 +2637,9 @@ test('accepts the npm-appended release arguments for the exact release-ready can
     cwd: repositoryRoot,
     encoding: 'utf8',
   })
-  assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /release gate open/)
-  assert.equal(result.stderr, '')
+  assert.notEqual(result.status, 0)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /native release is already published/)
 })
 
 test('requires one complete build graph with every native frontend runner in CI', () => {

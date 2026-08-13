@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Target release: `0.6.0-rc.2` (selected, not published).
+No later native release candidate is selected.
+
+## [0.6.0-rc.2] - 2026-08-13
+
+Target release: `0.6.0-rc.2` (published as a GitHub prerelease and on npm `next`).
 
 The provider-backed `0.5.0-rc.1` historical reference identity remains ineligible for publication. The native `0.6.0-rc.1` candidate failed closed during automatic Windows hosted validation before any tag or publication, so it remains immutable failure evidence. Replacement candidate `0.6.0-rc.2` was selected only after its GitHub tag and npm version were proven unused; every ordered pre-tag `NATIVE-009` evidence surface is now verified.
 
-`NATIVE-008` closes the finite source-capability inventory for the self-contained native stylesheet frontends: machine rows, binary help, README, website lab, compiled examples, compatibility guides, and these migration notes describe one self-contained implementation. `NATIVE-009` graduates all four preprocessor rows together; `nativeReleaseReady` is `true` for exact candidate `0.6.0-rc.2`, while its one immutable tag workflow and resulting GitHub prerelease plus npm `next` evidence remain pending.
+`NATIVE-008` closes the finite source-capability inventory for the self-contained native stylesheet frontends: machine rows, binary help, README, website lab, compiled examples, compatibility guides, and these migration notes describe one self-contained implementation. `NATIVE-009` graduates all four preprocessor rows together; `nativeReleaseReady` is `true` for exact candidate `0.6.0-rc.2`, and its one immutable tag workflow produced the verified GitHub prerelease, 25 release assets, and npm `next` package with provenance while npm `latest` remained stable.
 
 ### Added
 
