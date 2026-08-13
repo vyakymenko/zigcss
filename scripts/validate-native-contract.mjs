@@ -560,7 +560,7 @@ const expectedPackageMigration = Object.freeze({
   ownerPackage: 'NATIVE-007',
   releaseGapFamily: 'native-zero-dependency-package',
   state: 'closed',
-  packageState: 'implemented',
+  packageState: 'verified',
   terminalContract: Object.freeze({
     surfaces: Object.freeze([
       'production-package-closure',
@@ -599,7 +599,7 @@ const expectedPackageMigration = Object.freeze({
     }),
     Object.freeze({
       id: 'five-native-targets',
-      state: 'implemented',
+      state: 'verified',
       evidenceTests: Object.freeze([
         'native smoke policy covers every release target on one matching runner',
         'native smoke builds a canonical commit-bound five-target receipt',

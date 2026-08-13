@@ -1635,7 +1635,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
     ownerPackage: 'NATIVE-007',
     releaseGapFamily: 'native-zero-dependency-package',
     state: 'closed',
-    packageState: 'implemented',
+    packageState: 'verified',
     terminalContract: {
       surfaces: [
         'production-package-closure',
@@ -1674,7 +1674,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
       },
       {
         id: 'five-native-targets',
-        state: 'implemented',
+        state: 'verified',
         evidenceTests: [
           'native smoke policy covers every release target on one matching runner',
           'native smoke builds a canonical commit-bound five-target receipt',
