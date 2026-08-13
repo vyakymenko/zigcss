@@ -772,7 +772,7 @@ export const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'release-validation',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'version native package workflow and publication preflight policies pass before npm authentication',
       ]),

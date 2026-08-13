@@ -742,7 +742,7 @@
       },
       {
         "id": "release-validation",
-        "state": "pending",
+        "state": "verified",
         "evidenceRequirements": [
           "version native package workflow and publication preflight policies pass before npm authentication"
         ]
