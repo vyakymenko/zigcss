@@ -779,7 +779,7 @@ export const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'artifact-validation',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'five exact native archives checksums SPDX inventories and direct smokes pass',
       ]),

@@ -749,7 +749,7 @@
       },
       {
         "id": "artifact-validation",
-        "state": "pending",
+        "state": "verified",
         "evidenceRequirements": [
           "five exact native archives checksums SPDX inventories and direct smokes pass"
         ]
