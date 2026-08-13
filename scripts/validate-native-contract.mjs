@@ -800,7 +800,7 @@ export const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'origin-main-integration',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'the exact candidate commit is integrated to origin main before tag creation',
       ]),
@@ -3544,9 +3544,30 @@ export function validateContract(
     fail('build workflow must not duplicate native frontend coverage before the complete root test graph')
   }
   validateBuildTestGraph(buildFile)
-  const releaseGate = 'npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"'
+  const candidateCommitLookup = 'git rev-parse "${GITHUB_SHA}^{commit}"'
+  const originMainLookup = 'git ls-remote --exit-code --refs origin refs/heads/main'
+  const releaseGate = '--release-tag "$GITHUB_REF_NAME"'
+  requireText(releaseWorkflow, 'npm run check:native-contract -- \\', 'release workflow')
+  requireText(releaseWorkflow, candidateCommitLookup, 'release workflow candidate commit lookup')
+  requireText(releaseWorkflow, originMainLookup, 'release workflow exact origin main lookup')
   requireText(releaseWorkflow, releaseGate, 'release workflow')
+  requireText(
+    releaseWorkflow,
+    '--candidate-commit "$candidate_commit"',
+    'release workflow candidate commit',
+  )
+  requireText(
+    releaseWorkflow,
+    '--origin-main-commit "$origin_main_commit"',
+    'release workflow origin main commit',
+  )
   requireText(releaseWorkflow, 'npm publish --tag next --provenance', 'release workflow')
+  if (releaseWorkflow.indexOf(candidateCommitLookup) > releaseWorkflow.indexOf(releaseGate)) {
+    fail('release candidate commit lookup must run before native tag admission')
+  }
+  if (releaseWorkflow.indexOf(originMainLookup) > releaseWorkflow.indexOf(releaseGate)) {
+    fail('release exact origin main lookup must run before native tag admission')
+  }
   if (releaseWorkflow.indexOf(releaseGate) > releaseWorkflow.indexOf('npm whoami')) {
     fail('release interlock must run before npm authentication/publication preflight')
   }
@@ -3554,7 +3575,7 @@ export function validateContract(
   return contract
 }
 
-export function validateReleaseTag(contract, tag) {
+export function validateReleaseTag(contract, tag, candidateCommit, originMainCommit) {
   if (typeof tag !== 'string' || !/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) {
     fail(`invalid release tag: ${JSON.stringify(tag)}`)
   }
@@ -3615,20 +3636,53 @@ export function validateReleaseTag(contract, tag) {
   if (!releaseEvidenceComplete) {
     fail(`release ${tag} rejected: native release evidence is incomplete`)
   }
+  if (typeof candidateCommit !== 'string' || !/^[0-9a-f]{40}$/.test(candidateCommit)) {
+    fail('candidate commit must be a canonical full SHA-1')
+  }
+  if (typeof originMainCommit !== 'string' || !/^[0-9a-f]{40}$/.test(originMainCommit)) {
+    fail('origin main commit must be a canonical full SHA-1')
+  }
+  if (candidateCommit !== originMainCommit) {
+    fail('candidate commit is not the exact origin main commit')
+  }
+}
+
+function parseArguments(args) {
+  if (same(args, ['--check'])) return { mode: 'check' }
+
+  const releaseArgs = args[0] === '--check' ? args.slice(1) : args
+  if (
+    releaseArgs.length === 6
+    && releaseArgs[0] === '--release-tag'
+    && releaseArgs[2] === '--candidate-commit'
+    && releaseArgs[4] === '--origin-main-commit'
+  ) {
+    return {
+      mode: 'release-tag',
+      tag: releaseArgs[1],
+      candidateCommit: releaseArgs[3],
+      originMainCommit: releaseArgs[5],
+    }
+  }
+
+  fail(
+    'usage: node scripts/validate-native-contract.mjs --check|'
+      + '--release-tag vX.Y.Z --candidate-commit SHA --origin-main-commit SHA',
+  )
 }
 
 function main() {
-  const [mode, value, extra] = process.argv.slice(2)
-  if (extra !== undefined || (mode !== '--check' && mode !== '--release-tag')) {
-    fail('usage: node scripts/validate-native-contract.mjs --check|--release-tag vX.Y.Z')
-  }
-  if (mode === '--release-tag' && value === undefined) {
-    fail('--release-tag requires a tag')
-  }
-  if (mode === '--check' && value !== undefined) fail('--check accepts no value')
+  const options = parseArguments(process.argv.slice(2))
 
   const contract = validateContract(loadContract())
-  if (mode === '--release-tag') validateReleaseTag(contract, value)
+  if (options.mode === 'release-tag') {
+    validateReleaseTag(
+      contract,
+      options.tag,
+      options.candidateCommit,
+      options.originMainCommit,
+    )
+  }
   process.stdout.write(
     `Native contract verified: ${contract.adapters.length} adapters, target ${contract.targetRelease}, release gate ${contract.nativeReleaseReady ? 'open' : 'closed'}.\n`,
   )

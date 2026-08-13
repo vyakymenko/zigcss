@@ -770,7 +770,7 @@
       },
       {
         "id": "origin-main-integration",
-        "state": "pending",
+        "state": "verified",
         "evidenceRequirements": [
           "the exact candidate commit is integrated to origin main before tag creation"
         ]

@@ -30,7 +30,17 @@ jobs:
         run: npm run check:version -- --tag "$GITHUB_REF_NAME"
 
       - name: Verify native release graduation
-        run: npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"
+        shell: bash
+        run: |
+          candidate_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          origin_main_commit="$(
+            git ls-remote --exit-code --refs origin refs/heads/main |
+              cut -f1
+          )"
+          npm run check:native-contract -- \
+            --release-tag "$GITHUB_REF_NAME" \
+            --candidate-commit "$candidate_commit" \
+            --origin-main-commit "$origin_main_commit"
 
       - name: Verify npm publication authority
         shell: bash

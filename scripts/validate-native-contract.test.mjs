@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
@@ -14,6 +15,8 @@ import {
 } from './validate-native-contract.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const candidateCommit = 'a'.repeat(40)
+const differentMainCommit = 'b'.repeat(40)
 
 function clone(value) {
   return structuredClone(value)
@@ -1470,7 +1473,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   }
 })
 
-test('binds the finite NATIVE-009 candidate and consumer-validation evidence', () => {
+test('binds the finite NATIVE-009 candidate and origin-main-integration evidence', () => {
   const contract = loadContract()
   assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
   assert.deepEqual(
@@ -1481,23 +1484,25 @@ test('binds the finite NATIVE-009 candidate and consumer-validation evidence', (
     ],
   )
 
-  const consumerValidationIndex = expectedReleaseGraduation.gates.findIndex(
-    gate => gate.id === 'consumer-validation',
+  const originMainIntegrationIndex = expectedReleaseGraduation.gates.findIndex(
+    gate => gate.id === 'origin-main-integration',
   )
-  assert.notEqual(consumerValidationIndex, -1)
+  assert.notEqual(originMainIntegrationIndex, -1)
   assert.equal(
-    contract.releaseGraduation.gates[consumerValidationIndex].state,
+    contract.releaseGraduation.gates[originMainIntegrationIndex].state,
     'verified',
   )
   assert.deepEqual(
     contract.releaseGraduation.gates
-      .slice(consumerValidationIndex + 1)
+      .slice(originMainIntegrationIndex + 1)
       .map(gate => [gate.id, gate.state]),
     [
-      ['origin-main-integration', 'pending'],
       ['tag-workflow-publication', 'pending'],
     ],
   )
+  assert.equal(contract.state, 'native-differential')
+  assert.equal(contract.nativeReleaseReady, false)
+  assert.equal(contract.nativeReleaseVersion, null)
 
   for (const mutate of [
     release => { release.ownerPackage = 'NATIVE-008' },
@@ -2456,17 +2461,43 @@ test('release tags fail closed until all native rows graduate', () => {
 
 test('release tags require the exact owner publication authority after graduation', () => {
   const contract = makeReleaseReady()
-  assert.doesNotThrow(() => validateReleaseTag(contract, 'v0.6.0-rc.2'))
+  assert.doesNotThrow(() => validateReleaseTag(
+    contract,
+    'v0.6.0-rc.2',
+    candidateCommit,
+    candidateCommit,
+  ))
   assert.throws(
-    () => validateReleaseTag(contract, 'v0.6.0-rc.1'),
+    () => validateReleaseTag(contract, 'v0.6.0-rc.1', candidateCommit, candidateCommit),
     /does not match the graduated native version/,
   )
+  assert.throws(
+    () => validateReleaseTag(contract, 'v0.6.0-rc.2', candidateCommit, differentMainCommit),
+    /candidate commit is not the exact origin main commit/,
+  )
+  for (const invalidCommit of [
+    'a'.repeat(39),
+    'a'.repeat(41),
+    'A'.repeat(40),
+    'g'.repeat(40),
+  ]) {
+    assert.throws(
+      () => validateReleaseTag(contract, 'v0.6.0-rc.2', invalidCommit, candidateCommit),
+      /candidate commit must be a canonical full SHA-1/,
+    )
+  }
+  for (const invalidCommit of ['b'.repeat(39), 'b'.repeat(41), 'B'.repeat(40)]) {
+    assert.throws(
+      () => validateReleaseTag(contract, 'v0.6.0-rc.2', candidateCommit, invalidCommit),
+      /origin main commit must be a canonical full SHA-1/,
+    )
+  }
 
   for (const id of expectedReleaseGraduation.terminalContract.preTagSurfaces) {
     const missingGate = makeReleaseReady()
     missingGate.releaseGraduation.gates.find(gate => gate.id === id).state = 'pending'
     assert.throws(
-      () => validateReleaseTag(missingGate, 'v0.6.0-rc.2'),
+      () => validateReleaseTag(missingGate, 'v0.6.0-rc.2', candidateCommit, candidateCommit),
       /native release evidence is incomplete/,
       `${id} must be verified before tag admission`,
     )
@@ -2475,7 +2506,12 @@ test('release tags require the exact owner publication authority after graduatio
   const recordedPublication = makeReleaseReady()
   recordedPublication.releaseGraduation.gates
     .find(gate => gate.id === 'tag-workflow-publication').state = 'verified'
-  assert.doesNotThrow(() => validateReleaseTag(recordedPublication, 'v0.6.0-rc.2'))
+  assert.doesNotThrow(() => validateReleaseTag(
+    recordedPublication,
+    'v0.6.0-rc.2',
+    candidateCommit,
+    candidateCommit,
+  ))
 
   for (const mutate of [
     release => release.gates.pop(),
@@ -2485,7 +2521,7 @@ test('release tags require the exact owner publication authority after graduatio
     const changed = makeReleaseReady()
     mutate(changed.releaseGraduation)
     assert.throws(
-      () => validateReleaseTag(changed, 'v0.6.0-rc.2'),
+      () => validateReleaseTag(changed, 'v0.6.0-rc.2', candidateCommit, candidateCommit),
       /native release evidence is incomplete/,
     )
   }
@@ -2493,13 +2529,18 @@ test('release tags require the exact owner publication authority after graduatio
   const ungraduatedAdapter = makeReleaseReady()
   ungraduatedAdapter.adapters[1].current = 'native-differential'
   assert.throws(
-    () => validateReleaseTag(ungraduatedAdapter, 'v0.6.0-rc.2'),
+    () => validateReleaseTag(
+      ungraduatedAdapter,
+      'v0.6.0-rc.2',
+      candidateCommit,
+      candidateCommit,
+    ),
     /native release evidence is incomplete/,
   )
 
   contract.nativePublicationAuthority.authorized = false
   assert.throws(
-    () => validateReleaseTag(contract, 'v0.6.0-rc.2'),
+    () => validateReleaseTag(contract, 'v0.6.0-rc.2', candidateCommit, candidateCommit),
     /native publication is not authorized/,
   )
 })
@@ -2511,11 +2552,49 @@ test('requires the native interlock before npm publication preflight', () => {
   )
   assert.throws(
     () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(
-      'npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"',
+      '--release-tag "$GITHUB_REF_NAME"',
       'npm run check:version',
     ) }),
     /release workflow is missing/,
   )
+
+  const candidateCommitLookup = 'git rev-parse "${GITHUB_SHA}^{commit}"'
+  const originMainLookup = 'git ls-remote --exit-code --refs origin refs/heads/main'
+  assert.ok(releaseWorkflow.includes(candidateCommitLookup))
+  assert.match(releaseWorkflow, new RegExp(originMainLookup.replaceAll(' ', '\\s+')))
+  assert.throws(
+    () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(
+      candidateCommitLookup,
+      'printf %s "$GITHUB_SHA"',
+    ) }),
+    /release workflow candidate commit lookup is missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(
+      originMainLookup,
+      'printf %s "$GITHUB_SHA"',
+    ) }),
+    /release workflow exact origin main lookup is missing/,
+  )
+})
+
+test('accepts the npm-appended release arguments and stays closed before graduation', () => {
+  const result = spawnSync(process.execPath, [
+    path.join(repositoryRoot, 'scripts/validate-native-contract.mjs'),
+    '--check',
+    '--release-tag',
+    'v0.6.0-rc.2',
+    '--candidate-commit',
+    candidateCommit,
+    '--origin-main-commit',
+    candidateCommit,
+  ], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /native frontends are not graduated/)
+  assert.doesNotMatch(result.stderr, /usage:/)
 })
 
 test('requires one complete build graph with every native frontend runner in CI', () => {
