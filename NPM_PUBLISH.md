@@ -4,7 +4,7 @@ ZigCSS packages are published only by the tag-triggered GitHub release workflow.
 
 ## Release-candidate contract
 
-The selected `v0.6.0-rc.2` tag is currently absent and must not be created until it can point at the exact integrated `main` commit whose synchronized version, release metadata, consumers, native targets, and workflow policy are green.
+The selected `v0.6.0-rc.2` tag is currently absent. The machine release interlock is ready, but the tag must not be created until it can point at the exact integrated `main` commit whose synchronized version, release metadata, consumers, native targets, and workflow policy are green.
 
 Before any release asset is built, the workflow:
 

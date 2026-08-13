@@ -14,11 +14,11 @@
 
 ZigCSS is an experimental native Zig CSS compiler built for low-overhead builds, deterministic output, and semantics-preserving transforms. It treats CSS like a language—not a string to rewrite until it looks smaller.
 
-The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. CSS is `native-graduated`; the four preprocessor rows are `native-differential` while the remaining capability surfaces and release gate stay fail-closed.
+The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. All five machine rows are `native-graduated`; executable plugin parity remains outside the contract.
 
 [Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. This repository selects the unpublished native 0.6.0-rc.2 source candidate; evaluate it before production while hosted and release evidence remains pending.
+> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. The release-ready native 0.6.0-rc.2 candidate remains unpublished pending its immutable tag workflow; evaluate it before production.
 
 ## Native dependency-free migration
 
@@ -26,9 +26,9 @@ Publication of the provider-backed 0.5 candidate was cancelled before tagging. D
 
 The current native package contract has zero `dependencies` and zero `optionalDependencies`. The compiler itself starts no child process, performs no network access, and requires no runtime download. Five archive and offline-package jobs cover Linux x64/arm64, macOS x64/arm64, and Windows x64.
 
-Publication remains a separate gate: `nativeReleaseReady: false`, the graduated native release version remains unset, and the selected 0.6.0-rc.2 identity cannot be tagged while later `NATIVE-009` evidence remains pending.
+Publication remains a separate gate: `nativeReleaseReady: true` is bound to exact version 0.6.0-rc.2 after all nine pre-tag evidence surfaces passed. The tag workflow must still prove that this exact candidate checkpoint is live on `origin/main` before creating one immutable tag, GitHub prerelease, or npm `next` package.
 
-`NATIVE-008` closes the finite source-capability inventory: machine rows, binary help, README, website, compiled examples, guides/compatibility metadata, and these migration notes now describe the same native-differential snapshot. This is not release graduation; executable plugin parity remains outside the contract and `NATIVE-009` remains the only release gate.
+`NATIVE-008` closed the finite source-capability inventory. `NATIVE-009` now graduates the four preprocessor machine rows together and opens only the exact release-candidate interlock; immutable tag-workflow publication remains pending, and executable plugin parity remains outside the contract.
 
 ## Why ZigCSS
 
@@ -81,12 +81,12 @@ The source snapshot exposes explicit native CLI selection while keeping implemen
 | Input | Source snapshot execution path | Machine migration state |
 |---|---|---|
 | CSS (`.css`) | Native ZigCSS tokenizer/parser | `native-graduated` |
-| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-differential` |
-| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-differential` |
-| Less (`.less`) | Native Less parser/evaluator | `native-differential` |
-| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-differential` |
+| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-graduated` |
+| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-graduated` |
+| Less (`.less`) | Native Less parser/evaluator | `native-graduated` |
+| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-graduated` |
 
-`native-differential` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, and five-target gates pass. The rows remain in that machine state until all predeclared public capability surfaces close together.
+`native-graduated` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, five-target, documentation, and pre-tag release gates pass on the same candidate. It does not grant executable provider or plugin extension points.
 
 To evaluate the unpublished five-language source snapshot:
 
@@ -278,14 +278,14 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 
 ## Project status
 
-- Source candidate: 0.6.0-rc.2 selected and locally validated; experimental, unpublished, and pending hosted integration evidence.
+- Source candidate: 0.6.0-rc.2 is release-ready, experimental, unpublished, and pending its immutable tag workflow.
 - CSS core: `native-graduated`.
-- SCSS, indented Sass, Less, and Stylus: `native-differential` after parser/evaluator, pinned conformance, native product-routing, package, and five-target gates.
+- SCSS, indented Sass, Less, and Stylus: `native-graduated` after parser/evaluator, pinned conformance, native product-routing, package, five-target, and pre-tag release gates.
 - Production package closure: verified with zero production dependencies and no provider or host bytes; the compiler itself starts no child process and performs no network access.
 - Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
-- Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; release identity and publication remain closed under `NATIVE-009`.
+- Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; `NATIVE-009` binds the exact release-ready identity while immutable publication remains pending.
 - Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
-- Publication: fail-closed until this exact candidate passes every remaining hosted, release, artifact, provenance, consumer, and integration gate.
+- Publication: pending until the existing workflow rechecks the exact candidate against live `origin/main`, then produces the single authorized immutable tag outcome, GitHub prerelease, and npm `next` publication.
 
 The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.
 

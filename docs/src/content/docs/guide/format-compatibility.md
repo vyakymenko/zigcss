@@ -2,18 +2,18 @@
 
 The ZigCSS source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. CSS enters the verified core directly. Each preprocessor frontend evaluates to complete CSS, which is then parsed with recovery disabled before output can be returned or committed.
 
-The public npm release candidate `0.4.0-rc.3` remains CSS-only. The repository now carries the selected, unpublished `0.6.0-rc.2` source identity while the remaining `NATIVE-009` hosted and release gates stay closed.
+The public npm release candidate `0.4.0-rc.3` remains CSS-only. The repository now carries the release-ready, unpublished `0.6.0-rc.2` native candidate while its immutable tag workflow remains pending.
 
-The four preprocessor rows are `native-differential`, not yet `native-graduated`: their pinned corpora, strict negative/resource cases, deterministic reruns, generated-CSS validation, product routing, zero-dependency package, and five-target gates pass. The candidate identity and local validation are fixed; final hosted validation and publication remain separate.
+The four preprocessor rows are `native-graduated` on the release-ready candidate: their pinned corpora, strict negative/resource cases, deterministic reruns, generated-CSS validation, product routing, zero-dependency package, five-target, artifact, provenance, consumer, documentation, and pre-tag release gates pass. Executable plugin parity and immutable publication remain separate.
 
-The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` verifies the closed adapter inventory, accepted ADR strategy, exact native source inventory, development-oracle binding, containment evidence, and direct native CLI probes. The native contract additionally binds every language source, package state, and the closed release interlock.
+The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` verifies the closed adapter inventory, accepted ADR strategy, exact native source inventory, development-oracle binding, containment evidence, and direct native CLI probes. The native contract additionally binds every language source, package state, exact release version, and release-ready interlock.
 
 ## What the status terms mean
 
 | Term | Meaning |
 |---|---|
 | NativeCliZigApi | Available in the source-built native binary and explicit `zigcss.experimental_native` namespace with an explicit syntax value. |
-| NativeDifferential | The native row passes its pinned oracle, strict failure/resource, deterministic, product, package, and five-target gates; release graduation remains separate. |
+| NativeGraduated | The native row passes its pinned oracle, strict failure/resource, deterministic, product, package, five-target, and pre-tag release gates; executable plugin parity remains excluded. |
 | NativeFrontend | A self-contained Zig parser/evaluator feeds complete CSS through the recovery-disabled ZigCSS core without a provider process. |
 | ExperimentalLibrary | Available only through an explicit Zig library syntax tag. |
 | NativeSubset | Only the named ZigCSS-native grammar and result contract are admitted. |
@@ -25,10 +25,10 @@ The machine-readable authority is `tests/formats/matrix.json`. `npm run test:for
 
 | Adapter ID | Recognized extension | Availability | Compatibility | Implementation | Accepted strategy | Owning package |
 |---|---|---|---|---|---|---|
-| `scss` | `.scss` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NSASS-010`, `NSASS-011`, `NSASS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
-| `sass` | `.sass` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NSASS-010`, `NSASS-011`, `NSASS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
-| `less` | `.less` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NLESS-010`, `NLESS-011`, `NLESS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
-| `stylus` | `.styl` | NativeCliZigApi | NativeDifferential | NativeFrontend | `native-reimplementation` | `NSTYLUS-010`, `NSTYLUS-011`, `NSTYLUS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008` |
+| `scss` | `.scss` | NativeCliZigApi | NativeGraduated | NativeFrontend | `native-reimplementation` | `NSASS-010`, `NSASS-011`, `NSASS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008`, `NATIVE-009` |
+| `sass` | `.sass` | NativeCliZigApi | NativeGraduated | NativeFrontend | `native-reimplementation` | `NSASS-010`, `NSASS-011`, `NSASS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008`, `NATIVE-009` |
+| `less` | `.less` | NativeCliZigApi | NativeGraduated | NativeFrontend | `native-reimplementation` | `NLESS-010`, `NLESS-011`, `NLESS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008`, `NATIVE-009` |
+| `stylus` | `.styl` | NativeCliZigApi | NativeGraduated | NativeFrontend | `native-reimplementation` | `NSTYLUS-010`, `NSTYLUS-011`, `NSTYLUS-012`, `NATIVE-006`, `NATIVE-007`, `NATIVE-008`, `NATIVE-009` |
 | `css-modules` | `.module.css` | ExperimentalLibrary | NativeSubset | LimitedNative | `limited-native-subset` | `MODULE-001`, `MODULE-002` |
 | `css-in-js` | `.css.js`, `.css.ts` | Unavailable | Unverified | Removed | `remove-until-funded` | `JS-001` |
 | `postcss` | `.postcss` | Unavailable | Unverified | Removed | `remove-until-funded` | `POSTCSS-001` |

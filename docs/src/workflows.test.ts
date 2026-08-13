@@ -41,10 +41,10 @@ describe('native artifact workflows', () => {
     ].join('\n')
 
     expect(workflows.match(/^permissions: \{\}$/gm)).toHaveLength(4)
-    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(32)
+    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(39)
     expect(workflows).not.toMatch(/\n\s+uses: [^\n]+@(?![0-9a-f]{40} # v)/)
-    expect(statusGuide).toContain('Their ten jobs declare only the access they use')
-    expect(statusGuide).toContain('All 32 action invocations are pinned')
+    expect(statusGuide).toContain('Their eleven jobs declare only the access they use')
+    expect(statusGuide).toContain('All 39 action invocations are pinned')
     expect(statusGuide).toContain('release build job receives attestation and OIDC write access')
   })
 
@@ -183,15 +183,16 @@ describe('native artifact workflows', () => {
       'npm run test:release-smoke',
       nativeContract,
     )
-    const tagInterlock = releaseWorkflow.indexOf(
-      'npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"',
-    )
+    const tagInterlock = releaseWorkflow.indexOf('- name: Verify native release graduation')
     const npmAuthority = releaseWorkflow.indexOf('npm whoami')
     const npmPublish = releaseWorkflow.indexOf('npm publish --tag next --provenance')
 
     expect(nativeContract).toBeGreaterThan(releaseMetadata)
     expect(releaseConsumers).toBeGreaterThan(nativeContract)
     expect(tagInterlock).toBeGreaterThan(-1)
+    expect(releaseWorkflow).toContain('--release-tag "$GITHUB_REF_NAME"')
+    expect(releaseWorkflow).toContain('--candidate-commit "$candidate_commit"')
+    expect(releaseWorkflow).toContain('--origin-main-commit "$origin_main_commit"')
     expect(npmAuthority).toBeGreaterThan(tagInterlock)
     expect(npmPublish).toBeGreaterThan(npmAuthority)
   })

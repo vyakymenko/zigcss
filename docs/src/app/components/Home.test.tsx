@@ -17,7 +17,7 @@ describe('Home', () => {
     expect(screen.getByRole('heading', { name: /exact in\. deterministic out\. denied by default/i })).toBeInTheDocument()
     expect(screen.getByText('Compile CSS. Keep the meaning.')).toBeInTheDocument()
     expect(screen.getByText(/0\.6\.0-rc\.2.*experimental.*evaluate before production/i)).toBeInTheDocument()
-    expect(screen.getByText(/selected 0\.6\.0-rc\.2 source candidate remains unpublished pending hosted release evidence/i)).toBeInTheDocument()
+    expect(screen.getByText(/release-ready 0\.6\.0-rc\.2 candidate remains unpublished pending its immutable tag workflow/i)).toBeInTheDocument()
     expect(screen.getByText(/published zigcss@next is 0\.4\.0-rc\.3.*css-only surface/i)).toBeInTheDocument()
     expect(screen.getByText(/^all five source inputs run through self-contained native zig frontends\. one self-contained compiler/i)).toBeInTheDocument()
   })
@@ -51,6 +51,7 @@ describe('Home', () => {
     expect(screen.getByText('NATIVE SNAPSHOT · RELEASE NOT SHIPPED')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /the providers are oracles/i })).toBeInTheDocument()
     expect(screen.getByText(/one self-contained compiler\. zero production package dependencies/i)).toBeInTheDocument()
+    expect(screen.getByText(/nativeReleaseReady: true.*0\.6\.0-rc\.2/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /choose your entry point/i })).toBeInTheDocument()
     for (const target of ['Linux x64', 'Linux arm64', 'macOS x64', 'macOS arm64', 'Windows x64']) {
       expect(screen.getByText(target)).toBeInTheDocument()

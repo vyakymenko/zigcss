@@ -244,10 +244,10 @@ function validateMatrix() {
       }
       if (
         adapter.availability !== 'NativeCliZigApi' ||
-        adapter.compatibility !== 'NativeDifferential' ||
+        adapter.compatibility !== 'NativeGraduated' ||
         adapter.implementation !== 'NativeFrontend'
       ) {
-        fail(`${adapter.id}: native differential row has inconsistent public state`)
+        fail(`${adapter.id}: native graduated row has inconsistent public state`)
       }
       if (adapter.nativeSyntax !== adapter.id || nativeSyntaxes.has(adapter.nativeSyntax)) {
         fail(`${adapter.id}: native frontend needs one unique matching nativeSyntax`)
@@ -523,7 +523,7 @@ async function main(args) {
   const nativeCount = matrix.adapters.filter(adapter => adapter.implementation === 'LimitedNative').length
   const frontendCount = matrix.adapters.filter(adapter => adapter.implementation === 'NativeFrontend').length
   console.log(
-    `Format matrix verified: ${matrix.adapters.length} adapters, ${frontendCount} native differential frontends, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${probes.nativeCount} native CLI probes, ${probes.rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs (${moduleEvidence.valueFixtures} local-value fixture outputs), ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejections (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
+    `Format matrix verified: ${matrix.adapters.length} adapters, ${frontendCount} native graduated frontends, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${probes.nativeCount} native CLI probes, ${probes.rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs (${moduleEvidence.valueFixtures} local-value fixture outputs), ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejections (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
   )
 }
 

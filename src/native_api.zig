@@ -1,11 +1,10 @@
-//! Native-differential Zig API route for the self-contained stylesheet frontends.
+//! Native-graduated Zig API route for the self-contained stylesheet frontends.
 //!
-//! This explicit experimental namespace is part of the documented source
-//! snapshot, but does not mark a language row native-graduated or authorize a
-//! release.
+//! This explicit namespace remains separate from the stable CSS facade and
+//! grants no executable plugin or provider extension parity.
 //! Compilation exposes owned CSS, structured diagnostics, ordered local
 //! dependency identities, composed Source Map v3 bytes, and opaque watch
-//! invalidation behind an explicit native-differential boundary.
+//! invalidation behind the bounded native frontend contract.
 
 const std = @import("std");
 const native_compiler = @import("preprocessor/compiler.zig");

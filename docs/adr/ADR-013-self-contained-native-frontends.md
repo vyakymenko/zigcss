@@ -59,7 +59,7 @@ Each native adapter progresses through these states:
 3. `native-differential`: the native adapter passes its selected official corpus, strict negative cases, deterministic reruns, and exact generated-CSS validation;
 4. `native-graduated`: CLI, Zig API, JavaScript wrapper, batch, watch, source maps, diagnostics, dependencies, platform, package, and release gates all pass without a runtime provider.
 
-No migration step may replace a green path with a partial native parser. The source snapshot now distinguishes the verified native-differential implementation from its development-only reference oracles and from the later immutable native release.
+No migration step may replace a green path with a partial native parser. The release-ready candidate now records all four preprocessor rows as `native-graduated`, retains exact providers only as development oracles, and keeps immutable tag-workflow publication as a separate pending gate.
 
 The active machine compatibility strategy supersedes the four provider-runtime rows without rewriting their reference evidence:
 

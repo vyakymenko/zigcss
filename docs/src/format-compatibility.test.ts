@@ -56,7 +56,7 @@ describe('published version-pinned format matrix', () => {
     }
   })
 
-  test('publishes every native differential row with exact development-only oracles', () => {
+  test('publishes every native graduated row with exact development-only oracles', () => {
     expect(matrix.canonicalProviders).toEqual({
       'dart-sass': {
         package: 'sass',
@@ -82,7 +82,8 @@ describe('published version-pinned format matrix', () => {
       const adapter = matrix.adapters.find(candidate => candidate.id === id)
       expect(adapter.strategy).toBe('native-reimplementation')
       expect(adapter.availability).toBe('NativeCliZigApi')
-      expect(adapter.compatibility).toBe('NativeDifferential')
+      expect(adapter.compatibility).toBe('NativeGraduated')
+      expect(adapter.ownerPackages.at(-1)).toBe('NATIVE-009')
       expect(adapter.implementation).toBe('NativeFrontend')
       expect(adapter.referenceOracleId).toBeTypeOf('string')
       expect(adapter.nativeSyntax).toBe(id)

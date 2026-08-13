@@ -70,7 +70,8 @@ test('binds the development oracle rows and lockfile to exact Dart Sass 1.101.0'
   for (const adapterId of ['scss', 'sass']) {
     const adapter = matrix.adapters.find(candidate => candidate.id === adapterId)
     assert.equal(adapter.availability, 'NativeCliZigApi')
-    assert.equal(adapter.compatibility, 'NativeDifferential')
+    assert.equal(adapter.compatibility, 'NativeGraduated')
+    assert.equal(adapter.ownerPackages.at(-1), 'NATIVE-009')
     assert.equal(adapter.implementation, 'NativeFrontend')
     assert.equal(adapter.referenceOracleId, 'dart-sass')
   }

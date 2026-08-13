@@ -18,7 +18,7 @@ export function GettingStarted() {
         <div className="mb-10 flex gap-4 border border-[#d0a43f] bg-[#fff2bf] p-5 text-[#4d3a0e]">
           <AlertTriangle className="mt-0.5 size-5 flex-shrink-0" />
           <p className="leading-7">
-            The public npm release candidate is still 0.4.0-rc.3 and CSS-only. The five-language 0.6.0-rc.2 source candidate is selected and locally validated but remains experimental and unpublished pending hosted evidence; evaluate before production.
+            The public npm release candidate is still 0.4.0-rc.3 and CSS-only. The five-language 0.6.0-rc.2 candidate is release-ready but remains experimental and unpublished pending its immutable tag workflow; evaluate before production.
           </p>
         </div>
 
@@ -40,7 +40,7 @@ export function GettingStarted() {
 
         <section className="mt-10 border-l-4 border-[#7b493f] bg-[#f9f6ed] p-7 sm:p-8">
           <h2 className="text-2xl font-semibold">Five native inputs, one self-contained compiler</h2>
-          <p className="mt-4 text-lg font-semibold">CSS, SCSS, indented Sass, Less, and Stylus are admitted in the 0.5 source snapshot.</p>
+          <p className="mt-4 text-lg font-semibold">CSS, SCSS, indented Sass, Less, and Stylus are admitted in the 0.6 release-ready source candidate.</p>
           <p className="mt-2 leading-7 text-[#5f675f]">
             The native Sass-family, Less, and Stylus frontends evaluate complete stylesheets before recovery-disabled ZigCSS validation returns CSS.
           </p>

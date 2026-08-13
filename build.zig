@@ -461,7 +461,7 @@ pub fn build(b: *std.Build) void {
     public_api_step.dependOn(documentation_examples_step);
     const native_zig_api_step = b.step(
         "test-native-zig-api",
-        "Test the native-differential stylesheet Zig API route",
+        "Test the native-graduated stylesheet Zig API route",
     );
     native_zig_api_step.dependOn(&run_native_zig_api_tests.step);
 

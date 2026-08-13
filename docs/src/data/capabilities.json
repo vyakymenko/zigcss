@@ -404,34 +404,34 @@
     {
       "id": "scss",
       "surface": "SCSS input",
-      "status": "Native differential verified",
+      "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The source-built binary and `zigcss.experimental_native` compile SCSS with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
-      "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix"]
+      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile SCSS with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
+      "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
       "id": "sass",
       "surface": "Indented Sass input",
-      "status": "Native differential verified",
+      "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The source-built binary and `zigcss.experimental_native` compile indented Sass with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
-      "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix"]
+      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile indented Sass with confined imports, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Dart Sass 1.101.0 development oracle does not run during compilation. Plugins, custom functions/importers, and project code remain outside the contract.",
+      "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
       "id": "less",
       "surface": "Less input",
-      "status": "Native differential verified",
+      "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The source-built binary and `zigcss.experimental_native` compile Less with confined imports, bounded data helpers, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Less 4.6.7 development oracle does not run during compilation. JavaScript, plugins, custom functions, and project code remain outside the contract.",
-      "evidence": ["preprocessor-less", "preprocessor-product", "preprocessor-package", "format-matrix"]
+      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile Less with confined imports, bounded data helpers, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Less 4.6.7 development oracle does not run during compilation. JavaScript, plugins, custom functions, and project code remain outside the contract.",
+      "evidence": ["preprocessor-less", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
       "id": "stylus",
       "surface": "Stylus input",
-      "status": "Native differential verified",
+      "status": "Native graduated verified",
       "statusKind": "verified",
-      "behavior": "The source-built binary and `zigcss.experimental_native` compile Stylus with confined imports, bounded helpers/globs, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Stylus 0.64.0 development oracle does not run during compilation. Plugins, custom functions/hooks, and project code remain outside the contract.",
-      "evidence": ["preprocessor-stylus", "preprocessor-product", "preprocessor-package", "format-matrix"]
+      "behavior": "The release-ready native binary and `zigcss.experimental_native` compile Stylus with confined imports, bounded helpers/globs, owned diagnostics, deterministic maps, and bounded batch/watch behavior. Stylus 0.64.0 development oracle does not run during compilation. Plugins, custom functions/hooks, and project code remain outside the contract.",
+      "evidence": ["preprocessor-stylus", "preprocessor-product", "preprocessor-package", "format-matrix", "release-version"]
     },
     {
       "id": "alternate-ecosystem-formats",

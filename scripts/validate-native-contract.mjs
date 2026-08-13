@@ -706,7 +706,7 @@ const expectedCapabilityGraduation = Object.freeze({
 export const expectedReleaseGraduation = Object.freeze({
   ownerPackage: 'NATIVE-009',
   releaseGapFamily: 'native-release-evidence',
-  state: 'in-progress',
+  state: 'candidate-ready',
   packageState: 'in-progress',
   candidateVersion: '0.6.0-rc.2',
   candidateTag: 'v0.6.0-rc.2',
@@ -745,7 +745,7 @@ export const expectedReleaseGraduation = Object.freeze({
       evidenceRequirements: Object.freeze([
         'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
         'five native syntax and target inventories are resource-derived',
-        'candidate version and tag selection remains separate from the closed release interlock',
+        'candidate version and tag are bound to the release-ready interlock while immutable publication remains pending',
       ]),
     }),
     Object.freeze({
@@ -1557,7 +1557,7 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   )
   requireText(home, 'NATIVE SNAPSHOT · RELEASE NOT SHIPPED', 'website unpublished native release boundary')
   requireText(home, 'The providers are ', 'website development-oracle heading')
-  requireText(home, 'nativeReleaseReady: false', 'website closed native release interlock')
+  requireText(home, 'nativeReleaseReady: true · 0.6.0-rc.2 · tag pending', 'website release-ready native interlock')
   requireText(home, 'CLI · JS wrapper · Zig API', 'website thin wrapper interface claim')
   requireText(
     gettingStarted,
@@ -1592,8 +1592,8 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   requireText(showcase, '{selected.frontend}', 'website native lab frontend label')
   requireText(
     features,
-    'The compatibility table below records the closed NATIVE-008 native-differential source snapshot; release graduation remains fail-closed under NATIVE-009.',
-    'website closed compatibility boundary',
+    'The compatibility table below records the release-ready NATIVE-009 native-graduated candidate; immutable tag publication remains pending.',
+    'website release-ready compatibility boundary',
   )
   requireText(playground, 'Playground unavailable', 'website public compile service boundary')
   requireText(playground, 'The public compile API is disabled', 'website disabled public compile API')
@@ -1757,20 +1757,20 @@ function validateCapabilityGraduation(
       'README CSS native-graduated row',
     ],
     [
-      '| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-differential` |',
-      'README SCSS native-differential row',
+      '| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-graduated` |',
+      'README SCSS native-graduated row',
     ],
     [
-      '| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-differential` |',
-      'README Sass native-differential row',
+      '| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-graduated` |',
+      'README Sass native-graduated row',
     ],
     [
-      '| Less (`.less`) | Native Less parser/evaluator | `native-differential` |',
-      'README Less native-differential row',
+      '| Less (`.less`) | Native Less parser/evaluator | `native-graduated` |',
+      'README Less native-graduated row',
     ],
     [
-      '| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-differential` |',
-      'README Stylus native-differential row',
+      '| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-graduated` |',
+      'README Stylus native-graduated row',
     ],
     [
       'Arbitrary Sass plugins, custom functions and importers, Less JavaScript and plugins, Stylus plugins and evaluator hooks, and executable project code remain outside the native product contract.',
@@ -1780,7 +1780,7 @@ function validateCapabilityGraduation(
       'The package JavaScript wrapper only locates and invokes the installed native binary; it does not host language semantics.',
       'README thin JavaScript wrapper boundary',
     ],
-    ['`nativeReleaseReady: false`', 'README closed native release interlock'],
+    ['`nativeReleaseReady: true`', 'README release-ready native interlock'],
   ]) {
     requireText(readme, needle, label)
   }
@@ -1883,8 +1883,8 @@ function validateCapabilityGraduation(
   }
   for (const row of nativeRows) {
     if (row.nativeSyntax !== row.id || row.availability !== 'NativeCliZigApi' ||
-        row.compatibility !== 'NativeDifferential' || row.implementation !== 'NativeFrontend' ||
-        row.strategy !== 'native-reimplementation') {
+        row.compatibility !== 'NativeGraduated' || row.implementation !== 'NativeFrontend' ||
+        row.strategy !== 'native-reimplementation' || row.ownerPackages.at(-1) !== 'NATIVE-009') {
       fail(`format matrix native capability state drifted for ${row.id}`)
     }
     if (typeof row.referenceOracleId !== 'string' || row.referenceOracleId.length === 0) {
@@ -1898,12 +1898,15 @@ function validateCapabilityGraduation(
   const capabilities = new Map(capabilityMetadata.capabilities.map(row => [row.id, row]))
   for (const [id, oracle] of Object.entries(expectedNativeCapabilityOracles)) {
     const row = capabilities.get(id)
-    if (row?.status !== 'Native differential verified' || row.statusKind !== 'verified') {
+    if (row?.status !== 'Native graduated verified' || row.statusKind !== 'verified') {
       fail(`capability metadata native status drifted for ${id}`)
     }
     requireText(row.behavior, '`zigcss.experimental_native`', `capability metadata native Zig API ${id}`)
     requireText(row.behavior, oracle, `capability metadata development oracle ${id}`)
     requireText(row.behavior, 'does not run during compilation', `capability metadata oracle execution boundary ${id}`)
+    if (!row.evidence.includes('release-version')) {
+      fail(`capability metadata native release evidence is missing for ${id}`)
+    }
   }
 
   for (const [document, label, needles] of [
@@ -1911,7 +1914,7 @@ function validateCapabilityGraduation(
       formatGuide,
       'format compatibility guide',
       [
-        'The four preprocessor rows are `native-differential`, not yet `native-graduated`',
+        'The four preprocessor rows are `native-graduated` on the release-ready candidate',
         'These exact providers are development-only reference oracles.',
         'they do not run during compilation',
         'CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavailable.',
@@ -1924,7 +1927,7 @@ function validateCapabilityGraduation(
         'SCSS, indented Sass, Less, and Stylus route through self-contained native Zig parser/evaluators',
         'The package JavaScript wrapper only locates and invokes that binary',
         'The explicit `zigcss.experimental_native` namespace admits exactly SCSS, indented Sass, Less, and Stylus.',
-        '`NATIVE-009` release graduation is closed',
+        '`NATIVE-009` release candidate is ready while immutable tag publication remains pending',
       ],
     ],
     [
@@ -1952,7 +1955,7 @@ function validateCapabilityGraduation(
       'changelog migration notes',
       [
         '`NATIVE-008` closes the finite source-capability inventory',
-        '`nativeReleaseReady` remains `false`',
+        '`nativeReleaseReady` is `true` for exact candidate `0.6.0-rc.2`',
         'remain exact development-only reference oracles and do not run during compilation',
         'zero production dependencies and zero optional dependencies',
         'The former programmatic provider-backed JavaScript preprocessor API is not part of this source contract.',
@@ -2030,8 +2033,11 @@ function validateAdapter(adapter, index, plan) {
       fail('CSS native source inventory drifted')
     }
   } else {
-    if (adapter.current !== 'native-differential') {
-      fail(`${adapter.id} must remain native-differential until the NATIVE-009 release gate closes`)
+    if (adapter.current !== 'native-graduated') {
+      fail(`${adapter.id} must be native-graduated for the release-ready candidate`)
+    }
+    if (adapter.ownerPackages.at(-1) !== 'NATIVE-009') {
+      fail(`${adapter.id} native graduation must be owned by NATIVE-009`)
     }
     if (!same(adapter.nativeSources, expectedDifferentialAdapterSources[adapter.id])) {
       fail(`${adapter.id} native source inventory drifted`)
@@ -2079,8 +2085,8 @@ function validateImplementation(implementation, index, contract, plan) {
   for (const adapterId of implementation.adapters) {
     const adapter = contract.adapters.find(candidate => candidate.id === adapterId)
     if (adapter === undefined) fail(`${label} references unknown adapter ${adapterId}`)
-    if (adapter.current !== 'native-differential') {
-      fail(`${label} requires the bounded native-differential ${adapterId} adapter state`)
+    if (adapter.current !== 'native-graduated') {
+      fail(`${label} requires the bounded native-graduated ${adapterId} adapter state`)
     }
   }
   for (const source of implementation.nativeSources) repositoryFile(source)
@@ -3356,11 +3362,13 @@ export function validateContract(
     'root',
   )
   if (contract.schemaVersion !== 9) fail('schemaVersion must be 9')
-  if (contract.state !== 'native-differential') {
-    fail('state must remain native-differential until the NATIVE-009 release gate closes')
+  if (contract.state !== 'native-graduated') {
+    fail('state must be native-graduated for the release-ready candidate')
   }
-  if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
-  if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
+  if (contract.nativeReleaseReady !== true) fail('native release must be ready')
+  if (contract.nativeReleaseVersion !== '0.6.0-rc.2') {
+    fail('nativeReleaseVersion must match the exact release-ready candidate')
+  }
   if (!same(contract.nativePublicationAuthority, expectedPublicationAuthority)) {
     fail('native publication authority drifted')
   }

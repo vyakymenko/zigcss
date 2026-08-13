@@ -76,10 +76,15 @@ test('manifest, lockfile, Zig, CLI, and Marketplace mapping drift fails closed',
     '"candidateVersion": "0.6.0-rc.2"', '"candidateVersion": "0.6.0-rc.3"')
   assert.throws(() => validateReleaseSources(nativeCandidate), /native candidate version/)
 
-  const openInterlock = cloneSources()
-  replace(openInterlock, 'tests/preprocessors/native/contract.json',
-    '"nativeReleaseReady": false', '"nativeReleaseReady": true')
-  assert.throws(() => validateReleaseSources(openInterlock), /native release interlock/)
+  const closedInterlock = cloneSources()
+  replace(closedInterlock, 'tests/preprocessors/native/contract.json',
+    '"nativeReleaseReady": true', '"nativeReleaseReady": false')
+  assert.throws(() => validateReleaseSources(closedInterlock), /native release interlock/)
+
+  const missingGraduatedVersion = cloneSources()
+  replace(missingGraduatedVersion, 'tests/preprocessors/native/contract.json',
+    '"nativeReleaseVersion": "0.6.0-rc.2"', '"nativeReleaseVersion": null')
+  assert.throws(() => validateReleaseSources(missingGraduatedVersion), /graduated native release version/)
 })
 
 test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {

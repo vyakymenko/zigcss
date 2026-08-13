@@ -38,11 +38,12 @@ function makeReleaseReady(version = '0.6.0-rc.2') {
   return contract
 }
 
-test('accepts the bounded native stylesheet implementation contract', () => {
+test('accepts the release-ready native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
   assert.equal(contract.schemaVersion, 9)
-  assert.equal(contract.state, 'native-differential')
-  assert.equal(contract.nativeReleaseReady, false)
+  assert.equal(contract.state, 'native-graduated')
+  assert.equal(contract.nativeReleaseReady, true)
+  assert.equal(contract.nativeReleaseVersion, '0.6.0-rc.2')
   assert.deepEqual(contract.nativePublicationAuthority, {
     authorized: true,
     authorizedOn: '2026-07-27',
@@ -85,7 +86,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     })),
     [{
       id: 'scss',
-      current: 'native-differential',
+      current: 'native-graduated',
       nativeSources: [
         'src/preprocessor/sass.zig',
         'src/preprocessor/sass_evaluator.zig',
@@ -97,7 +98,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       ],
     }, {
       id: 'sass',
-      current: 'native-differential',
+      current: 'native-graduated',
       nativeSources: [
         'src/preprocessor/sass.zig',
         'src/preprocessor/sass_evaluator.zig',
@@ -109,19 +110,23 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       ],
     }, {
       id: 'less',
-      current: 'native-differential',
+      current: 'native-graduated',
       nativeSources: [
         'src/preprocessor/less.zig',
         'src/preprocessor/less_evaluator.zig',
       ],
     }, {
       id: 'stylus',
-      current: 'native-differential',
+      current: 'native-graduated',
       nativeSources: [
         'src/preprocessor/stylus.zig',
         'src/preprocessor/stylus_evaluator.zig',
       ],
     }],
+  )
+  assert.deepEqual(
+    contract.adapters.slice(1).map(adapter => adapter.ownerPackages.at(-1)),
+    ['NATIVE-009', 'NATIVE-009', 'NATIVE-009', 'NATIVE-009'],
   )
   assert.deepEqual(contract.capabilityGraduation, {
     ownerPackage: 'NATIVE-008',
@@ -1316,18 +1321,18 @@ test('rejects external modules and escaped files in the native Zig import closur
   }
 })
 
-test('binds differential native adapter rows while release claims remain closed', () => {
-  const adapterClaim = clone(loadContract())
-  adapterClaim.adapters[1].current = 'native-graduated'
-  assert.throws(() => validateContract(adapterClaim), /must remain native-differential/)
-
+test('binds graduated native adapter rows to the open release interlock', () => {
   const staleAdapter = clone(loadContract())
-  staleAdapter.adapters[1].current = 'reference-only'
-  assert.throws(() => validateContract(staleAdapter), /must remain native-differential/)
+  staleAdapter.adapters[1].current = 'native-differential'
+  assert.throws(() => validateContract(staleAdapter), /must be native-graduated/)
 
-  const releaseClaim = clone(loadContract())
-  releaseClaim.nativeReleaseReady = true
-  assert.throws(() => validateContract(releaseClaim), /native release must remain fail-closed/)
+  const closedInterlock = clone(loadContract())
+  closedInterlock.nativeReleaseReady = false
+  assert.throws(() => validateContract(closedInterlock), /native release must be ready/)
+
+  const missingVersion = clone(loadContract())
+  missingVersion.nativeReleaseVersion = null
+  assert.throws(() => validateContract(missingVersion), /nativeReleaseVersion must match/)
 
   const sourceClaim = clone(loadContract())
   sourceClaim.adapters[1].nativeSources.pop()
@@ -1473,7 +1478,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   }
 })
 
-test('binds the finite NATIVE-009 candidate and origin-main-integration evidence', () => {
+test('binds the finite NATIVE-009 release-ready candidate and pending publication evidence', () => {
   const contract = loadContract()
   assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
   assert.deepEqual(
@@ -1500,9 +1505,18 @@ test('binds the finite NATIVE-009 candidate and origin-main-integration evidence
       ['tag-workflow-publication', 'pending'],
     ],
   )
-  assert.equal(contract.state, 'native-differential')
-  assert.equal(contract.nativeReleaseReady, false)
-  assert.equal(contract.nativeReleaseVersion, null)
+  assert.equal(contract.state, 'native-graduated')
+  assert.equal(contract.nativeReleaseReady, true)
+  assert.equal(contract.nativeReleaseVersion, '0.6.0-rc.2')
+  assert.equal(contract.releaseGraduation.state, 'candidate-ready')
+  assert.equal(contract.releaseGraduation.packageState, 'in-progress')
+  assert.ok(contract.adapters.every(adapter => adapter.current === 'native-graduated'))
+  assert.doesNotThrow(() => validateReleaseTag(
+    contract,
+    'v0.6.0-rc.2',
+    candidateCommit,
+    candidateCommit,
+  ))
 
   for (const mutate of [
     release => { release.ownerPackage = 'NATIVE-008' },
@@ -1547,10 +1561,10 @@ test('binds the finite NATIVE-009 candidate and origin-main-integration evidence
   }
 
   const ready = clone(contract)
-  ready.nativeReleaseReady = true
-  ready.nativeReleaseVersion = '0.6.0-rc.2'
+  ready.releaseGraduation.gates
+    .find(gate => gate.id === 'origin-main-integration').state = 'pending'
   assert.throws(
-    () => validateReleaseTag(ready, 'v0.6.0-rc.2'),
+    () => validateReleaseTag(ready, 'v0.6.0-rc.2', candidateCommit, candidateCommit),
     /release evidence is incomplete/,
   )
 
@@ -1642,24 +1656,24 @@ test('binds the README to the exact self-contained native source snapshot', () =
       /README zero-runtime compilation boundary is missing/,
     ],
     [
-      '| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-differential` |',
+      '| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-graduated` |',
       '| SCSS (`.scss`) | Canonical provider | Planned |',
-      /README SCSS native-differential row is missing/,
+      /README SCSS native-graduated row is missing/,
     ],
     [
-      '| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-differential` |',
+      '| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-graduated` |',
       '| Sass (`.sass`) | Canonical provider | Planned |',
-      /README Sass native-differential row is missing/,
+      /README Sass native-graduated row is missing/,
     ],
     [
-      '| Less (`.less`) | Native Less parser/evaluator | `native-differential` |',
+      '| Less (`.less`) | Native Less parser/evaluator | `native-graduated` |',
       '| Less (`.less`) | Canonical provider | Planned |',
-      /README Less native-differential row is missing/,
+      /README Less native-graduated row is missing/,
     ],
     [
-      '| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-differential` |',
+      '| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-graduated` |',
       '| Stylus (`.styl`) | Canonical provider | Planned |',
-      /README Stylus native-differential row is missing/,
+      /README Stylus native-graduated row is missing/,
     ],
     [
       'zig-out/bin/zigcss --syntax stylus styles.styl -o dist/styles.css --minify',
@@ -1672,9 +1686,9 @@ test('binds the README to the exact self-contained native source snapshot', () =
       /README native plugin boundary is missing/,
     ],
     [
-      '`nativeReleaseReady: false`',
       '`nativeReleaseReady: true`',
-      /README closed native release interlock is missing/,
+      '`nativeReleaseReady: false`',
+      /README release-ready native interlock is missing/,
     ],
   ]) {
     const changed = readme.replace(needle, replacement)
@@ -1741,9 +1755,9 @@ test('binds website claims and the recorded lab to the native product path', () 
     ],
     [
       'docs/src/app/components/Features.tsx',
-      'The compatibility table below records the closed NATIVE-008 native-differential source snapshot; release graduation remains fail-closed under NATIVE-009.',
+      'The compatibility table below records the release-ready NATIVE-009 native-graduated candidate; immutable tag publication remains pending.',
       'The compatibility table describes an unbounded future product path.',
-      /website closed compatibility boundary is missing/,
+      /website release-ready compatibility boundary is missing/,
     ],
   ]) {
     const changed = { ...websiteSources }
@@ -2451,7 +2465,12 @@ test('binds canonical providers only as exact development-oracle evidence', () =
 })
 
 test('release tags fail closed until all native rows graduate', () => {
-  const contract = validateContract(loadContract())
+  const contract = clone(loadContract())
+  contract.state = 'native-differential'
+  contract.nativeReleaseReady = false
+  contract.nativeReleaseVersion = null
+  contract.adapters[1].current = 'native-differential'
+  contract.releaseGraduation.state = 'in-progress'
   assert.throws(
     () => validateReleaseTag(contract, 'v0.5.0-rc.1'),
     /native frontends are not graduated/,
@@ -2578,7 +2597,7 @@ test('requires the native interlock before npm publication preflight', () => {
   )
 })
 
-test('accepts the npm-appended release arguments and stays closed before graduation', () => {
+test('accepts the npm-appended release arguments for the exact release-ready candidate', () => {
   const result = spawnSync(process.execPath, [
     path.join(repositoryRoot, 'scripts/validate-native-contract.mjs'),
     '--check',
@@ -2592,9 +2611,9 @@ test('accepts the npm-appended release arguments and stays closed before graduat
     cwd: repositoryRoot,
     encoding: 'utf8',
   })
-  assert.equal(result.status, 1)
-  assert.match(result.stderr, /native frontends are not graduated/)
-  assert.doesNotMatch(result.stderr, /usage:/)
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /release gate open/)
+  assert.equal(result.stderr, '')
 })
 
 test('requires one complete build graph with every native frontend runner in CI', () => {

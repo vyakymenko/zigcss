@@ -1,8 +1,8 @@
 {
   "schemaVersion": 9,
-  "state": "native-differential",
-  "nativeReleaseReady": false,
-  "nativeReleaseVersion": null,
+  "state": "native-graduated",
+  "nativeReleaseReady": true,
+  "nativeReleaseVersion": "0.6.0-rc.2",
   "nativePublicationAuthority": {
     "authorized": true,
     "authorizedOn": "2026-07-27",
@@ -670,7 +670,7 @@
   "releaseGraduation": {
     "ownerPackage": "NATIVE-009",
     "releaseGapFamily": "native-release-evidence",
-    "state": "in-progress",
+    "state": "candidate-ready",
     "packageState": "in-progress",
     "candidateVersion": "0.6.0-rc.2",
     "candidateTag": "v0.6.0-rc.2",
@@ -715,7 +715,7 @@
         "evidenceRequirements": [
           "finite local hosted release artifact provenance consumer and publication surfaces are machine-bound",
           "five native syntax and target inventories are resource-derived",
-          "candidate version and tag selection remains separate from the closed release interlock"
+          "candidate version and tag are bound to the release-ready interlock while immutable publication remains pending"
         ]
       },
       {
@@ -1308,9 +1308,9 @@
     },
     {
       "id": "scss",
-      "current": "native-differential",
+      "current": "native-graduated",
       "target": "native-graduated",
-      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008", "NATIVE-009"],
       "nativeSources": [
         "src/preprocessor/sass.zig",
         "src/preprocessor/sass_evaluator.zig",
@@ -1323,9 +1323,9 @@
     },
     {
       "id": "sass",
-      "current": "native-differential",
+      "current": "native-graduated",
       "target": "native-graduated",
-      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008", "NATIVE-009"],
       "nativeSources": [
         "src/preprocessor/sass.zig",
         "src/preprocessor/sass_evaluator.zig",
@@ -1338,9 +1338,9 @@
     },
     {
       "id": "less",
-      "current": "native-differential",
+      "current": "native-graduated",
       "target": "native-graduated",
-      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NLESS-010", "NLESS-011", "NLESS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NLESS-010", "NLESS-011", "NLESS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008", "NATIVE-009"],
       "nativeSources": [
         "src/preprocessor/less.zig",
         "src/preprocessor/less_evaluator.zig"
@@ -1348,9 +1348,9 @@
     },
     {
       "id": "stylus",
-      "current": "native-differential",
+      "current": "native-graduated",
       "target": "native-graduated",
-      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSTYLUS-010", "NSTYLUS-011", "NSTYLUS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSTYLUS-010", "NSTYLUS-011", "NSTYLUS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008", "NATIVE-009"],
       "nativeSources": [
         "src/preprocessor/stylus.zig",
         "src/preprocessor/stylus_evaluator.zig"

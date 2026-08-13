@@ -80,7 +80,7 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('stylus')?.behavior).toContain('Stylus 0.64.0 development oracle')
     for (const id of ['scss', 'sass', 'less', 'stylus']) {
       expect(byId.get(id)?.statusKind).toBe('verified')
-      expect(byId.get(id)?.status).toMatch(/native differential verified/i)
+      expect(byId.get(id)?.status).toMatch(/native graduated verified/i)
       expect(byId.get(id)?.behavior).toMatch(/does not run during compilation/i)
     }
     expect(byId.get('alternate-ecosystem-formats')?.statusKind).toBe('unavailable')

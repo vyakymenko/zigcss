@@ -1,6 +1,6 @@
 # Build from source
 
-Source builds are the verified way to evaluate the green five-language native-differential snapshot before its package is published. Local Zig package dependencies and the thin npm delivery wrapper are consumer-tested below.
+Source builds are the verified way to evaluate the release-ready five-language native-graduated candidate before its package is published. Local Zig package dependencies and the thin npm delivery wrapper are consumer-tested below.
 
 ## Requirements
 
@@ -61,7 +61,7 @@ Set `.syntax = .css_modules` only for the [experimental native CSS Modules subse
 
 ## Native stylesheet Zig API example
 
-The finite native source API remains explicitly namespaced as `zigcss.experimental_native` until the later release gate. This exact example is compiled and executed by `test-documentation-examples`:
+The finite native Zig API remains explicitly namespaced as `zigcss.experimental_native` even after machine graduation; the namespace does not grant executable plugin parity. This exact example is compiled and executed by `test-documentation-examples`:
 
 <!-- native-api-example:start -->
 ```zig
