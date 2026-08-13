@@ -16,7 +16,7 @@ import {
   writeReleaseMetadata,
 } from './generate-release-metadata.mjs'
 
-const version = '0.6.0-rc.1'
+const version = '0.6.0-rc.2'
 const commit = 'a'.repeat(40)
 const sourceDateEpoch = 1_700_000_000
 
@@ -76,11 +76,11 @@ test('release metadata is deterministic, bounded SPDX 2.3 with exact SHA-256 sub
     checkReleaseMetadata(options)
 
     assert.deepEqual(first.assets, {
-      archive: 'zigcss-v0.6.0-rc.1-x86_64-linux.tar.gz',
-      sbom: 'zigcss-v0.6.0-rc.1-x86_64-linux.spdx.json',
-      checksums: 'zigcss-v0.6.0-rc.1-x86_64-linux.sha256',
-      provenanceBundle: 'zigcss-v0.6.0-rc.1-x86_64-linux.provenance.sigstore.jsonl',
-      sbomBundle: 'zigcss-v0.6.0-rc.1-x86_64-linux.sbom.sigstore.jsonl',
+      archive: 'zigcss-v0.6.0-rc.2-x86_64-linux.tar.gz',
+      sbom: 'zigcss-v0.6.0-rc.2-x86_64-linux.spdx.json',
+      checksums: 'zigcss-v0.6.0-rc.2-x86_64-linux.sha256',
+      provenanceBundle: 'zigcss-v0.6.0-rc.2-x86_64-linux.provenance.sigstore.jsonl',
+      sbomBundle: 'zigcss-v0.6.0-rc.2-x86_64-linux.sbom.sigstore.jsonl',
     })
 
     const archiveBytes = fs.readFileSync(path.join(root, options.archive))
@@ -311,7 +311,7 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace(
       '- name: Publish to npm',
-      '- name: Rewrite package version\n        run: npm version 0.6.0-rc.1 --no-git-tag-version\n\n      - name: Publish to npm',
+      '- name: Rewrite package version\n        run: npm version 0.6.0-rc.2 --no-git-tag-version\n\n      - name: Publish to npm',
     )),
     /npm package version mutation/,
   )

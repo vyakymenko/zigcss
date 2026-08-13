@@ -61,6 +61,14 @@ test "native fixture roots are absolute without platform realpath" {
     try std.testing.expectEqual(@as(usize, 1), confined.roots().len);
 }
 
+test "resolver inode identities preserve signed filesystem bit patterns" {
+    try std.testing.expectEqual(@as(u128, 0), resolver.inodeIdentity(@as(i64, 0)));
+    try std.testing.expectEqual(@as(u128, std.math.maxInt(i64)), resolver.inodeIdentity(@as(i64, std.math.maxInt(i64))));
+    try std.testing.expectEqual(@as(u128, 1) << 63, resolver.inodeIdentity(@as(i64, std.math.minInt(i64))));
+    try std.testing.expectEqual(@as(u128, std.math.maxInt(u64)), resolver.inodeIdentity(@as(i64, -1)));
+    try std.testing.expectEqual(@as(u128, std.math.maxInt(u64)), resolver.inodeIdentity(@as(u64, std.math.maxInt(u64))));
+}
+
 test "resolver admits one handle-canonical absolute root on every supported host" {
     const allocator = std.testing.allocator;
     const cwd = try std.process.getCwdAlloc(allocator);

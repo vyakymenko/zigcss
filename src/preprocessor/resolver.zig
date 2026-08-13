@@ -144,7 +144,7 @@ const ObjectIdentity = struct {
         const stat = file.stat() catch return error.Unreadable;
         return .{
             .volume = try volumeIdentity(file),
-            .inode = @intCast(stat.inode),
+            .inode = inodeIdentity(stat.inode),
             .size = stat.size,
             .kind = stat.kind,
             .mtime = stat.mtime,
@@ -1324,6 +1324,13 @@ fn volumeIdentity(file: std.fs.File) Error!u64 {
     const UnsignedDevice = std.meta.Int(.unsigned, @bitSizeOf(Device));
     const identity: UnsignedDevice = @bitCast(stat.dev);
     return @intCast(identity);
+}
+
+pub fn inodeIdentity(inode: anytype) u128 {
+    const Inode = @TypeOf(inode);
+    const UnsignedInode = std.meta.Int(.unsigned, @bitSizeOf(Inode));
+    const identity: UnsignedInode = @bitCast(inode);
+    return identity;
 }
 
 test {

@@ -708,8 +708,8 @@ const expectedReleaseGraduation = Object.freeze({
   releaseGapFamily: 'native-release-evidence',
   state: 'in-progress',
   packageState: 'in-progress',
-  candidateVersion: '0.6.0-rc.1',
-  candidateTag: 'v0.6.0-rc.1',
+  candidateVersion: '0.6.0-rc.2',
+  candidateTag: 'v0.6.0-rc.2',
   candidateSelection: Object.freeze({
     selectedOn: '2026-08-13',
     localTagStateAtSelection: 'absent',
@@ -1974,7 +1974,7 @@ function validateReleaseGraduation(release, plan, buildWorkflow, releaseWorkflow
     '`NATIVE-009` | Select one immutable native release candidate, pass every local/hosted/release/consumer gate',
     'NATIVE-009 roadmap release contract',
   )
-  requireText(plan, 'Candidate: `0.6.0-rc.1`', 'NATIVE-009 selected candidate')
+  requireText(plan, 'Candidate: `0.6.0-rc.2`', 'NATIVE-009 selected candidate')
   for (const target of nativeTargetContract) {
     requireText(buildWorkflow, `target: ${target.target}`, `Build native target ${target.target}`)
     requireText(releaseWorkflow, `target: ${target.target}`, `Release native target ${target.target}`)

@@ -672,8 +672,8 @@
     "releaseGapFamily": "native-release-evidence",
     "state": "in-progress",
     "packageState": "in-progress",
-    "candidateVersion": "0.6.0-rc.1",
-    "candidateTag": "v0.6.0-rc.1",
+    "candidateVersion": "0.6.0-rc.2",
+    "candidateTag": "v0.6.0-rc.2",
     "candidateSelection": {
       "selectedOn": "2026-08-13",
       "localTagStateAtSelection": "absent",

@@ -19,7 +19,7 @@ const deploymentModes = [
     id: "source",
     label: "from source",
     code: "zig build\nzig-out/bin/zigcss --syntax scss input.scss -o output.css --minify",
-    note: "The native five-language 0.6.0-rc.1 source candidate is selected and locally validated; no provider runtime is used.",
+    note: "The native five-language 0.6.0-rc.2 source candidate is selected and locally validated; no provider runtime is used.",
   },
   {
     id: "zig",
@@ -277,7 +277,7 @@ export function Home() {
         <div className="hero-glow" aria-hidden="true" />
         <div className="relative mx-auto flex min-h-[calc(100svh-4rem)] max-w-[96rem] flex-col justify-center px-5 py-20 sm:px-8 md:py-28 lg:px-12">
           <p className="gate-label">TERMINAL 00 · ZIGCSS SOURCE CANDIDATE</p>
-          <div className="experimental-chip mt-7 w-fit">⚠ 0.6.0-rc.1 · EXPERIMENTAL · evaluate before production</div>
+          <div className="experimental-chip mt-7 w-fit">⚠ 0.6.0-rc.2 · EXPERIMENTAL · evaluate before production</div>
           <h1 id="hero-title" className="hero-display display-type mt-9 max-w-[90rem] text-[clamp(4.1rem,12vw,12rem)] leading-[0.74] tracking-[-0.085em]">
             Exact in.<br /><span>Deterministic out.</span><br />Denied by default.
           </h1>
@@ -285,7 +285,7 @@ export function Home() {
             <div>
               <p className="max-w-3xl text-xl leading-8 text-[#cdd6cb] sm:text-2xl">Compile CSS. Keep the meaning.</p>
               <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#81907f] sm:text-sm">
-                An experimental self-contained five-language compiler written in Zig. The selected 0.6.0-rc.1 source candidate remains unpublished pending hosted release evidence. Published zigcss@next is 0.4.0-rc.3 with the earlier CSS-only surface. All five source inputs run through self-contained native Zig frontends.
+                An experimental self-contained five-language compiler written in Zig. The selected 0.6.0-rc.2 source candidate remains unpublished pending hosted release evidence. Published zigcss@next is 0.4.0-rc.3 with the earlier CSS-only surface. All five source inputs run through self-contained native Zig frontends.
               </p>
             </div>
             <a href="#convergence" className="terminal-link justify-self-start font-mono text-sm uppercase tracking-[0.16em] text-[#b7f34a] lg:justify-self-end">five inputs converge ↓</a>

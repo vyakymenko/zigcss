@@ -6,7 +6,7 @@ import {
   verifyNpmPublication,
 } from './verify-npm-publication.mjs'
 
-const version = '0.6.0-rc.1'
+const version = '0.6.0-rc.2'
 const visibleVersion = JSON.stringify(version)
 const visibleTags = JSON.stringify({ latest: '0.3.0', next: version })
 

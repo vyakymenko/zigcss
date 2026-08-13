@@ -23,8 +23,8 @@ const expectedReleaseGraduation = {
   releaseGapFamily: 'native-release-evidence',
   state: 'in-progress',
   packageState: 'in-progress',
-  candidateVersion: '0.6.0-rc.1',
-  candidateTag: 'v0.6.0-rc.1',
+  candidateVersion: '0.6.0-rc.2',
+  candidateTag: 'v0.6.0-rc.2',
   candidateSelection: {
     selectedOn: '2026-08-13',
     localTagStateAtSelection: 'absent',
@@ -125,7 +125,7 @@ const expectedReleaseGraduation = {
   }],
 }
 
-function makeReleaseReady(version = '0.6.0-rc.1') {
+function makeReleaseReady(version = '0.6.0-rc.2') {
   const contract = clone(loadContract())
   contract.state = 'native-graduated'
   contract.nativeReleaseReady = true
@@ -1585,10 +1585,10 @@ test('binds the finite NATIVE-009 candidate and local-validation evidence', () =
     release => { release.releaseGapFamily = 'renamed-release-family' },
     release => { release.state = 'closed' },
     release => { release.packageState = 'verified' },
-    release => { release.candidateVersion = '0.6.0-rc.2' },
-    release => { release.candidateTag = 'v0.6.0-rc.2' },
+    release => { release.candidateVersion = '0.6.0-rc.3' },
+    release => { release.candidateTag = 'v0.6.0-rc.3' },
     release => { release.candidateSelection.githubTagStateAtSelection = 'present' },
-    release => { release.candidateSelection.observedPublishedNpmVersions.push('0.6.0-rc.1') },
+    release => { release.candidateSelection.observedPublishedNpmVersions.push('0.6.0-rc.2') },
     release => release.terminalContract.syntaxes.pop(),
     release => release.terminalContract.targets.reverse(),
     release => release.terminalContract.preTagSurfaces.reverse(),
@@ -1606,9 +1606,9 @@ test('binds the finite NATIVE-009 candidate and local-validation evidence', () =
 
   const ready = clone(contract)
   ready.nativeReleaseReady = true
-  ready.nativeReleaseVersion = '0.6.0-rc.1'
+  ready.nativeReleaseVersion = '0.6.0-rc.2'
   assert.throws(
-    () => validateReleaseTag(ready, 'v0.6.0-rc.1'),
+    () => validateReleaseTag(ready, 'v0.6.0-rc.2'),
     /release evidence is incomplete/,
   )
 
@@ -2519,32 +2519,36 @@ test('release tags fail closed until all native rows graduate', () => {
 
 test('release tags require the exact owner publication authority after graduation', () => {
   const contract = makeReleaseReady()
-  assert.doesNotThrow(() => validateReleaseTag(contract, 'v0.6.0-rc.1'))
+  assert.doesNotThrow(() => validateReleaseTag(contract, 'v0.6.0-rc.2'))
+  assert.throws(
+    () => validateReleaseTag(contract, 'v0.6.0-rc.1'),
+    /does not match the graduated native version/,
+  )
 
   const missingGate = makeReleaseReady()
   missingGate.releaseGraduation.gates.find(gate => gate.id === 'local-validation').state = 'pending'
   assert.throws(
-    () => validateReleaseTag(missingGate, 'v0.6.0-rc.1'),
+    () => validateReleaseTag(missingGate, 'v0.6.0-rc.2'),
     /native release evidence is incomplete/,
   )
 
   const duplicatedGate = makeReleaseReady()
   duplicatedGate.releaseGraduation.gates.push(clone(duplicatedGate.releaseGraduation.gates[0]))
   assert.throws(
-    () => validateReleaseTag(duplicatedGate, 'v0.6.0-rc.1'),
+    () => validateReleaseTag(duplicatedGate, 'v0.6.0-rc.2'),
     /native release evidence is incomplete/,
   )
 
   const ungraduatedAdapter = makeReleaseReady()
   ungraduatedAdapter.adapters[1].current = 'native-differential'
   assert.throws(
-    () => validateReleaseTag(ungraduatedAdapter, 'v0.6.0-rc.1'),
+    () => validateReleaseTag(ungraduatedAdapter, 'v0.6.0-rc.2'),
     /native release evidence is incomplete/,
   )
 
   contract.nativePublicationAuthority.authorized = false
   assert.throws(
-    () => validateReleaseTag(contract, 'v0.6.0-rc.1'),
+    () => validateReleaseTag(contract, 'v0.6.0-rc.2'),
     /native publication is not authorized/,
   )
 })

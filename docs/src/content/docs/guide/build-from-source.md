@@ -117,7 +117,7 @@ Arbitrary Sass plugins, custom functions/importers, Less JavaScript/plugins, Sty
 
 ## Local Zig package dependency
 
-The root `build.zig.zon` declares package `zigcss` 0.6.0-rc.1, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, supported `build_helpers.zig`, `src`, `README.md`, and `LICENSE`. Tests, docs, package-manager wrappers, and editor files are not part of the Zig package.
+The root `build.zig.zon` declares package `zigcss` 0.6.0-rc.2, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, supported `build_helpers.zig`, `src`, `README.md`, and `LICENSE`. Tests, docs, package-manager wrappers, and editor files are not part of the Zig package.
 
 `tests/package-consumer` declares the repository as a path dependency, requests `zigcss.module("zigcss")`, and compiles the owned API from outside the package. Run its exact consumer gate with:
 

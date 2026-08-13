@@ -1359,7 +1359,7 @@ test "CLI informational and failure modes have stable streams and exit codes (CL
     var version = try runInDir(tmp.dir, &.{"--version"});
     defer deinitRun(&version);
     try expectExitCode(version, 0);
-    try std.testing.expectEqualStrings("zigcss 0.6.0-rc.1\n", version.stdout);
+    try std.testing.expectEqualStrings("zigcss 0.6.0-rc.2\n", version.stdout);
     try std.testing.expectEqual(@as(usize, 0), version.stderr.len);
 
     var no_input = try runInDir(tmp.dir, &.{});

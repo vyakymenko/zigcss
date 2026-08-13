@@ -691,7 +691,7 @@ One adapter may graduate without the others. The umbrella “full SCSS, Sass, Le
 
 Estimated effort: 40-80 engineer days
 Target: staged `0.6.0` alpha, beta, release-candidate, and final releases
-Candidate: `0.6.0-rc.1`
+Candidate: `0.6.0-rc.2`
 Decision authority: ADR-013
 
 Milestone 10 replaces the production language-engine boundary from Milestone 9 without invalidating its reference evidence. The exact Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 adapters remain development-only black-box oracles until their native replacements graduate. The prepared `0.5.0-rc.1` candidate is deliberately unpublished and tag-triggered release remains fail-closed throughout migration.
@@ -1022,7 +1022,7 @@ The following decisions are captured or queued under `docs/adr/` during implemen
 - Native Sass/SCSS, Less, and Stylus each pass their complete pinned corpus and strict resource/negative gates.
 - Direct Zig API and binary paths compile all five languages without a provider process; package migration remains private until `NATIVE-007`.
 
-### `0.6.0-rc.1`
+### `0.6.0-rc.2`
 
 - Production dependencies and optional dependencies are empty; archives and the installed package exclude provider/host/runtime bytes.
 - Five platform jobs pass direct archive and offline package compilation for CSS, SCSS, Sass, Less, Stylus, and the public API with runtime process/network tracing.

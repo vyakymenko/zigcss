@@ -16,7 +16,7 @@ import {
 } from './validate-native-package-evidence.mjs'
 
 const commit = '0123456789abcdef0123456789abcdef01234567'
-const version = '0.6.0-rc.1'
+const version = '0.6.0-rc.2'
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex')

@@ -16,8 +16,8 @@ import {
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 function runtimeTraceFixture(temporary) {
-  const archive = 'zigcss-v0.6.0-rc.1-aarch64-macos.tar.gz'
-  const checksums = 'zigcss-v0.6.0-rc.1-aarch64-macos.sha256'
+  const archive = 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz'
+  const checksums = 'zigcss-v0.6.0-rc.2-aarch64-macos.sha256'
   const trace = path.join(temporary, 'runtime-trace.jsonl')
   fs.writeFileSync(path.join(temporary, archive), 'archive fixture')
   fs.writeFileSync(path.join(temporary, checksums), 'manifest fixture')
@@ -55,7 +55,7 @@ function runtimeTraceFixture(temporary) {
       ZIGCSS_RELEASE_SMOKE_ARCHIVE: archive,
       ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: temporary,
       ZIGCSS_RELEASE_SMOKE_CHECKSUMS: checksums,
-      ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.1',
+      ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.2',
       ZIGCSS_RELEASE_SMOKE_RUNTIME: '1',
       ZIGCSS_RELEASE_SMOKE_RUNTIME_BINARY: native,
       ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE: trace,
@@ -119,30 +119,30 @@ test('native smoke policy covers every release target on one matching runner', (
 
 test('smoke CLI accepts only the exact archive, binary, target, and version contract', () => {
   assert.deepEqual(parseSmokeArguments([
-    '--archive', 'release-assets/zigcss-v0.6.0-rc.1-aarch64-macos.tar.gz',
+    '--archive', 'release-assets/zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
     '--binary', 'zig-out/bin/zigcss',
     '--target', 'aarch64-macos',
-    '--version', '0.6.0-rc.1',
+    '--version', '0.6.0-rc.2',
   ]), {
-    archive: 'release-assets/zigcss-v0.6.0-rc.1-aarch64-macos.tar.gz',
+    archive: 'release-assets/zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
     binary: 'zig-out/bin/zigcss',
     target: 'aarch64-macos',
-    version: '0.6.0-rc.1',
+    version: '0.6.0-rc.2',
   })
 
   const commit = '0123456789abcdef0123456789abcdef01234567'
   assert.deepEqual(parseSmokeArguments([
-    '--archive', 'release-assets/zigcss-v0.6.0-rc.1-aarch64-macos.tar.gz',
+    '--archive', 'release-assets/zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
     '--binary', 'zig-out/bin/zigcss',
     '--target', 'aarch64-macos',
-    '--version', '0.6.0-rc.1',
+    '--version', '0.6.0-rc.2',
     '--commit', commit,
     '--evidence', 'native-target-evidence/aarch64-macos.json',
   ]), {
-    archive: 'release-assets/zigcss-v0.6.0-rc.1-aarch64-macos.tar.gz',
+    archive: 'release-assets/zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
     binary: 'zig-out/bin/zigcss',
     target: 'aarch64-macos',
-    version: '0.6.0-rc.1',
+    version: '0.6.0-rc.2',
     commit,
     evidence: 'native-target-evidence/aarch64-macos.json',
   })
@@ -150,13 +150,13 @@ test('smoke CLI accepts only the exact archive, binary, target, and version cont
   for (const invalid of [
     [],
     ['--target', 'aarch64-macos'],
-    ['--archive', 'a', '--binary', 'b', '--target', 'unknown', '--version', '0.6.0-rc.1'],
+    ['--archive', 'a', '--binary', 'b', '--target', 'unknown', '--version', '0.6.0-rc.2'],
     ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '../tag'],
-    ['--archive', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.6.0-rc.1'],
-    ['--unknown', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.6.0-rc.1'],
-    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.1', '--commit', commit],
-    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.1', '--commit', 'ABC', '--evidence', 'native-target-evidence/aarch64-macos.json'],
-    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.1', '--commit', commit, '--evidence', '../aarch64-macos.json'],
+    ['--archive', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2'],
+    ['--unknown', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2'],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--commit', commit],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--commit', 'ABC', '--evidence', 'native-target-evidence/aarch64-macos.json'],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--commit', commit, '--evidence', '../aarch64-macos.json'],
   ]) {
     assert.throws(() => parseSmokeArguments(invalid), /release smoke integrity/)
   }
@@ -175,7 +175,7 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
     checksumsSha256: 'c'.repeat(64),
     installedBytes: 3_575_623,
     installedEntries: 10,
-    npmPackage: 'zigcss-0.6.0-rc.1.tgz',
+    npmPackage: 'zigcss-0.6.0-rc.2.tgz',
     directStylesheetSmokes: 5,
     offlinePackageStylesheetSmokes: 5,
     directRuntimeTrace: {
@@ -193,14 +193,14 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
   }
   const evidence = smoke.nativeTargetEvidence(result, {
     commit,
-    version: '0.6.0-rc.1',
+    version: '0.6.0-rc.2',
     platform: 'darwin',
     arch: 'arm64',
   })
   assert.deepEqual(evidence, {
     schemaVersion: 1,
     commit,
-    version: '0.6.0-rc.1',
+    version: '0.6.0-rc.2',
     target: 'aarch64-macos',
     runner: 'macos-15',
     host: {
@@ -209,13 +209,13 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
     },
     languages: ['css', 'scss', 'sass', 'less', 'stylus'],
     artifacts: {
-      archive: 'zigcss-v0.6.0-rc.1-aarch64-macos.tar.gz',
+      archive: 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
       archiveSha256: 'a'.repeat(64),
       binary: 'zigcss',
       binarySha256: 'b'.repeat(64),
-      checksums: 'zigcss-v0.6.0-rc.1-aarch64-macos.sha256',
+      checksums: 'zigcss-v0.6.0-rc.2-aarch64-macos.sha256',
       checksumsSha256: 'c'.repeat(64),
-      npmPackage: 'zigcss-0.6.0-rc.1.tgz',
+      npmPackage: 'zigcss-0.6.0-rc.2.tgz',
     },
     directArchive: {
       stylesheetCompilations: 5,
@@ -258,7 +258,7 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
   assert.throws(
     () => smoke.nativeTargetEvidence(result, {
       commit: commit.toUpperCase(),
-      version: '0.6.0-rc.1',
+      version: '0.6.0-rc.2',
       platform: 'darwin',
       arch: 'arm64',
     }),
@@ -267,7 +267,7 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
   assert.throws(
     () => smoke.nativeTargetEvidence({ ...result, directStylesheetSmokes: 4 }, {
       commit,
-      version: '0.6.0-rc.1',
+      version: '0.6.0-rc.2',
       platform: 'darwin',
       arch: 'arm64',
     }),
@@ -276,7 +276,7 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
   assert.throws(
     () => smoke.nativeTargetEvidence(result, {
       commit,
-      version: '0.6.0-rc.1',
+      version: '0.6.0-rc.2',
       platform: 'darwin',
       arch: 'x64',
     }),
@@ -287,8 +287,8 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
 test('npm lifecycle preload serves only the two exact local release URLs', () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-preload-'))
   try {
-    const archive = 'zigcss-v0.6.0-rc.1-aarch64-macos.tar.gz'
-    const checksums = 'zigcss-v0.6.0-rc.1-aarch64-macos.sha256'
+    const archive = 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz'
+    const checksums = 'zigcss-v0.6.0-rc.2-aarch64-macos.sha256'
     fs.writeFileSync(path.join(temporary, archive), 'archive fixture')
     fs.writeFileSync(path.join(temporary, checksums), 'manifest fixture')
     const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
@@ -299,11 +299,11 @@ test('npm lifecycle preload serves only the two exact local release URLs', () =>
       ZIGCSS_RELEASE_SMOKE_ARCHIVE: archive,
       ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: temporary,
       ZIGCSS_RELEASE_SMOKE_CHECKSUMS: checksums,
-      ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.1',
+      ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.2',
     }
     const allowed = spawnSync(process.execPath, ['-e', [
       "const https = require('node:https')",
-      `https.get('https://github.com/vyakymenko/zigcss/releases/download/v0.6.0-rc.1/${checksums}', response => {`,
+      `https.get('https://github.com/vyakymenko/zigcss/releases/download/v0.6.0-rc.2/${checksums}', response => {`,
       "  let text = ''",
       "  response.setEncoding('utf8')",
       "  response.on('data', chunk => { text += chunk })",
@@ -326,7 +326,7 @@ test('npm lifecycle preload serves only the two exact local release URLs', () =>
     const runtimeFixture = runtimeTraceFixture(temporary)
     const runtimeBlocked = spawnSync(process.execPath, ['-e', [
       "const https = require('node:https')",
-      `https.get('https://github.com/vyakymenko/zigcss/releases/download/v0.6.0-rc.1/${archive}', () => { process.exitCode = 2 })`,
+      `https.get('https://github.com/vyakymenko/zigcss/releases/download/v0.6.0-rc.2/${archive}', () => { process.exitCode = 2 })`,
       "  .on('error', error => process.stdout.write(error.message))",
     ].join('\n')], {
       encoding: 'utf8',

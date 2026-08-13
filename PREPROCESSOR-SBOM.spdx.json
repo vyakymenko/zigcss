@@ -2,8 +2,8 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "zigcss-0.6.0-rc.1-npm-runtime",
-  "documentNamespace": "https://github.com/vyakymenko/zigcss/spdx/npm/0.6.0-rc.1/01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+  "name": "zigcss-0.6.0-rc.2-npm-runtime",
+  "documentNamespace": "https://github.com/vyakymenko/zigcss/spdx/npm/0.6.0-rc.2/01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
   "creationInfo": {
     "created": "2026-08-11T00:00:00Z",
     "creators": [
@@ -18,7 +18,7 @@
     {
       "SPDXID": "SPDXRef-Package-zigcss",
       "name": "zigcss",
-      "versionInfo": "0.6.0-rc.1",
+      "versionInfo": "0.6.0-rc.2",
       "supplier": "Person: Valentyn Yakymenko",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
@@ -30,7 +30,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/zigcss@0.6.0-rc.1"
+          "referenceLocator": "pkg:npm/zigcss@0.6.0-rc.2"
         }
       ]
     }
