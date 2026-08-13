@@ -612,6 +612,35 @@ fn expectExitCode(result: Child.RunResult, expected: u8) !void {
     }
 }
 
+test "stable native syntax selection and help agree with executable CLI tests" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var help = try runInDir(tmp.dir, &.{"--help"});
+    defer deinitRun(&help);
+    try expectExitCode(help, 0);
+    try std.testing.expectEqual(@as(usize, 0), help.stderr.len);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        help.stdout,
+        "--syntax <syntax>        Select css (default), scss, sass, less, or stylus",
+    ) != null);
+    for ([_][]const u8{ "--experimental-native", "gated native syntax", "pre-graduation" }) |forbidden| {
+        try std.testing.expect(std.mem.indexOf(u8, help.stdout, forbidden) == null);
+    }
+
+    inline for (route_cases) |case| {
+        var result = try runCompilerNamed(case.filename, case.input, &.{
+            "--syntax",
+            case.syntax,
+            "--minify",
+        });
+        defer deinitRun(&result);
+        try expectExitCode(result, 0);
+        try std.testing.expectEqualStrings(case.expected, result.stdout);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "experimental release candidate") != null);
+    }
+}
+
 test "binary CLI routes the finite native syntax set through the pre-graduation bridge" {
     inline for (route_cases) |case| {
         var first = try runCompilerNamed(case.filename, case.input, &.{
@@ -786,9 +815,9 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
 
     var implicit = try runCompilerNamed("input.scss", input, &.{ "--syntax", "scss", "--minify" });
     defer deinitRun(&implicit);
-    try expectExitCode(implicit, 2);
-    try std.testing.expectEqual(@as(usize, 0), implicit.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, implicit.stderr, "unsupported syntax: scss") != null);
+    try expectExitCode(implicit, 0);
+    try std.testing.expectEqualStrings(route_cases[0].expected, implicit.stdout);
+    try std.testing.expect(std.mem.indexOf(u8, implicit.stderr, "experimental release candidate") != null);
 
     var css_gate = try runCompilerNamed("input.css", ".a { color: red; }", &.{
         "--experimental-native",
@@ -820,7 +849,7 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
         defer deinitRun(&result);
         try expectExitCode(result, 2);
         try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
-        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unavailable for the pre-graduation native CLI") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unavailable for native stylesheet syntax") != null);
     }
 
     var duplicate_map = try runCompilerNamed("input.scss", input, &.{

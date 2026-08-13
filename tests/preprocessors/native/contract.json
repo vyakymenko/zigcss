@@ -637,7 +637,7 @@
       },
       {
         "id": "binary-help",
-        "state": "pending",
+        "state": "verified",
         "closureEvidence": ["stable native syntax selection and help agree with executable CLI tests"]
       },
       {

@@ -659,7 +659,7 @@ const expectedCapabilityGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'binary-help',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: Object.freeze([
         'stable native syntax selection and help agree with executable CLI tests',
       ]),
@@ -1328,6 +1328,52 @@ export function loadContract() {
 
 function requireText(source, needle, label) {
   if (!source.includes(needle)) fail(`${label} is missing ${JSON.stringify(needle)}`)
+}
+
+function validateCapabilityGraduation(graduation, productionSources, cliTests, plan, readme) {
+  if (!same(graduation, expectedCapabilityGraduation)) {
+    fail('capability graduation contract drifted')
+  }
+  requireText(plan, '`NATIVE-008` | Graduate native rows in machine metadata', 'NATIVE-008 plan package')
+
+  const binaryCli = new Map(productionSources).get('src/main.zig') ?? ''
+  const help = binaryCli.match(/fn printUsage\(\) !void \{[\s\S]*?\n\}/)?.[0]
+  if (help === undefined) fail('native binary help implementation is missing')
+  requireText(
+    help,
+    '--syntax <syntax>        Select css (default), scss, sass, less, or stylus',
+    'stable native syntax help',
+  )
+  requireText(
+    help,
+    '--source-map             Embed a composed map for a native stylesheet syntax',
+    'stable native source-map help',
+  )
+  for (const forbidden of ['--experimental-native', 'gated native syntax', 'pre-graduation']) {
+    if (help.includes(forbidden)) fail(`native binary help retains pre-graduation option ${JSON.stringify(forbidden)}`)
+  }
+  if (binaryCli.includes('the native route requires --experimental-native')) {
+    fail('stable native syntax selection still requires the experimental gate')
+  }
+
+  const evidenceName = 'stable native syntax selection and help agree with executable CLI tests'
+  const evidence = cliTests.match(new RegExp(
+    `test "${evidenceName}" \\{[\\s\\S]*?\\n\\}\\n\\ntest `,
+  ))?.[0]
+  if (evidence === undefined) fail('stable native CLI executable evidence is missing')
+  requireText(evidence, 'inline for (route_cases)', 'finite stable native syntax evidence')
+  requireText(
+    evidence,
+    'runCompilerNamed(case.filename, case.input, &.{\n            "--syntax",',
+    'ungated stable native syntax evidence',
+  )
+  requireText(evidence, '--syntax <syntax>        Select css (default), scss, sass, less, or stylus', 'stable help evidence')
+
+  requireText(
+    readme,
+    'the four preprocessor frontends are moving through private native conformance gates',
+    'pre-graduation README claim boundary',
+  )
 }
 
 function validateAdapter(adapter, index, plan) {
@@ -2243,7 +2289,7 @@ function validateInternalReachability(implementations, buildFile, productionSour
     ['fn renderNativeCss(', 'native binary CLI source-map renderer'],
     ['std.base64.standard.Encoder.encode(', 'native binary CLI inline source-map encoding'],
     ['task.rendered_css = renderNativeCss(', 'native binary CLI parallel map preparation'],
-    ['--source-map             Embed a composed map for a gated native syntax', 'native binary CLI source-map help'],
+    ['--source-map             Embed a composed map for a native stylesheet syntax', 'native binary CLI source-map help'],
   ]) {
     requireText(binaryCli, needle, label)
   }
@@ -2351,7 +2397,7 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     binaryCli,
-    '"optimize and profile are unavailable for the pre-graduation native CLI"',
+    '"optimize and profile are unavailable for native stylesheet syntax"',
     'native binary CLI pending execution-mode boundary',
   )
   requireText(
@@ -2361,8 +2407,8 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     binaryCli,
-    'file/stdin/parallel-batch/watch native route',
-    'native binary CLI parallel help boundary',
+    'Select css (default), scss, sass, less, or stylus',
+    'native binary CLI finite syntax help boundary',
   )
   requireText(
     binaryCli,
@@ -2737,14 +2783,12 @@ export function validateContract(
     releaseSmokePreloadSource,
     productionSources,
   )
-  if (!same(contract.capabilityGraduation, expectedCapabilityGraduation)) {
-    fail('capability graduation contract drifted')
-  }
-  requireText(plan, '`NATIVE-008` | Graduate native rows in machine metadata', 'NATIVE-008 plan package')
-  requireText(
+  validateCapabilityGraduation(
+    contract.capabilityGraduation,
+    productionSources,
+    cliTests,
+    plan,
     readme,
-    'the four preprocessor frontends are moving through private native conformance gates',
-    'pre-graduation README claim boundary',
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

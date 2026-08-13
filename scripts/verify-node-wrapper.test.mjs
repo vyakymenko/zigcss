@@ -28,7 +28,7 @@ function withWrapperFixture(run) {
     fs.writeFileSync(binary, `#!/usr/bin/env node
 const args = process.argv.slice(2)
 if (args.length === 1 && ['--help', '-h'].includes(args[0])) {
-  process.stdout.write('ZigCSS native pre-graduation CLI\\n--experimental-native\\n--syntax <syntax>\\nprovider plugins unavailable\\n')
+  process.stdout.write('ZigCSS native CLI\\n--syntax <syntax> Select css, scss, sass, less, or stylus\\nprovider plugins unavailable\\n')
   return
 }
 if (args.includes('--experimental-native')) {
@@ -155,15 +155,14 @@ test('javascript wrapper preserves native diagnostic streams and exit status', (
   })
 })
 
-test('npm wrapper help preserves the pre-graduation native boundary', () => {
+test('npm wrapper forwards stable native binary help', () => {
   withWrapperFixture(wrapper => {
     const result = spawnSync(process.execPath, [wrapper, '--help'], { encoding: 'utf8' })
     assert.equal(result.status, 0, result.stderr)
     assert.equal(result.stderr, '')
     for (const expected of [
-      'native pre-graduation CLI',
-      '--experimental-native',
-      '--syntax <syntax>',
+      'native CLI',
+      '--syntax <syntax> Select css, scss, sass, less, or stylus',
       'provider plugins unavailable',
     ]) {
       assert.match(result.stdout, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))

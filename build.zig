@@ -440,7 +440,7 @@ pub fn build(b: *std.Build) void {
     run_native_cli_tests.step.dependOn(b.getInstallStep());
     const native_cli_step = b.step(
         "test-native-cli",
-        "Test the pre-graduation native stylesheet binary CLI route",
+        "Test stable native stylesheet syntax selection and binary CLI routing",
     );
     native_cli_step.dependOn(&run_native_cli_tests.step);
 

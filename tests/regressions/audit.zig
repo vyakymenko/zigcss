@@ -1398,10 +1398,10 @@ test "CLI syntax selection is explicit bounded and non-repeatable (CLI-011)" {
     try expectExitCode(missing, 2);
     try std.testing.expect(std.mem.indexOf(u8, missing.stderr, "--syntax requires a value") != null);
 
-    var unsupported = try runCompiler(input, &.{ "--syntax", "scss" });
+    var unsupported = try runCompiler(input, &.{ "--syntax", "scss-next" });
     defer deinitRun(&unsupported);
     try expectExitCode(unsupported, 2);
-    try std.testing.expect(std.mem.indexOf(u8, unsupported.stderr, "unsupported syntax: scss") != null);
+    try std.testing.expect(std.mem.indexOf(u8, unsupported.stderr, "unsupported syntax: scss-next") != null);
     try std.testing.expectEqual(@as(usize, 0), unsupported.stdout.len);
 
     var duplicate = try runCompiler(input, &.{ "--syntax", "css", "--syntax", "css" });

@@ -1447,10 +1447,9 @@ fn printUsage() !void {
             "\nAvailable options:\n" ++
             "  -o, --output <path|->    Output file/stdout, or directory with --output-dir\n" ++
             "  --output-dir             Require batch output under the -o directory\n" ++
-            "  --syntax <syntax>        Select CSS (default), or a gated native syntax\n" ++
-            "  --experimental-native   Enable the pre-graduation file/stdin/parallel-batch/watch native route\n" ++
+            "  --syntax <syntax>        Select css (default), scss, sass, less, or stylus\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
-            "  --source-map             Embed a composed map for a gated native syntax\n" ++
+            "  --source-map             Embed a composed map for a native stylesheet syntax\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
             "  --watch                  Watch one input and its confined local imports\n" ++
             "  --profile                Report API stages and requested memory bytes\n" ++
@@ -1781,13 +1780,10 @@ pub fn main() !void {
     }
     if (stdin_inputs > 1) exitWithCliError("stdin may only be specified once", .{});
 
-    if (native_syntax) |selected| {
-        if (!experimental_native_flag) {
-            exitWithCliError("unsupported syntax: {s}; the native route requires --experimental-native", .{@tagName(selected)});
-        }
+    if (native_syntax != null) {
         if (optimize_flag or profile_flag) {
             exitWithCliError(
-                "optimize and profile are unavailable for the pre-graduation native CLI",
+                "optimize and profile are unavailable for native stylesheet syntax",
                 .{},
             );
         }

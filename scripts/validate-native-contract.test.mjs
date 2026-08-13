@@ -131,7 +131,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       ],
     }, {
       id: 'binary-help',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: ['stable native syntax selection and help agree with executable CLI tests'],
     }, {
       id: 'readme',
@@ -1323,13 +1323,54 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
     graduation => graduation.terminalContract.surfaces.reverse(),
     graduation => { graduation.terminalContract.pluginParity = true },
     graduation => { graduation.gates[0].state = 'pending' },
-    graduation => { graduation.gates[1].state = 'verified' },
+    graduation => { graduation.gates[1].state = 'pending' },
     graduation => graduation.gates.push(structuredClone(graduation.gates[0])),
   ]) {
     const changed = clone(loadContract())
     mutate(changed.capabilityGraduation)
     assert.throws(() => validateContract(changed), /capability graduation contract drifted/)
   }
+})
+
+test('binds stable binary help to executable finite syntax evidence', () => {
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/cli/native_cli.zig'), 'utf8')
+    .replace(
+      'test "stable native syntax selection and help agree with executable CLI tests"',
+      'test "removed stable native CLI evidence"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { cliTests: missingEvidence }),
+    /stable native CLI executable evidence is missing/,
+  )
+
+  const staleHelp = loadProductionSources().map(([relativePath, source]) => [
+    relativePath,
+    relativePath === 'src/main.zig'
+      ? source.replace(
+        '--syntax <syntax>        Select css (default), scss, sass, less, or stylus',
+        '--syntax <syntax>        Select CSS (default), or a gated native syntax',
+      )
+      : source,
+  ])
+  assert.throws(
+    () => validateContract(loadContract(), { productionSources: staleHelp }),
+    /stable native syntax help is missing/,
+  )
+
+  const staleGate = loadProductionSources().map(([relativePath, source]) => [
+    relativePath,
+    relativePath === 'src/main.zig'
+      ? source.replace(
+        'if (native_syntax != null) {',
+        'if (native_syntax != null) {\n        // the native route requires --experimental-native',
+      )
+      : source,
+  ])
+  assert.throws(
+    () => validateContract(loadContract(), { productionSources: staleGate }),
+    /stable native syntax selection still requires the experimental gate/,
+  )
 })
 
 test('binds the owner-authorized native publication boundary', () => {
