@@ -2,9 +2,9 @@
 
 The ZigCSS source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. CSS enters the verified core directly. Each preprocessor frontend evaluates to complete CSS, which is then parsed with recovery disabled before output can be returned or committed.
 
-The public npm release candidate `0.4.0-rc.3` remains CSS-only. The repository still carries the unpublished `0.5.0-rc.1` source identity while `NATIVE-009` release selection remains closed.
+The public npm release candidate `0.4.0-rc.3` remains CSS-only. The repository now carries the selected, unpublished `0.6.0-rc.1` source identity while the remaining `NATIVE-009` hosted and release gates stay closed.
 
-The four preprocessor rows are `native-differential`, not yet `native-graduated`: their pinned corpora, strict negative/resource cases, deterministic reruns, generated-CSS validation, product routing, zero-dependency package, and five-target gates pass. Release identity, final hosted validation, and publication remain separate.
+The four preprocessor rows are `native-differential`, not yet `native-graduated`: their pinned corpora, strict negative/resource cases, deterministic reruns, generated-CSS validation, product routing, zero-dependency package, and five-target gates pass. The candidate identity and local validation are fixed; final hosted validation and publication remain separate.
 
 The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` verifies the closed adapter inventory, accepted ADR strategy, exact native source inventory, development-oracle binding, containment evidence, and direct native CLI probes. The native contract additionally binds every language source, package state, and the closed release interlock.
 

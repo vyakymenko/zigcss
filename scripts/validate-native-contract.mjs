@@ -708,8 +708,17 @@ const expectedReleaseGraduation = Object.freeze({
   releaseGapFamily: 'native-release-evidence',
   state: 'in-progress',
   packageState: 'in-progress',
-  candidateVersion: null,
-  candidateTag: null,
+  candidateVersion: '0.6.0-rc.1',
+  candidateTag: 'v0.6.0-rc.1',
+  candidateSelection: Object.freeze({
+    selectedOn: '2026-08-13',
+    localTagStateAtSelection: 'absent',
+    githubRepository: 'vyakymenko/zigcss',
+    githubTagStateAtSelection: 'absent',
+    npmPackage: 'zigcss',
+    npmVersionStateAtSelection: 'absent',
+    observedPublishedNpmVersions: Object.freeze(['0.2.0', '0.2.1', '0.3.0', '0.4.0-rc.3']),
+  }),
   terminalContract: Object.freeze({
     syntaxes: Object.freeze(['css', 'scss', 'sass', 'less', 'stylus']),
     targets: Object.freeze(nativeTargetContract.map(target => target.target)),
@@ -736,12 +745,12 @@ const expectedReleaseGraduation = Object.freeze({
       evidenceRequirements: Object.freeze([
         'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
         'five native syntax and target inventories are resource-derived',
-        'candidate version tag and release interlock remain unselected and closed',
+        'candidate version and tag selection remains separate from the closed release interlock',
       ]),
     }),
     Object.freeze({
       id: 'immutable-candidate',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'one unused 0.6.x native version and matching immutable v tag are selected',
         'the provider-backed 0.5.0-rc.1 reference candidate remains ineligible',
@@ -749,7 +758,7 @@ const expectedReleaseGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'local-validation',
-      state: 'pending',
+      state: 'verified',
       evidenceRequirements: Object.freeze([
         'Debug ReleaseSafe differential fuzz allocation resource documentation package and audit gates pass on the candidate',
       ]),
@@ -1965,6 +1974,7 @@ function validateReleaseGraduation(release, plan, buildWorkflow, releaseWorkflow
     '`NATIVE-009` | Select one immutable native release candidate, pass every local/hosted/release/consumer gate',
     'NATIVE-009 roadmap release contract',
   )
+  requireText(plan, 'Candidate: `0.6.0-rc.1`', 'NATIVE-009 selected candidate')
   for (const target of nativeTargetContract) {
     requireText(buildWorkflow, `target: ${target.target}`, `Build native target ${target.target}`)
     requireText(releaseWorkflow, `target: ${target.target}`, `Release native target ${target.target}`)
@@ -3470,7 +3480,9 @@ export function validateContract(
     fail(`adapter inventory must contain ${expectedAdapterIds.length} rows`)
   }
 
-  if (manifest.version !== contract.referenceCandidate) fail('package version is not the reference candidate')
+  if (manifest.version !== contract.releaseGraduation.candidateVersion) {
+    fail('package version is not the selected native candidate')
+  }
   if (!same(manifest.dependencies ?? {}, {})) {
     fail('native package production dependency graph is not empty')
   }

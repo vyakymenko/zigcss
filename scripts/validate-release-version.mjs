@@ -33,6 +33,7 @@ export const releaseSourcePaths = Object.freeze([
   'package-lock.json',
   'package.json',
   'src/main.zig',
+  'tests/preprocessors/native/contract.json',
   'tests/regressions/audit.zig',
   'vscode-extension/package-lock.json',
   'vscode-extension/package.json',
@@ -117,10 +118,10 @@ export function validateReleaseSources(sources) {
 
   const planTarget = singleCapture(
     sources.get('DEVELOPMENT_PLAN.md'),
-    /## Milestone 9:[\s\S]*?\nCandidate: `([^`]+)`/g,
-    'Milestone 9 release candidate',
+    /## Milestone 10:[\s\S]*?\nCandidate: `([^`]+)`/g,
+    'Milestone 10 release candidate',
   )
-  parseReleaseVersion(planTarget, 'Milestone 9 candidate')
+  parseReleaseVersion(planTarget, 'Milestone 10 candidate')
   expectEqual(version, planTarget, 'VERSION')
 
   const rootManifest = parseJson(sources, 'package.json')
@@ -129,6 +130,7 @@ export function validateReleaseSources(sources) {
   const docsLock = parseJson(sources, 'docs/package-lock.json')
   const vscodeManifest = parseJson(sources, 'vscode-extension/package.json')
   const vscodeLock = parseJson(sources, 'vscode-extension/package-lock.json')
+  const nativeContract = parseJson(sources, 'tests/preprocessors/native/contract.json')
 
   expectEqual(rootManifest.name, 'zigcss', 'root npm package name')
   expectEqual(rootManifest.version, version, 'root npm package version')
@@ -140,6 +142,21 @@ export function validateReleaseSources(sources) {
   expectEqual(vscodeManifest.preview, true, 'VS Code preview marker')
   expectEqual(vscodeLock.version, vscodeVersion, 'VS Code lock version')
   expectEqual(vscodeLock.packages?.['']?.version, vscodeVersion, 'VS Code lock package version')
+  expectEqual(nativeContract.referenceCandidate, '0.5.0-rc.1', 'native reference candidate')
+  expectEqual(nativeContract.releaseGraduation?.candidateVersion, version, 'native candidate version')
+  expectEqual(nativeContract.releaseGraduation?.candidateTag, `v${version}`, 'native candidate tag')
+  expectEqual(
+    nativeContract.releaseGraduation?.gates?.find(gate => gate.id === 'immutable-candidate')?.state,
+    'verified',
+    'native immutable candidate gate',
+  )
+  expectEqual(
+    nativeContract.releaseGraduation?.gates?.find(gate => gate.id === 'local-validation')?.state,
+    'verified',
+    'native local validation gate',
+  )
+  expectEqual(nativeContract.nativeReleaseReady, false, 'native release interlock')
+  expectEqual(nativeContract.nativeReleaseVersion, null, 'graduated native release version')
 
   expectEqual(
     rootManifest.scripts?.['check:version'],
@@ -177,7 +194,7 @@ export function validateReleaseSources(sources) {
   const formulaVersion = singleCapture(formula, /^\s*version "([^"]+)"$/gm, 'Homebrew formula version')
   const formulaSha256 = singleCapture(formula, /^\s*sha256 "([0-9a-f]{64})"$/gm, 'Homebrew source SHA-256')
   expectEqual(formulaCommit, homebrewSourceCommit, 'Homebrew source commit')
-  expectEqual(formulaVersion, version, 'Homebrew formula version')
+  expectEqual(formulaVersion, nativeContract.referenceCandidate, 'Homebrew formula version')
   expectEqual(formulaSha256, homebrewSourceSha256, 'Homebrew source SHA-256')
   expectLiteralCount(formula, '  depends_on "zig@0.15" => :build', 1, 'Homebrew Zig dependency')
   expectLiteralCount(
@@ -208,7 +225,7 @@ export function validateReleaseSources(sources) {
 
   const readme = sources.get('README.md')
   const status = sources.get('docs/src/content/docs/guide/status.md')
-  expectLiteralCount(readme, version, 2, 'README release claims')
+  expectLiteralCount(readme, version, 3, 'README release claims')
   expectLiteralCount(sources.get('NPM_PUBLISH.md'), version, 2, 'npm publishing guide release claims')
   expectLiteralCount(status, version, 5, 'status guide release claims')
   expectLiteralCount(sources.get('docs/src/content/docs/guide/build-from-source.md'), version, 1, 'build guide release claims')
@@ -219,7 +236,7 @@ export function validateReleaseSources(sources) {
   expectContains(status, `Marketplace version ${vscodeVersion}`, 'status VS Code mapping')
 
   const changelog = sources.get('CHANGELOG.md')
-  expectContains(changelog, `Target release: \`${version}\` (not published).`, 'unreleased changelog target')
+  expectContains(changelog, `Target release: \`${version}\` (selected, not published).`, 'unreleased changelog target')
   if (/ZigCSS 0\.3 (?:is|and)/.test(changelog)) fail('changelog recovery note still claims the 0.3 line is current')
 
   const buildWorkflow = sources.get('.github/workflows/build.yml')

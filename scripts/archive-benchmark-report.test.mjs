@@ -85,7 +85,7 @@ function completeReport() {
       clock: 'monotonic-nanoseconds',
       runnerExecutableSha256: 'e'.repeat(64),
       tools: [
-        { id: 'zigcss', version: '0.5.0-rc.1', executableSha256: 'b'.repeat(64) },
+        { id: 'zigcss', version: '0.6.0-rc.1', executableSha256: 'b'.repeat(64) },
         { id: 'esbuild', version: '0.28.1', executableSha256: 'c'.repeat(64) },
         { id: 'lightningcss', version: '1.30.1', executableSha256: 'd'.repeat(64) },
       ],

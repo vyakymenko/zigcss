@@ -240,7 +240,7 @@
       "anchors": [
         {
           "path": "VERSION",
-          "contains": ["0.5.0-rc.1"]
+          "contains": ["0.6.0-rc.1"]
         },
         {
           "path": "scripts/validate-release-version.mjs",
@@ -310,7 +310,7 @@
       "surface": "Zig package metadata",
       "status": "Experimental, consumer-tested",
       "statusKind": "experimental",
-      "behavior": "Package `zigcss` 0.5.0-rc.1 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`.",
+      "behavior": "Package `zigcss` 0.6.0-rc.1 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`.",
       "evidence": ["zig-package", "public-api", "release-version"]
     },
     {
@@ -454,7 +454,7 @@
       "surface": "VS Code extension",
       "status": "Experimental, package-tested",
       "statusKind": "experimental",
-      "behavior": "Marketplace version 0.5.0 maps to core 0.5.0-rc.1 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published.",
+      "behavior": "Marketplace version 0.6.0 maps to core 0.6.0-rc.1 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published.",
       "evidence": ["vscode", "lsp", "dependencies", "release-version"]
     },
     {

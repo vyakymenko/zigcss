@@ -672,8 +672,17 @@
     "releaseGapFamily": "native-release-evidence",
     "state": "in-progress",
     "packageState": "in-progress",
-    "candidateVersion": null,
-    "candidateTag": null,
+    "candidateVersion": "0.6.0-rc.1",
+    "candidateTag": "v0.6.0-rc.1",
+    "candidateSelection": {
+      "selectedOn": "2026-08-13",
+      "localTagStateAtSelection": "absent",
+      "githubRepository": "vyakymenko/zigcss",
+      "githubTagStateAtSelection": "absent",
+      "npmPackage": "zigcss",
+      "npmVersionStateAtSelection": "absent",
+      "observedPublishedNpmVersions": ["0.2.0", "0.2.1", "0.3.0", "0.4.0-rc.3"]
+    },
     "terminalContract": {
       "syntaxes": ["css", "scss", "sass", "less", "stylus"],
       "targets": [
@@ -706,12 +715,12 @@
         "evidenceRequirements": [
           "finite local hosted release artifact provenance consumer and publication surfaces are machine-bound",
           "five native syntax and target inventories are resource-derived",
-          "candidate version tag and release interlock remain unselected and closed"
+          "candidate version and tag selection remains separate from the closed release interlock"
         ]
       },
       {
         "id": "immutable-candidate",
-        "state": "pending",
+        "state": "verified",
         "evidenceRequirements": [
           "one unused 0.6.x native version and matching immutable v tag are selected",
           "the provider-backed 0.5.0-rc.1 reference candidate remains ineligible"
@@ -719,7 +728,7 @@
       },
       {
         "id": "local-validation",
-        "state": "pending",
+        "state": "verified",
         "evidenceRequirements": [
           "Debug ReleaseSafe differential fuzz allocation resource documentation package and audit gates pass on the candidate"
         ]

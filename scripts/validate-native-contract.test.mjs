@@ -23,8 +23,17 @@ const expectedReleaseGraduation = {
   releaseGapFamily: 'native-release-evidence',
   state: 'in-progress',
   packageState: 'in-progress',
-  candidateVersion: null,
-  candidateTag: null,
+  candidateVersion: '0.6.0-rc.1',
+  candidateTag: 'v0.6.0-rc.1',
+  candidateSelection: {
+    selectedOn: '2026-08-13',
+    localTagStateAtSelection: 'absent',
+    githubRepository: 'vyakymenko/zigcss',
+    githubTagStateAtSelection: 'absent',
+    npmPackage: 'zigcss',
+    npmVersionStateAtSelection: 'absent',
+    observedPublishedNpmVersions: ['0.2.0', '0.2.1', '0.3.0', '0.4.0-rc.3'],
+  },
   terminalContract: {
     syntaxes: ['css', 'scss', 'sass', 'less', 'stylus'],
     targets: [
@@ -56,18 +65,18 @@ const expectedReleaseGraduation = {
     evidenceRequirements: [
       'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
       'five native syntax and target inventories are resource-derived',
-      'candidate version tag and release interlock remain unselected and closed',
+      'candidate version and tag selection remains separate from the closed release interlock',
     ],
   }, {
     id: 'immutable-candidate',
-    state: 'pending',
+    state: 'verified',
     evidenceRequirements: [
       'one unused 0.6.x native version and matching immutable v tag are selected',
       'the provider-backed 0.5.0-rc.1 reference candidate remains ineligible',
     ],
   }, {
     id: 'local-validation',
-    state: 'pending',
+    state: 'verified',
     evidenceRequirements: [
       'Debug ReleaseSafe differential fuzz allocation resource documentation package and audit gates pass on the candidate',
     ],
@@ -1567,7 +1576,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   }
 })
 
-test('binds the finite NATIVE-009 release evidence contract before candidate selection', () => {
+test('binds the finite NATIVE-009 candidate and local-validation evidence', () => {
   const contract = loadContract()
   assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
 
@@ -1576,15 +1585,18 @@ test('binds the finite NATIVE-009 release evidence contract before candidate sel
     release => { release.releaseGapFamily = 'renamed-release-family' },
     release => { release.state = 'closed' },
     release => { release.packageState = 'verified' },
-    release => { release.candidateVersion = '0.6.0-rc.1' },
-    release => { release.candidateTag = 'v0.6.0-rc.1' },
+    release => { release.candidateVersion = '0.6.0-rc.2' },
+    release => { release.candidateTag = 'v0.6.0-rc.2' },
+    release => { release.candidateSelection.githubTagStateAtSelection = 'present' },
+    release => { release.candidateSelection.observedPublishedNpmVersions.push('0.6.0-rc.1') },
     release => release.terminalContract.syntaxes.pop(),
     release => release.terminalContract.targets.reverse(),
     release => release.terminalContract.preTagSurfaces.reverse(),
     release => release.terminalContract.postTagSurfaces.push('npm-latest'),
     release => { release.terminalContract.referenceCandidateEligible = true },
     release => { release.gates[0].state = 'pending' },
-    release => { release.gates[1].state = 'verified' },
+    release => { release.gates[1].state = 'pending' },
+    release => { release.gates[2].state = 'pending' },
     release => release.gates.push(clone(release.gates[0])),
   ]) {
     const changed = clone(contract)

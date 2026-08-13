@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Target release: `0.5.0-rc.1` (not published).
+Target release: `0.6.0-rc.1` (selected, not published).
 
-This historical reference identity is not eligible for publication. The native target line is `0.6.0`; its exact immutable candidate remains unset until `NATIVE-009`.
+The provider-backed `0.5.0-rc.1` historical reference identity remains ineligible for publication. The native `0.6.0-rc.1` candidate was selected only after its GitHub tag and npm version were proven unused; its release interlock remains closed pending the remaining `NATIVE-009` evidence.
 
-`NATIVE-008` closes the finite source-capability inventory for the self-contained native stylesheet frontends: machine rows, binary help, README, website lab, compiled examples, compatibility guides, and these migration notes now describe one `native-differential` snapshot. This does not graduate or publish a release. `nativeReleaseReady` remains `false`, and `NATIVE-009` alone owns candidate selection and release validation.
+`NATIVE-008` closes the finite source-capability inventory for the self-contained native stylesheet frontends: machine rows, binary help, README, website lab, compiled examples, compatibility guides, and these migration notes now describe one `native-differential` snapshot. This does not graduate or publish a release. `nativeReleaseReady` remains `false`, and `NATIVE-009` owns the selected candidate's remaining hosted and release validation.
 
 ### Added
 

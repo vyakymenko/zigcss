@@ -95,7 +95,7 @@ function makeInstallerFixture({ binary = elf(62), extraEntry = false, tamper = f
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-consumer-'))
   const packageRoot = path.join(temporary, 'package')
   fs.mkdirSync(packageRoot)
-  const assets = releaseAssetsFor('0.5.0-rc.1', 'x86_64-linux')
+  const assets = releaseAssetsFor('0.6.0-rc.1', 'x86_64-linux')
   const archive = makeArchive(temporary, assets.archive, binary, extraEntry)
   const sbom = Buffer.from('{"spdxVersion":"SPDX-2.3"}\n')
   const manifest = Buffer.from([
@@ -145,9 +145,9 @@ function makeContainerFixture({
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-container-'))
   const assetsRoot = path.join(temporary, 'release-assets')
   fs.mkdirSync(assetsRoot)
-  fs.writeFileSync(path.join(temporary, 'package.json'), '{"version":"0.5.0-rc.1"}\n')
+  fs.writeFileSync(path.join(temporary, 'package.json'), '{"version":"0.6.0-rc.1"}\n')
 
-  const assets = releaseAssetsFor('0.5.0-rc.1', target)
+  const assets = releaseAssetsFor('0.6.0-rc.1', target)
   const archive = makeArchive(temporary, assets.archive, binary, extraEntry)
   const confinedArchive = path.join(assetsRoot, assets.archive)
   fs.renameSync(archive, confinedArchive)
@@ -188,19 +188,19 @@ test('npm installer derives exactly the release workflow asset contract', () => 
 
   for (const policy of releaseTargets) {
     const [platform, arch] = nodePlatforms.get(policy.target)
-    const descriptor = installer.releaseDescriptor('0.5.0-rc.1', platform, arch)
+    const descriptor = installer.releaseDescriptor('0.6.0-rc.1', platform, arch)
     assert.equal(descriptor.target, policy.target)
     assert.equal(descriptor.binaryName, policy.binaryName)
-    assert.deepEqual(descriptor.assets, releaseAssetsFor('0.5.0-rc.1', policy.target))
+    assert.deepEqual(descriptor.assets, releaseAssetsFor('0.6.0-rc.1', policy.target))
     assert.equal(
       descriptor.archiveUrl,
-      `https://github.com/vyakymenko/zigcss/releases/download/v0.5.0-rc.1/${descriptor.assets.archive}`,
+      `https://github.com/vyakymenko/zigcss/releases/download/v0.6.0-rc.1/${descriptor.assets.archive}`,
     )
   }
 
   for (const [platform, arch] of [['win32', 'arm64'], ['linux', 'ia32'], ['freebsd', 'x64']]) {
     assert.throws(
-      () => installer.releaseDescriptor('0.5.0-rc.1', platform, arch),
+      () => installer.releaseDescriptor('0.6.0-rc.1', platform, arch),
       /Unsupported platform and architecture/,
     )
   }
@@ -208,7 +208,7 @@ test('npm installer derives exactly the release workflow asset contract', () => 
 })
 
 test('npm installer accepts only the exact release checksum manifest', () => {
-  const assets = releaseAssetsFor('0.5.0-rc.1', 'x86_64-linux')
+  const assets = releaseAssetsFor('0.6.0-rc.1', 'x86_64-linux')
   const archiveDigest = 'a'.repeat(64)
   const sbomDigest = 'b'.repeat(64)
   const valid = `${archiveDigest}  ${assets.archive}\n${sbomDigest}  ${assets.sbom}\n`
@@ -240,7 +240,7 @@ test('npm installer verifies checksum and target before atomic replacement', asy
     fs.writeFileSync(installed, 'old binary\n')
 
     const result = await installer.install({
-      version: '0.5.0-rc.1',
+      version: '0.6.0-rc.1',
       platform: 'linux',
       arch: 'x64',
       packageRoot: fixture.packageRoot,
@@ -271,7 +271,7 @@ test('npm installer preserves an existing binary and cleans temporary files on c
 
     await assert.rejects(
       installer.install({
-        version: '0.5.0-rc.1',
+        version: '0.6.0-rc.1',
         platform: 'linux',
         arch: 'x64',
         packageRoot: fixture.packageRoot,
@@ -298,7 +298,7 @@ test('npm installer rejects wrong-target and multi-entry archives before replace
 
       await assert.rejects(
         installer.install({
-          version: '0.5.0-rc.1',
+          version: '0.6.0-rc.1',
           platform: 'linux',
           arch: 'x64',
           packageRoot: fixture.packageRoot,
@@ -401,7 +401,7 @@ test('npm installer rejects a symlinked binary directory before downloading', as
     fs.symlinkSync(outside, path.join(packageRoot, 'bin'))
     await assert.rejects(
       installer.install({
-        version: '0.5.0-rc.1',
+        version: '0.6.0-rc.1',
         platform: 'linux',
         arch: 'x64',
         packageRoot,
@@ -478,7 +478,7 @@ test('Homebrew formula policy rejects mutable sources, missing trust data, and s
   const formula = fs.readFileSync(path.join(repositoryRoot, 'Formula/zigcss.rb'), 'utf8')
   const invalid = [
     [
-      formula.replace('archive/526002807edc856eb2dc391551ac3d5c1b77da00.tar.gz', 'archive/v0.5.0-rc.1.tar.gz'),
+      formula.replace('archive/526002807edc856eb2dc391551ac3d5c1b77da00.tar.gz', 'archive/v0.6.0-rc.1.tar.gz'),
       /full lowercase commit identity/,
     ],
     [
@@ -527,10 +527,10 @@ test('release container preparation verifies and confines a local Linux archive'
       root: fixture.root,
       outputDirectory: fixture.outputDirectory,
       target: fixture.target,
-      version: '0.5.0-rc.1',
+      version: '0.6.0-rc.1',
     })
     assert.equal(result.target, fixture.target)
-    assert.equal(result.version, '0.5.0-rc.1')
+    assert.equal(result.version, '0.6.0-rc.1')
     assert.deepEqual(fs.readFileSync(result.binary), fixture.binary)
     assert.equal(fs.statSync(result.binary).mode & 0o777, 0o555)
     assert.deepEqual(fs.readdirSync(path.join(fixture.root, fixture.outputDirectory)), ['bin'])
@@ -554,7 +554,7 @@ test('release container preparation removes output after trust failures', async 
           root: fixture.root,
           outputDirectory: fixture.outputDirectory,
           target: fixture.target,
-          version: '0.5.0-rc.1',
+          version: '0.6.0-rc.1',
         }),
         /(?:checksum does not match|does not match target|archive must contain exactly)/,
       )
@@ -584,7 +584,7 @@ test('release container preparation rejects inventory drift and symlink substitu
           root: fixture.root,
           outputDirectory: fixture.outputDirectory,
           target: fixture.target,
-          version: '0.5.0-rc.1',
+          version: '0.6.0-rc.1',
         }),
         /(?:must contain exactly|is unavailable|regular non-symlink file)/,
       )

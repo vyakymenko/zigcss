@@ -18,7 +18,7 @@ The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus 
 
 [Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. This repository still carries the unpublished 0.5.0-rc.1 source identity while native capability graduation finishes; evaluate the source snapshot before production.
+> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. This repository selects the unpublished native 0.6.0-rc.1 source candidate; evaluate it before production while hosted and release evidence remains pending.
 
 ## Native dependency-free migration
 
@@ -26,7 +26,7 @@ Publication of the provider-backed 0.5 candidate was cancelled before tagging. D
 
 The current native package contract has zero `dependencies` and zero `optionalDependencies`. The compiler itself starts no child process, performs no network access, and requires no runtime download. Five archive and offline-package jobs cover Linux x64/arm64, macOS x64/arm64, and Windows x64.
 
-Publication remains a separate gate: `nativeReleaseReady: false`, no native release version is selected, and the later `NATIVE-009` candidate checks remain closed.
+Publication remains a separate gate: `nativeReleaseReady: false`, the graduated native release version remains unset, and the selected 0.6.0-rc.1 identity cannot be tagged while later `NATIVE-009` evidence remains pending.
 
 `NATIVE-008` closes the finite source-capability inventory: machine rows, binary help, README, website, compiled examples, guides/compatibility metadata, and these migration notes now describe the same native-differential snapshot. This is not release graduation; executable plugin parity remains outside the contract and `NATIVE-009` remains the only release gate.
 
@@ -269,7 +269,7 @@ The experimental CSS LSP covers bounded JSON-RPC framing, full document sync, UT
 
 Its release checks pass large-document, Unicode, malformed-request, leak, and editor-integration gates.
 
-- The VS Code preview uses Marketplace version 0.5.0 for the current CSS core mapping and requires a separately installed ZigCSS binary.
+- The VS Code preview uses Marketplace version 0.6.0 for the current CSS core mapping and requires a separately installed ZigCSS binary.
 - The [Neovim configuration](neovim-config/README.md) uses the built-in LSP client and an explicit trusted executable path.
 
 Neither integration bundles a compiler binary.
@@ -278,14 +278,14 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 
 ## Project status
 
-- Source candidate: 0.5.0-rc.1 on green main; experimental and unpublished.
+- Source candidate: 0.6.0-rc.1 selected and locally validated; experimental, unpublished, and pending hosted integration evidence.
 - CSS core: `native-graduated`.
 - SCSS, indented Sass, Less, and Stylus: `native-differential` after parser/evaluator, pinned conformance, native product-routing, package, and five-target gates.
 - Production package closure: verified with zero production dependencies and no provider or host bytes; the compiler itself starts no child process and performs no network access.
 - Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
 - Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; release identity and publication remain closed under `NATIVE-009`.
 - Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
-- Publication: fail-closed until the exact later native candidate passes every local, hosted, artifact, provenance, and consumer gate.
+- Publication: fail-closed until this exact candidate passes every remaining hosted, release, artifact, provenance, consumer, and integration gate.
 
 The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.
 

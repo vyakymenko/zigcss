@@ -216,10 +216,10 @@ function zigBuildEnvironment(workspace) {
 
 export function checkHomebrewFormula(root = repositoryRoot) {
   const policy = parseHomebrewFormula(readFormula(root))
-  const canonicalVersion = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim()
-  if (policy.version !== canonicalVersion) fail('formula version does not match VERSION')
   run('git', ['cat-file', '-e', `${policy.sourceCommit}^{commit}`], { cwd: root })
   run('git', ['merge-base', '--is-ancestor', policy.sourceCommit, 'HEAD'], { cwd: root })
+  const sourceVersion = run('git', ['show', `${policy.sourceCommit}:VERSION`], { cwd: root }).trim()
+  if (policy.version !== sourceVersion) fail('formula version does not match its immutable source')
   return policy
 }
 
