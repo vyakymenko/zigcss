@@ -30,6 +30,20 @@ function sources() {
   }
 }
 
+function replaceWorkflowJobText(source, jobName, current, replacement) {
+  const header = `\n  ${jobName}:\n`
+  const start = source.indexOf(header)
+  assert.notEqual(start, -1, `missing workflow job ${jobName}`)
+  assert.equal(source.indexOf(header, start + header.length), -1, `duplicate workflow job ${jobName}`)
+  const bodyStart = start + header.length
+  const relativeEnd = source.slice(bodyStart).search(/\n  [A-Za-z][A-Za-z0-9_-]*:\n/)
+  const end = relativeEnd === -1 ? source.length : bodyStart + relativeEnd
+  const body = source.slice(bodyStart, end)
+  const changed = body.replace(current, replacement)
+  assert.notEqual(changed, body, `workflow job ${jobName} does not contain the requested mutation`)
+  return source.slice(0, bodyStart) + changed + source.slice(end)
+}
+
 test('native npm package has zero production and optional dependencies', () => {
   const { manifest, lock } = sources()
   assert.deepEqual(manifest.dependencies, {})
@@ -211,13 +225,41 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
     ),
     /release consumer.*attributable/i,
   )
+  for (const jobName of ['build', 'native-provenance-evidence', 'native-package-evidence']) {
+    assert.throws(
+      () => validatePreprocessorPackagingWorkflows(
+        replaceWorkflowJobText(
+          build,
+          jobName,
+          "node-version: '20.19.0'",
+          "node-version: '20'",
+        ),
+        release,
+        docs,
+      ),
+      /exact Node/,
+    )
+  }
   assert.throws(
     () => validatePreprocessorPackagingWorkflows(
-      build.replace("node-version: '20.19.0'", "node-version: '20'"),
+      replaceWorkflowJobText(
+        build,
+        'native-provenance-evidence',
+        "node-version: '20.19.0'",
+        "node-version: '20.19.0'\n          node-version: '20.19.0'",
+      ),
       release,
       docs,
     ),
     /exact Node/,
+  )
+  assert.equal(
+    validatePreprocessorPackagingWorkflows(
+      build.replace('name: Build\n', "name: Build\n# node-version: '20.19.0'\n"),
+      release,
+      docs,
+    ),
+    true,
   )
   assert.throws(
     () => validatePreprocessorPackagingWorkflows(

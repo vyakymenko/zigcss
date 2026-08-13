@@ -566,6 +566,29 @@ function literalCount(source, literal) {
   return source.split(literal).length - 1
 }
 
+function workflowJob(source, jobName) {
+  const header = `\n  ${jobName}:\n`
+  if (literalCount(source, header) !== 1) {
+    fail(`build workflow must contain exactly one ${jobName} job`)
+  }
+  const bodyStart = source.indexOf(header) + header.length
+  const relativeEnd = source.slice(bodyStart).search(/\n  [A-Za-z][A-Za-z0-9_-]*:\n/)
+  const bodyEnd = relativeEnd === -1 ? source.length : bodyStart + relativeEnd
+  return source.slice(bodyStart, bodyEnd)
+}
+
+function validateBuildPackageNodeJobs(build) {
+  const exactNodeLine = "          node-version: '20.19.0'"
+  for (const jobName of ['build', 'native-provenance-evidence', 'native-package-evidence']) {
+    const nodeVersionLines = workflowJob(build, jobName)
+      .split('\n')
+      .filter(line => /^\s+node-version:/.test(line))
+    if (!same(nodeVersionLines, [exactNodeLine])) {
+      fail(`build workflow job ${jobName} must use exact Node 20.19.0`)
+    }
+  }
+}
+
 export function validatePreprocessorPackagingWorkflows(build, release, docs) {
   const command = 'npm run test:preprocessor-package && npm run check:preprocessor-package'
   if (literalCount(build, command) !== 1 || literalCount(release, command) !== 1) {
@@ -593,9 +616,7 @@ export function validatePreprocessorPackagingWorkflows(build, release, docs) {
   if (releaseSetup < 0 || releasePackage <= releaseSetup || releaseVersion <= releasePackage) {
     fail('release preflight native package gate is ordered incorrectly')
   }
-  if (literalCount(build, "node-version: '20.19.0'") !== 2) {
-    fail('native package matrix and aggregate evidence must use exact Node 20.19.0')
-  }
+  validateBuildPackageNodeJobs(build)
   if (literalCount(release, "node-version: '20.19.0'") !== 3) {
     fail('all release npm surfaces must use exact Node 20.19.0')
   }
