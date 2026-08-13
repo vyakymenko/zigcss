@@ -14,21 +14,25 @@
 
 ZigCSS is an experimental native Zig CSS compiler built for low-overhead builds, deterministic output, and semantics-preserving transforms. It treats CSS like a language—not a string to rewrite until it looks smaller.
 
-The destination is one self-contained compiler for CSS, SCSS, indented Sass, Less, and Stylus. CSS is native today; the four preprocessor frontends are moving through private native conformance gates before ZigCSS makes a public dependency-free claim.
+The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. CSS is `native-graduated`; the four preprocessor rows are `native-differential` while the remaining capability surfaces and release gate stay fail-closed.
 
 [Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. The green 0.5.0-rc.1 source snapshot adds a canonical five-language reference pipeline, but it is unpublished and should be evaluated before production.
+> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. This repository still carries the unpublished 0.5.0-rc.1 source identity while native capability graduation finishes; evaluate the source snapshot before production.
 
 ## Native dependency-free migration
 
-Publication of the provider-backed 0.5 candidate was cancelled before tagging. Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 now act as pinned development oracles while Zig replacements earn graduation. The target 0.6 release has zero production dependencies, no provider process, and no runtime download.
+Publication of the provider-backed 0.5 candidate was cancelled before tagging. Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles. They judge differential tests but do not enter the compiler, release archives, installed production graph, or compilation runtime.
+
+The current native package contract has zero `dependencies` and zero `optionalDependencies`. The compiler itself starts no child process, performs no network access, and requires no runtime download. Five archive and offline-package jobs cover Linux x64/arm64, macOS x64/arm64, and Windows x64.
+
+Publication remains a separate gate: `nativeReleaseReady: false`, no native release version is selected, and the later `NATIVE-009` candidate checks remain closed.
 
 ## Why ZigCSS
 
 | What matters | ZigCSS contract |
 |---|---|
-| Native execution | The direct CSS path is a Zig binary and library with no language-provider startup. |
+| Native execution | All five source inputs share native Zig compilation paths; the JavaScript delivery shim only invokes the binary. |
 | Semantic safety | Transform classes stay unavailable until equivalence, idempotence, and independent-parser gates pass. |
 | Failure behavior | Compilation is atomic. An error, cancellation, limit, or allocation failure returns no partial CSS. |
 | Determinism | Replay, batch order, parallel workers, source maps, diagnostics, and packaging have executable checks. |
@@ -70,35 +74,38 @@ Successful commands exit `0`; compilation and I/O failures exit `1`; usage or co
 
 ## Five syntaxes, one CSS destination
 
-The current repository snapshot keeps native availability and reference behavior deliberately separate.
+The source snapshot exposes explicit native CLI selection while keeping implementation evidence separate from public release state.
 
-| Input | Current execution path | Native target |
+| Input | Source snapshot execution path | Machine migration state |
 |---|---|---|
-| CSS (`.css`) | Native ZigCSS | Graduated |
-| SCSS (`.scss`) | Dart Sass 1.101.0 → ZigCSS validation | Private Zig parser/evaluator in progress |
-| Sass (`.sass`) | Dart Sass 1.101.0 → ZigCSS validation | Private Zig parser/evaluator in progress |
-| Less (`.less`) | Less 4.6.7 → ZigCSS validation | Planned after Sass graduation |
-| Stylus (`.styl`) | Stylus 0.64.0 → ZigCSS validation | Planned after Less graduation |
+| CSS (`.css`) | Native ZigCSS tokenizer/parser | `native-graduated` |
+| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-differential` |
+| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-differential` |
+| Less (`.less`) | Native Less parser/evaluator | `native-differential` |
+| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-differential` |
+
+`native-differential` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, and five-target gates pass. The rows remain in that machine state until all predeclared public capability surfaces close together.
 
 To evaluate the unpublished five-language source snapshot:
 
 ```bash
 git clone https://github.com/vyakymenko/zigcss.git
 cd zigcss
-npm ci
 zig build
 
-node index.js styles.css -o dist/styles.css --minify
-node index.js styles.scss -o dist/styles.css --minify
-node index.js styles.sass -o dist/styles.css --minify
-node index.js styles.less -o dist/styles.css --minify
-node index.js styles.styl -o dist/styles.css --minify
+zig-out/bin/zigcss --syntax css styles.css -o dist/styles.css --minify
+zig-out/bin/zigcss --syntax scss styles.scss -o dist/styles.css --minify
+zig-out/bin/zigcss --syntax sass styles.sass -o dist/styles.css --minify
+zig-out/bin/zigcss --syntax less styles.less -o dist/styles.css --minify
+zig-out/bin/zigcss --syntax stylus styles.styl -o dist/styles.css --minify
 ```
 
-The canonical reference pipeline disables arbitrary plugins, custom functions, custom importers, Less JavaScript, custom file managers, Stylus evaluator hooks, and executable project code by default. Imports stay inside the entry directory and explicitly admitted load paths.
+`--syntax` is deliberate: the compiler does not infer a native preprocessor route from the filename alone. Imports stay inside the entry directory and explicitly admitted load paths.
+
+Arbitrary Sass plugins, custom functions and importers, Less JavaScript and plugins, Stylus plugins and evaluator hooks, and executable project code remain outside the native product contract.
 
 ```bash
-node index.js src/app.scss \
+zig-out/bin/zigcss --syntax scss src/app.scss \
   --load-path src/tokens \
   --source-map \
   --minify \
@@ -140,32 +147,15 @@ recovery-disabled CSS validation
 owned result + atomic output
 ```
 
-The CSS-only native executable is written to `zig-out/bin/zigcss`. In the 0.5 source snapshot, the root npm launcher composes that core with the exact canonical development providers. The 0.6 target removes that host boundary after all native language rows graduate.
+The source-built executable is written to `zig-out/bin/zigcss` and routes all five inputs through native Zig code. The package JavaScript wrapper only locates and invokes the installed native binary; it does not host language semantics. Reference providers and their host remain development-only differential tools.
 
-## JavaScript API
+## JavaScript wrapper
 
-The source snapshot exposes the same five syntax values through `zigcss/api` and returns CSS, diagnostics, ordered dependencies, and an optional composed source map.
-
-```text
-import { compileFile, compileString } from 'zigcss/api';
-
-const file = await compileFile('src/app.scss', {
-  format: 'minified',
-  loadPaths: ['src/tokens'],
-  sourceMap: true,
-});
-
-const inline = await compileString('.notice { color: red; }', {
-  syntax: 'css',
-  format: 'minified',
-});
-```
-
-Failures throw `ZigCssCompileError` with normalized diagnostics and never attach partial CSS. Option schemas are closed before any provider process can start.
+The installed package exports a thin launcher. It forwards the closed CLI arguments to the packaged binary, preserves exit and signal behavior, and implements no parser, evaluator, provider host, or fallback. A public programmatic JavaScript preprocessor API is not claimed by this snapshot.
 
 ## Zig API
 
-The native Zig API returns one owned compile result. Call `deinit` exactly once.
+The stable Zig example remains CSS-only while the separate native preprocessor example surface is still pending. It returns one owned compile result; call `deinit` exactly once.
 
 <!-- api-example:start -->
 ```zig
@@ -233,12 +223,13 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 ## Project status
 
 - Source candidate: 0.5.0-rc.1 on green main; experimental and unpublished.
-- CSS core: native and graduated.
-- SCSS/Sass: native parser complete; semantic core under active conformance development.
-- Less and Stylus: exact reference suites retained; native implementations pending in dependency order.
-- Native package routing and zero-dependency cutover: gated behind all language graduations.
+- CSS core: `native-graduated`.
+- SCSS, indented Sass, Less, and Stylus: `native-differential` after parser/evaluator, pinned conformance, native product-routing, package, and five-target gates.
+- Production package closure: verified with zero production dependencies and no provider or host bytes; the compiler itself starts no child process and performs no network access.
+- Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
+- Public capability graduation: README and binary help now match native evidence; website, examples, guides/compatibility, and changelog/migration notes remain pending in their declared order.
 - Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
-- Publication: always a separate authorized, fail-closed operation.
+- Publication: fail-closed until the exact later native candidate passes every local, hosted, artifact, provenance, and consumer gate.
 
 The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.
 

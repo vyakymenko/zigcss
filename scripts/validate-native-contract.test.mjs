@@ -135,7 +135,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       closureEvidence: ['stable native syntax selection and help agree with executable CLI tests'],
     }, {
       id: 'readme',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: ['README describes the exact self-contained native source snapshot'],
     }, {
       id: 'website',
@@ -1370,6 +1370,81 @@ test('binds stable binary help to executable finite syntax evidence', () => {
   assert.throws(
     () => validateContract(loadContract(), { productionSources: staleGate }),
     /stable native syntax selection still requires the experimental gate/,
+  )
+})
+
+test('binds the README to the exact self-contained native source snapshot', () => {
+  const readme = fs.readFileSync(path.join(repositoryRoot, 'README.md'), 'utf8')
+  for (const [needle, replacement, expectedError] of [
+    [
+      'The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.',
+      'The current source snapshot compiles CSS through a native Zig path.',
+      /README native five-language source snapshot is missing/,
+    ],
+    [
+      'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles.',
+      'Canonical providers remain available at runtime.',
+      /README development-only oracle boundary is missing/,
+    ],
+    [
+      'zero `dependencies` and zero `optionalDependencies`',
+      'a bounded production dependency graph',
+      /README zero production dependency boundary is missing/,
+    ],
+    [
+      'The compiler itself starts no child process, performs no network access, and requires no runtime download.',
+      'Compilation may start a provider process.',
+      /README zero-runtime compilation boundary is missing/,
+    ],
+    [
+      '| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-differential` |',
+      '| SCSS (`.scss`) | Canonical provider | Planned |',
+      /README SCSS native-differential row is missing/,
+    ],
+    [
+      '| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-differential` |',
+      '| Sass (`.sass`) | Canonical provider | Planned |',
+      /README Sass native-differential row is missing/,
+    ],
+    [
+      '| Less (`.less`) | Native Less parser/evaluator | `native-differential` |',
+      '| Less (`.less`) | Canonical provider | Planned |',
+      /README Less native-differential row is missing/,
+    ],
+    [
+      '| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-differential` |',
+      '| Stylus (`.styl`) | Canonical provider | Planned |',
+      /README Stylus native-differential row is missing/,
+    ],
+    [
+      'zig-out/bin/zigcss --syntax stylus styles.styl -o dist/styles.css --minify',
+      'node index.js styles.styl -o dist/styles.css --minify',
+      /README explicit native syntax commands is missing/,
+    ],
+    [
+      'Arbitrary Sass plugins, custom functions and importers, Less JavaScript and plugins, Stylus plugins and evaluator hooks, and executable project code remain outside the native product contract.',
+      'Provider plugins may be loaded by the native compiler.',
+      /README native plugin boundary is missing/,
+    ],
+    [
+      '`nativeReleaseReady: false`',
+      '`nativeReleaseReady: true`',
+      /README closed native release interlock is missing/,
+    ],
+  ]) {
+    const changed = readme.replace(needle, replacement)
+    assert.notEqual(changed, readme, `README fixture is missing ${JSON.stringify(needle)}`)
+    assert.throws(
+      () => validateContract(loadContract(), { readme: changed }),
+      expectedError,
+    )
+  }
+
+  assert.throws(
+    () => validateContract(loadContract(), {
+      readme: `${readme}\nThe four preprocessor frontends are moving through private native conformance gates.\n`,
+    }),
+    /README retains stale provider-era source claims/,
   )
 })
 

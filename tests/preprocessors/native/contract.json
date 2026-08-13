@@ -642,7 +642,7 @@
       },
       {
         "id": "readme",
-        "state": "pending",
+        "state": "verified",
         "closureEvidence": ["README describes the exact self-contained native source snapshot"]
       },
       {

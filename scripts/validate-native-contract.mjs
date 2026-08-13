@@ -666,7 +666,7 @@ const expectedCapabilityGraduation = Object.freeze({
     }),
     Object.freeze({
       id: 'readme',
-      state: 'pending',
+      state: 'verified',
       closureEvidence: Object.freeze([
         'README describes the exact self-contained native source snapshot',
       ]),
@@ -1369,11 +1369,88 @@ function validateCapabilityGraduation(graduation, productionSources, cliTests, p
   )
   requireText(evidence, '--syntax <syntax>        Select css (default), scss, sass, less, or stylus', 'stable help evidence')
 
-  requireText(
-    readme,
+  for (const [needle, label] of [
+    [
+      'The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.',
+      'README native five-language source snapshot',
+    ],
+    [
+      'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles.',
+      'README development-only oracle boundary',
+    ],
+    [
+      'zero `dependencies` and zero `optionalDependencies`',
+      'README zero production dependency boundary',
+    ],
+    [
+      'The compiler itself starts no child process, performs no network access, and requires no runtime download.',
+      'README zero-runtime compilation boundary',
+    ],
+    [
+      '| CSS (`.css`) | Native ZigCSS tokenizer/parser | `native-graduated` |',
+      'README CSS native-graduated row',
+    ],
+    [
+      '| SCSS (`.scss`) | Native Sass-family parser/evaluator | `native-differential` |',
+      'README SCSS native-differential row',
+    ],
+    [
+      '| Sass (`.sass`) | Native Sass-family parser/evaluator | `native-differential` |',
+      'README Sass native-differential row',
+    ],
+    [
+      '| Less (`.less`) | Native Less parser/evaluator | `native-differential` |',
+      'README Less native-differential row',
+    ],
+    [
+      '| Stylus (`.styl`) | Native Stylus parser/evaluator | `native-differential` |',
+      'README Stylus native-differential row',
+    ],
+    [
+      'Arbitrary Sass plugins, custom functions and importers, Less JavaScript and plugins, Stylus plugins and evaluator hooks, and executable project code remain outside the native product contract.',
+      'README native plugin boundary',
+    ],
+    [
+      'The package JavaScript wrapper only locates and invokes the installed native binary; it does not host language semantics.',
+      'README thin JavaScript wrapper boundary',
+    ],
+    ['`nativeReleaseReady: false`', 'README closed native release interlock'],
+  ]) {
+    requireText(readme, needle, label)
+  }
+
+  for (const [syntax, extension] of [
+    ['css', 'css'],
+    ['scss', 'scss'],
+    ['sass', 'sass'],
+    ['less', 'less'],
+    ['stylus', 'styl'],
+  ]) {
+    requireText(
+      readme,
+      `zig-out/bin/zigcss --syntax ${syntax} styles.${extension} -o dist/styles.css --minify`,
+      'README explicit native syntax commands',
+    )
+  }
+
+  const normalizedReadme = readme.toLowerCase()
+  for (const staleClaim of [
     'the four preprocessor frontends are moving through private native conformance gates',
-    'pre-graduation README claim boundary',
-  )
+    'source snapshot adds a canonical five-language reference pipeline',
+    'Private Zig parser/evaluator in progress',
+    'Planned after Sass graduation',
+    'Planned after Less graduation',
+    'The CSS-only native executable is written to',
+    'root npm launcher composes that core with the exact canonical development providers',
+    'before any provider process can start',
+    'semantic core under active conformance development',
+    'native implementations pending in dependency order',
+    'Native package routing and zero-dependency cutover: gated behind all language graduations',
+  ]) {
+    if (normalizedReadme.includes(staleClaim.toLowerCase())) {
+      fail(`README retains stale provider-era source claims: ${JSON.stringify(staleClaim)}`)
+    }
+  }
 }
 
 function validateAdapter(adapter, index, plan) {
