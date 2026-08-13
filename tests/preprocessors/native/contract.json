@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "state": "native-differential",
   "nativeReleaseReady": false,
   "nativeReleaseVersion": null,
@@ -664,6 +664,114 @@
         "id": "changelog-and-migration-notes",
         "state": "verified",
         "closureEvidence": ["changelog and migration notes retain oracle and plugin boundaries"]
+      }
+    ]
+  },
+  "releaseGraduation": {
+    "ownerPackage": "NATIVE-009",
+    "releaseGapFamily": "native-release-evidence",
+    "state": "in-progress",
+    "packageState": "in-progress",
+    "candidateVersion": null,
+    "candidateTag": null,
+    "terminalContract": {
+      "syntaxes": ["css", "scss", "sass", "less", "stylus"],
+      "targets": [
+        "x86_64-linux",
+        "aarch64-linux",
+        "x86_64-macos",
+        "aarch64-macos",
+        "x86_64-windows"
+      ],
+      "preTagSurfaces": [
+        "release-evidence-contract",
+        "immutable-candidate",
+        "local-validation",
+        "hosted-validation",
+        "release-validation",
+        "artifact-validation",
+        "provenance-validation",
+        "consumer-validation",
+        "origin-main-integration"
+      ],
+      "postTagSurfaces": ["tag-workflow-publication"],
+      "publicationChannels": ["github-prerelease", "npm-next"],
+      "npmDistTag": "next",
+      "referenceCandidateEligible": false
+    },
+    "gates": [
+      {
+        "id": "release-evidence-contract",
+        "state": "verified",
+        "evidenceRequirements": [
+          "finite local hosted release artifact provenance consumer and publication surfaces are machine-bound",
+          "five native syntax and target inventories are resource-derived",
+          "candidate version tag and release interlock remain unselected and closed"
+        ]
+      },
+      {
+        "id": "immutable-candidate",
+        "state": "pending",
+        "evidenceRequirements": [
+          "one unused 0.6.x native version and matching immutable v tag are selected",
+          "the provider-backed 0.5.0-rc.1 reference candidate remains ineligible"
+        ]
+      },
+      {
+        "id": "local-validation",
+        "state": "pending",
+        "evidenceRequirements": [
+          "Debug ReleaseSafe differential fuzz allocation resource documentation package and audit gates pass on the candidate"
+        ]
+      },
+      {
+        "id": "hosted-validation",
+        "state": "pending",
+        "evidenceRequirements": [
+          "one automatic Build on the exact integrated candidate passes Test Suite five targets and aggregate evidence within runtime budgets"
+        ]
+      },
+      {
+        "id": "release-validation",
+        "state": "pending",
+        "evidenceRequirements": [
+          "version native package workflow and publication preflight policies pass before npm authentication"
+        ]
+      },
+      {
+        "id": "artifact-validation",
+        "state": "pending",
+        "evidenceRequirements": [
+          "five exact native archives checksums SPDX inventories and direct smokes pass"
+        ]
+      },
+      {
+        "id": "provenance-validation",
+        "state": "pending",
+        "evidenceRequirements": [
+          "five exact archives and SBOMs are bound by verified GitHub attestations"
+        ]
+      },
+      {
+        "id": "consumer-validation",
+        "state": "pending",
+        "evidenceRequirements": [
+          "direct archives and offline installed packages compile all five syntaxes on all five targets"
+        ]
+      },
+      {
+        "id": "origin-main-integration",
+        "state": "pending",
+        "evidenceRequirements": [
+          "the exact candidate commit is integrated to origin main before tag creation"
+        ]
+      },
+      {
+        "id": "tag-workflow-publication",
+        "state": "pending",
+        "evidenceRequirements": [
+          "one immutable tag produces one GitHub prerelease and the exact npm next publication"
+        ]
       }
     ]
   },

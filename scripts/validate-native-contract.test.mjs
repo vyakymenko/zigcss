@@ -18,9 +18,123 @@ function clone(value) {
   return structuredClone(value)
 }
 
+const expectedReleaseGraduation = {
+  ownerPackage: 'NATIVE-009',
+  releaseGapFamily: 'native-release-evidence',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  candidateVersion: null,
+  candidateTag: null,
+  terminalContract: {
+    syntaxes: ['css', 'scss', 'sass', 'less', 'stylus'],
+    targets: [
+      'x86_64-linux',
+      'aarch64-linux',
+      'x86_64-macos',
+      'aarch64-macos',
+      'x86_64-windows',
+    ],
+    preTagSurfaces: [
+      'release-evidence-contract',
+      'immutable-candidate',
+      'local-validation',
+      'hosted-validation',
+      'release-validation',
+      'artifact-validation',
+      'provenance-validation',
+      'consumer-validation',
+      'origin-main-integration',
+    ],
+    postTagSurfaces: ['tag-workflow-publication'],
+    publicationChannels: ['github-prerelease', 'npm-next'],
+    npmDistTag: 'next',
+    referenceCandidateEligible: false,
+  },
+  gates: [{
+    id: 'release-evidence-contract',
+    state: 'verified',
+    evidenceRequirements: [
+      'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
+      'five native syntax and target inventories are resource-derived',
+      'candidate version tag and release interlock remain unselected and closed',
+    ],
+  }, {
+    id: 'immutable-candidate',
+    state: 'pending',
+    evidenceRequirements: [
+      'one unused 0.6.x native version and matching immutable v tag are selected',
+      'the provider-backed 0.5.0-rc.1 reference candidate remains ineligible',
+    ],
+  }, {
+    id: 'local-validation',
+    state: 'pending',
+    evidenceRequirements: [
+      'Debug ReleaseSafe differential fuzz allocation resource documentation package and audit gates pass on the candidate',
+    ],
+  }, {
+    id: 'hosted-validation',
+    state: 'pending',
+    evidenceRequirements: [
+      'one automatic Build on the exact integrated candidate passes Test Suite five targets and aggregate evidence within runtime budgets',
+    ],
+  }, {
+    id: 'release-validation',
+    state: 'pending',
+    evidenceRequirements: [
+      'version native package workflow and publication preflight policies pass before npm authentication',
+    ],
+  }, {
+    id: 'artifact-validation',
+    state: 'pending',
+    evidenceRequirements: [
+      'five exact native archives checksums SPDX inventories and direct smokes pass',
+    ],
+  }, {
+    id: 'provenance-validation',
+    state: 'pending',
+    evidenceRequirements: [
+      'five exact archives and SBOMs are bound by verified GitHub attestations',
+    ],
+  }, {
+    id: 'consumer-validation',
+    state: 'pending',
+    evidenceRequirements: [
+      'direct archives and offline installed packages compile all five syntaxes on all five targets',
+    ],
+  }, {
+    id: 'origin-main-integration',
+    state: 'pending',
+    evidenceRequirements: [
+      'the exact candidate commit is integrated to origin main before tag creation',
+    ],
+  }, {
+    id: 'tag-workflow-publication',
+    state: 'pending',
+    evidenceRequirements: [
+      'one immutable tag produces one GitHub prerelease and the exact npm next publication',
+    ],
+  }],
+}
+
+function makeReleaseReady(version = '0.6.0-rc.1') {
+  const contract = clone(loadContract())
+  contract.state = 'native-graduated'
+  contract.nativeReleaseReady = true
+  contract.nativeReleaseVersion = version
+  for (const adapter of contract.adapters) adapter.current = 'native-graduated'
+  contract.releaseGraduation.state = 'candidate-ready'
+  contract.releaseGraduation.candidateVersion = version
+  contract.releaseGraduation.candidateTag = `v${version}`
+  const preTagSurfaces = new Set(contract.releaseGraduation.terminalContract.preTagSurfaces)
+  for (const gate of contract.releaseGraduation.gates) {
+    if (preTagSurfaces.has(gate.id)) gate.state = 'verified'
+  }
+  return contract
+}
+
 test('accepts the bounded native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 8)
+  assert.equal(contract.schemaVersion, 9)
   assert.equal(contract.state, 'native-differential')
   assert.equal(contract.nativeReleaseReady, false)
   assert.deepEqual(contract.nativePublicationAuthority, {
@@ -155,6 +269,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       closureEvidence: ['changelog and migration notes retain oracle and plugin boundaries'],
     }],
   })
+  assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
   assert.deepEqual(contract.implementations.map(implementation => implementation.id), [
     'native-sass-parser',
     'native-sass-semantic-core',
@@ -1452,6 +1567,62 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
   }
 })
 
+test('binds the finite NATIVE-009 release evidence contract before candidate selection', () => {
+  const contract = loadContract()
+  assert.deepEqual(contract.releaseGraduation, expectedReleaseGraduation)
+
+  for (const mutate of [
+    release => { release.ownerPackage = 'NATIVE-008' },
+    release => { release.releaseGapFamily = 'renamed-release-family' },
+    release => { release.state = 'closed' },
+    release => { release.packageState = 'verified' },
+    release => { release.candidateVersion = '0.6.0-rc.1' },
+    release => { release.candidateTag = 'v0.6.0-rc.1' },
+    release => release.terminalContract.syntaxes.pop(),
+    release => release.terminalContract.targets.reverse(),
+    release => release.terminalContract.preTagSurfaces.reverse(),
+    release => release.terminalContract.postTagSurfaces.push('npm-latest'),
+    release => { release.terminalContract.referenceCandidateEligible = true },
+    release => { release.gates[0].state = 'pending' },
+    release => { release.gates[1].state = 'verified' },
+    release => release.gates.push(clone(release.gates[0])),
+  ]) {
+    const changed = clone(contract)
+    mutate(changed.releaseGraduation)
+    assert.throws(() => validateContract(changed), /release graduation contract drifted/)
+  }
+
+  const ready = clone(contract)
+  ready.nativeReleaseReady = true
+  ready.nativeReleaseVersion = '0.6.0-rc.1'
+  assert.throws(
+    () => validateReleaseTag(ready, 'v0.6.0-rc.1'),
+    /release evidence is incomplete/,
+  )
+
+  const buildWorkflow = fs.readFileSync(
+    path.join(repositoryRoot, '.github/workflows/build.yml'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(contract, {
+      buildWorkflow: buildWorkflow.replace('name: Native Package Evidence', 'name: Missing Evidence'),
+    }),
+    /hosted aggregate package evidence is missing/,
+  )
+
+  const releaseWorkflow = fs.readFileSync(
+    path.join(repositoryRoot, '.github/workflows/release.yml'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(contract, {
+      releaseWorkflow: releaseWorkflow.replace('needs: create-release', 'needs: release'),
+    }),
+    /npm publication dependency on GitHub prerelease is missing/,
+  )
+})
+
 test('binds stable binary help to executable finite syntax evidence', () => {
   const missingEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/cli/native_cli.zig'), 'utf8')
@@ -2067,7 +2238,7 @@ test('binds the finite native product routing inventory and verified closed pack
 
 test('owns the finite native zero-dependency package migration contract', () => {
   const contract = loadContract()
-  assert.equal(contract.schemaVersion, 8)
+  assert.equal(contract.schemaVersion, 9)
   assert.deepEqual(contract.packageMigration, {
     ownerPackage: 'NATIVE-007',
     releaseGapFamily: 'native-zero-dependency-package',
@@ -2335,14 +2506,33 @@ test('release tags fail closed until all native rows graduate', () => {
 })
 
 test('release tags require the exact owner publication authority after graduation', () => {
-  const contract = clone(loadContract())
-  contract.nativeReleaseReady = true
-  contract.nativeReleaseVersion = '0.6.0'
-  assert.doesNotThrow(() => validateReleaseTag(contract, 'v0.6.0'))
+  const contract = makeReleaseReady()
+  assert.doesNotThrow(() => validateReleaseTag(contract, 'v0.6.0-rc.1'))
+
+  const missingGate = makeReleaseReady()
+  missingGate.releaseGraduation.gates.find(gate => gate.id === 'local-validation').state = 'pending'
+  assert.throws(
+    () => validateReleaseTag(missingGate, 'v0.6.0-rc.1'),
+    /native release evidence is incomplete/,
+  )
+
+  const duplicatedGate = makeReleaseReady()
+  duplicatedGate.releaseGraduation.gates.push(clone(duplicatedGate.releaseGraduation.gates[0]))
+  assert.throws(
+    () => validateReleaseTag(duplicatedGate, 'v0.6.0-rc.1'),
+    /native release evidence is incomplete/,
+  )
+
+  const ungraduatedAdapter = makeReleaseReady()
+  ungraduatedAdapter.adapters[1].current = 'native-differential'
+  assert.throws(
+    () => validateReleaseTag(ungraduatedAdapter, 'v0.6.0-rc.1'),
+    /native release evidence is incomplete/,
+  )
 
   contract.nativePublicationAuthority.authorized = false
   assert.throws(
-    () => validateReleaseTag(contract, 'v0.6.0'),
+    () => validateReleaseTag(contract, 'v0.6.0-rc.1'),
     /native publication is not authorized/,
   )
 })

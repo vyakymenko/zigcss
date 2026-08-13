@@ -3,6 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { nativeTargetContract } from './native-target-contract.mjs'
 import { validateBuildTestGraph } from './validate-workflows.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
@@ -697,6 +698,109 @@ const expectedCapabilityGraduation = Object.freeze({
       state: 'verified',
       closureEvidence: Object.freeze([
         'changelog and migration notes retain oracle and plugin boundaries',
+      ]),
+    }),
+  ]),
+})
+
+const expectedReleaseGraduation = Object.freeze({
+  ownerPackage: 'NATIVE-009',
+  releaseGapFamily: 'native-release-evidence',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  candidateVersion: null,
+  candidateTag: null,
+  terminalContract: Object.freeze({
+    syntaxes: Object.freeze(['css', 'scss', 'sass', 'less', 'stylus']),
+    targets: Object.freeze(nativeTargetContract.map(target => target.target)),
+    preTagSurfaces: Object.freeze([
+      'release-evidence-contract',
+      'immutable-candidate',
+      'local-validation',
+      'hosted-validation',
+      'release-validation',
+      'artifact-validation',
+      'provenance-validation',
+      'consumer-validation',
+      'origin-main-integration',
+    ]),
+    postTagSurfaces: Object.freeze(['tag-workflow-publication']),
+    publicationChannels: Object.freeze(['github-prerelease', 'npm-next']),
+    npmDistTag: 'next',
+    referenceCandidateEligible: false,
+  }),
+  gates: Object.freeze([
+    Object.freeze({
+      id: 'release-evidence-contract',
+      state: 'verified',
+      evidenceRequirements: Object.freeze([
+        'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
+        'five native syntax and target inventories are resource-derived',
+        'candidate version tag and release interlock remain unselected and closed',
+      ]),
+    }),
+    Object.freeze({
+      id: 'immutable-candidate',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'one unused 0.6.x native version and matching immutable v tag are selected',
+        'the provider-backed 0.5.0-rc.1 reference candidate remains ineligible',
+      ]),
+    }),
+    Object.freeze({
+      id: 'local-validation',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'Debug ReleaseSafe differential fuzz allocation resource documentation package and audit gates pass on the candidate',
+      ]),
+    }),
+    Object.freeze({
+      id: 'hosted-validation',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'one automatic Build on the exact integrated candidate passes Test Suite five targets and aggregate evidence within runtime budgets',
+      ]),
+    }),
+    Object.freeze({
+      id: 'release-validation',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'version native package workflow and publication preflight policies pass before npm authentication',
+      ]),
+    }),
+    Object.freeze({
+      id: 'artifact-validation',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'five exact native archives checksums SPDX inventories and direct smokes pass',
+      ]),
+    }),
+    Object.freeze({
+      id: 'provenance-validation',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'five exact archives and SBOMs are bound by verified GitHub attestations',
+      ]),
+    }),
+    Object.freeze({
+      id: 'consumer-validation',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'direct archives and offline installed packages compile all five syntaxes on all five targets',
+      ]),
+    }),
+    Object.freeze({
+      id: 'origin-main-integration',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'the exact candidate commit is integrated to origin main before tag creation',
+      ]),
+    }),
+    Object.freeze({
+      id: 'tag-workflow-publication',
+      state: 'pending',
+      evidenceRequirements: Object.freeze([
+        'one immutable tag produces one GitHub prerelease and the exact npm next publication',
       ]),
     }),
   ]),
@@ -1848,6 +1952,41 @@ function validateCapabilityGraduation(
     ],
   ]) {
     for (const needle of needles) requireText(document, needle, label)
+  }
+}
+
+function validateReleaseGraduation(release, plan, buildWorkflow, releaseWorkflow) {
+  if (!same(release, expectedReleaseGraduation)) {
+    fail('release graduation contract drifted')
+  }
+
+  requireText(
+    plan,
+    '`NATIVE-009` | Select one immutable native release candidate, pass every local/hosted/release/consumer gate',
+    'NATIVE-009 roadmap release contract',
+  )
+  for (const target of nativeTargetContract) {
+    requireText(buildWorkflow, `target: ${target.target}`, `Build native target ${target.target}`)
+    requireText(releaseWorkflow, `target: ${target.target}`, `Release native target ${target.target}`)
+  }
+  for (const [needle, label] of [
+    ['name: Test Suite', 'hosted Test Suite evidence'],
+    ['name: Native Package Evidence', 'hosted aggregate package evidence'],
+    ['  npm-preflight:\n', 'release npm preflight'],
+    ['  release:\n', 'release artifact matrix'],
+    ['  create-release:\n', 'GitHub prerelease creation'],
+    ['  publish-npm:\n', 'npm next publication'],
+    ['needs: npm-preflight', 'artifact dependency on npm preflight'],
+    ['needs: release', 'GitHub prerelease dependency on artifacts'],
+    ['needs: create-release', 'npm publication dependency on GitHub prerelease'],
+    ['npm publish --tag next --provenance', 'npm next provenance publication'],
+    ['prerelease: true', 'GitHub prerelease boundary'],
+  ]) {
+    requireText(
+      needle.startsWith('name:') ? buildWorkflow : releaseWorkflow,
+      needle,
+      label,
+    )
   }
 }
 
@@ -3199,13 +3338,14 @@ export function validateContract(
       'productRouting',
       'packageMigration',
       'capabilityGraduation',
+      'releaseGraduation',
       'foundations',
       'implementations',
       'adapters',
     ],
     'root',
   )
-  if (contract.schemaVersion !== 8) fail('schemaVersion must be 8')
+  if (contract.schemaVersion !== 9) fail('schemaVersion must be 9')
   if (contract.state !== 'native-differential') {
     fail('state must remain native-differential until the NATIVE-009 release gate closes')
   }
@@ -3313,6 +3453,12 @@ export function validateContract(
     capabilityMetadata,
     changelog,
   )
+  validateReleaseGraduation(
+    contract.releaseGraduation,
+    plan,
+    buildWorkflow,
+    releaseWorkflow,
+  )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
   }
@@ -3408,6 +3554,54 @@ export function validateReleaseTag(contract, tag) {
   }
   if (contract.nativeReleaseVersion === null || tag !== `v${contract.nativeReleaseVersion}`) {
     fail(`release tag ${tag} does not match the graduated native version`)
+  }
+  const release = contract.releaseGraduation
+  const expectedGates = new Map(expectedReleaseGraduation.gates.map(gate => [gate.id, gate]))
+  const actualGates = Array.isArray(release?.gates)
+    ? new Map(release.gates.map(gate => [gate.id, gate]))
+    : new Map()
+  const preTagComplete = expectedReleaseGraduation.terminalContract.preTagSurfaces.every(id => {
+    const actual = actualGates.get(id)
+    const expected = expectedGates.get(id)
+    return actual?.state === 'verified'
+      && expected !== undefined
+      && same(actual.evidenceRequirements, expected.evidenceRequirements)
+  })
+  const publication = actualGates.get('tag-workflow-publication')
+  const publicationStateValid = publication !== undefined
+    && (publication.state === 'pending' || publication.state === 'verified')
+    && same(
+      publication.evidenceRequirements,
+      expectedGates.get('tag-workflow-publication').evidenceRequirements,
+    )
+  const adaptersGraduated = Array.isArray(contract.adapters)
+    && contract.adapters.length === 5
+    && contract.adapters.every(adapter => adapter.current === 'native-graduated')
+  const gateInventoryExact = Array.isArray(release?.gates)
+    && release.gates.length === expectedReleaseGraduation.gates.length
+    && same(
+      release.gates.map(gate => gate.id),
+      expectedReleaseGraduation.gates.map(gate => gate.id),
+    )
+  const releaseEvidenceComplete = contract.state === 'native-graduated'
+    && contract.packageMigration?.packageState === 'verified'
+    && contract.capabilityGraduation?.packageState === 'verified'
+    && release?.ownerPackage === 'NATIVE-009'
+    && release.releaseGapFamily === 'native-release-evidence'
+    && (release.state === 'candidate-ready' || release.state === 'closed')
+    && (release.packageState === 'in-progress' || release.packageState === 'verified')
+    && release.candidateVersion === contract.nativeReleaseVersion
+    && release.candidateVersion !== contract.referenceCandidate
+    && /^0\.6\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release.candidateVersion)
+    && release.candidateTag === tag
+    && same(release.terminalContract, expectedReleaseGraduation.terminalContract)
+    && actualGates.size === expectedGates.size
+    && gateInventoryExact
+    && preTagComplete
+    && publicationStateValid
+    && adaptersGraduated
+  if (!releaseEvidenceComplete) {
+    fail(`release ${tag} rejected: native release evidence is incomplete`)
   }
 }
 
