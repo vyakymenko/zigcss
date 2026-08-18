@@ -28,7 +28,7 @@ test('all release, package, runtime, editor, container, formula, and documentati
   assert.deepEqual(validateReleaseVersion(), {
     version: '0.6.0-rc.2',
     vscodeVersion: '0.6.0',
-    surfaces: 29,
+    surfaces: 30,
   })
 })
 
@@ -178,7 +178,7 @@ test('release source inventory normalizes checkout CRLF and rejects bare carriag
     assert.deepEqual(validateReleaseVersion(temporary), {
       version: '0.6.0-rc.2',
       vscodeVersion: '0.6.0',
-      surfaces: 29,
+      surfaces: 30,
     })
 
     fs.writeFileSync(path.join(temporary, 'VERSION'), '0.6.0-rc.2\r')

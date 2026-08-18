@@ -9,20 +9,27 @@ import { checkNpmVersionAvailability } from './check-npm-version-availability.mj
 
 const script = new URL('./check-npm-version-availability.mjs', import.meta.url)
 
-test('an absent canonical prerelease is admitted only to the next channel', () => {
+test('absent canonical prerelease and stable versions select distinct channels', () => {
   assert.deepEqual(checkNpmVersionAvailability('0.6.0-rc.2', '["0.2.0","0.3.0"]\n'), {
     version: '0.6.0-rc.2',
     publishedVersions: 2,
     channel: 'next',
+    githubPrerelease: true,
+  })
+  assert.deepEqual(checkNpmVersionAvailability('0.6.0', '["0.3.0","0.6.0-rc.2"]\n'), {
+    version: '0.6.0',
+    publishedVersions: 2,
+    channel: 'latest',
+    githubPrerelease: false,
   })
 })
 
-test('published, stable, malformed, duplicate, and unbounded inventories fail closed', () => {
+test('published, malformed, duplicate, and unbounded inventories fail closed', () => {
   assert.throws(
     () => checkNpmVersionAvailability('0.6.0-rc.2', '["0.3.0","0.6.0-rc.2"]'),
     /already published and immutable/,
   )
-  assert.throws(() => checkNpmVersionAvailability('0.4.0', '["0.3.0"]'), /only.*prerelease/)
+  assert.throws(() => checkNpmVersionAvailability('0.6.0', '["0.3.0","0.6.0"]'), /already published and immutable/)
   assert.throws(() => checkNpmVersionAvailability('0.6.0-rc.2', '{'), /not JSON/)
   assert.throws(() => checkNpmVersionAvailability('0.6.0-rc.2', '[]'), /non-empty array/)
   assert.throws(() => checkNpmVersionAvailability('0.6.0-rc.2', '["0.3.0","0.3.0"]'), /repeats/)
@@ -34,14 +41,18 @@ test('the CLI accepts only an absolute bounded regular inventory file', t => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-npm-preflight-'))
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
   const inventory = path.join(temporary, 'versions.json')
+  const githubOutput = path.join(temporary, 'github-output.txt')
   fs.writeFileSync(inventory, '["0.2.0","0.3.0"]\n')
+  fs.writeFileSync(githubOutput, '')
 
   const output = execFileSync(process.execPath, [
     fileURLToPath(script),
     '--version', '0.6.0-rc.2',
     '--versions-file', inventory,
+    '--github-output', githubOutput,
   ], { encoding: 'utf8' })
   assert.match(output, /0\.6\.0-rc\.2 is absent from 2 immutable versions and will use next/)
+  assert.equal(fs.readFileSync(githubOutput, 'utf8'), 'channel=next\ngithub_prerelease=true\n')
 
   const symlink = path.join(temporary, 'versions-link.json')
   fs.symlinkSync(inventory, symlink)

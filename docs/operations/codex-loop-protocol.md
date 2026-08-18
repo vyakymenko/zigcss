@@ -8,9 +8,9 @@ The short operator request is only an invocation. This file, `DEVELOPMENT_PLAN.m
 
 The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `max` reasoning, limits each pass to one dependency-eligible release gap, requires a clean committed checkpoint for progress, automatically pushes and reads back that exact checkpoint on the current `vale/*` recovery branch, and only then starts the next pass. It integrates `main` after four green passes and immediately for completion or release-candidate validation, so hosted CI can finish while every checkpoint remains remotely recoverable. No subagent, child-task, alternate-model, or concurrent-lane path exists.
 
-The closed `NATIVE-007` five-target hosted-validation terminal is the one status-designated completion-validation handoff before release-candidate work: its package verification requires an integrated Build and the ledger declares that no local family slice remains. That exact `NATIVE-007` package/family/`CLOSED` marker integrates immediately; reductions and every other closed package family retain the ordinary four-pass batch.
+The closed `NATIVE-007` five-target hosted-validation terminal remains a historical status-designated integration handoff. The active stable release family is also integrated immediately: every `REL-010`/`stable-release-promotion` progress checkpoint must reach `origin/main` so its hosted and immutable-release evidence can bind the exact source commit. Reductions in every unrelated family retain the ordinary four-pass batch.
 
-The active self-contained native-frontend sequence is part of that same loop: select the earliest dependency-eligible package not marked `VERIFIED` in the durable ledger; complete `NATIVE-001` through `NATIVE-005`, `NSASS-010` through `NSASS-012`, `NLESS-010` through `NLESS-012`, `NSTYLUS-010` through `NSTYLUS-012`, then `NATIVE-006` through `NATIVE-009`. When an umbrella package is in progress, resume its smallest ledger-designated slice before advancing. The external `BENCH-007` scheduled-runner evidence proceeds independently and must not block dependency-eligible native frontend correctness work.
+Milestone 10 and `NATIVE-009` are verified. The active `REL-010` stable-promotion sequence follows section 18 of the development plan exactly: close the machine contract and SemVer-aware workflow policy; set the stable source identity and publish truthful docs, site, and SEO; complete local validation; integrate the exact commit and complete hosted validation; create one immutable tag; verify workflow publication; then close post-publication evidence. The external `BENCH-007` scheduled-runner evidence proceeds independently and must not block the dependency-eligible `REL-010` work because comparative and superlative claims remain withdrawn until controlled evidence exists.
 
 Run the preflight and start the background supervisor from anywhere inside the worktree:
 
@@ -41,7 +41,7 @@ bash scripts/autodevelop/orient.sh
 - Preserve inherited and unrelated changes. Never reset, rewrite, or discard work that is not owned by the current package.
 - Keep exactly one continuation owner active without a token budget: either the interactive persistent goal or this Bash supervisor. Never advance the same worktree manually while the supervisor is running.
 - Model passes must not push ordinary branch checkpoints. Under the operator's 2026-08-02 superseding authorization, only the outer supervisor may automatically push every verified clean checkpoint to `origin` at the current `vale/*` recovery branch and integrate `main` in batches of four, or immediately for completion and release-candidate validation.
-- The owner's 2026-07-27 publication authorization applies only after every `NATIVE-009` gate passes, the native interlock names an exact unused version and reports ready, and that exact candidate commit is already integrated to `origin/main`. The release phase may then create and push the single immutable `v*` tag exactly once; the same or later pass may monitor `.github/workflows/release.yml` and record the GitHub prerelease and npm `next` evidence without recreating the tag. It may not publish `0.5.0-rc.1`, move or reuse tags, target npm `latest`, bypass a gate or workflow, or publish Homebrew, editor-extension, container, documentation, or service channels. Every other deployment, pull request, publication, or external-system mutation still requires new explicit authorization.
+- The owner's 2026-08-18 stable-promotion authorization applies only to exact tag `v0.6.0`, the resulting non-prerelease GitHub Release, npm `latest`, and the existing GitHub Pages site. The tag may be created and pushed exactly once only after every pre-tag `REL-010` gate passes, `release/stable-promotion.json` reports `stableReleaseReady: true`, the exact version and tag remain unused, and the candidate commit is already integrated to `origin/main`. The same or later pass may monitor `.github/workflows/release.yml`, Pages, and the public package endpoints and record their evidence. It may not move or recreate `v0.6.0-rc.2`, move or reuse another tag, publish another npm channel, bypass a failed gate or workflow, publish Homebrew/editor-extension/container/service channels, or restore comparative performance claims without controlled `BENCH-007` evidence. Every other deployment, pull request, publication, or external-system mutation still requires new explicit authorization.
 - Do not weaken tests, suppress failures, lower safety gates, or re-enable an unsafe transform to make a package green.
 - Security, parser correctness, semantic preservation, deterministic behavior, and regression evidence take priority over performance or feature count.
 
@@ -64,7 +64,7 @@ Then verify:
 5. The roadmap still makes the candidate package dependency-eligible.
 6. The runtime model still matches the approved model requirement.
 
-Do not fetch, rebase, merge, or consult the user's main checkout as part of orientation. Ordinary branch integration remains supervisor-owned; the sole publication exception is the exact guarded `NATIVE-009` path above.
+Do not fetch, rebase, merge, or consult the user's main checkout as part of orientation. Ordinary branch integration remains supervisor-owned; the sole publication exception is the exact guarded `REL-010` path above.
 
 ## 4. Select the next package
 
@@ -129,7 +129,7 @@ A required hosted job that reaches 75% of its hard timeout is itself release wor
 
 A green checkpoint is not a handoff. An interactive task continues in-session; a bounded runner pass emits `PROGRESS` and exits so the outer Bash supervisor can immediately start the next pass. Continue autonomously unless one of these holds:
 
-1. New authority is required for an outward action other than the approved checkpoint pushes or the exact guarded `NATIVE-009` GitHub-prerelease/npm-`next` path, such as another publication channel, deployment, PR creation, pushing another branch or remote, paid service use, secrets, or an external-system mutation.
+1. New authority is required for an outward action other than the approved checkpoint pushes or the exact guarded `REL-010` stable GitHub/npm-`latest`/existing-Pages path, such as another publication channel, deployment target, PR creation, pushing another branch or remote, paid service use, secrets, or an external-system mutation.
 2. An irreversible product, compatibility, licensing, or architecture decision is not already resolved by the roadmap and cannot safely be represented by a reversible ADR proposal.
 3. Required external state or access is unavailable and no other dependency-eligible work can make meaningful progress.
 4. The approved model is unavailable or cannot be verified.
@@ -156,7 +156,7 @@ For genuine completion:
 - ensure generated artifacts and the worktree are clean;
 - update every package/milestone state and final evidence in the ledger;
 - mark an interactive persistent goal complete only when no required work remains; the Bash supervisor instead writes `COMPLETE` state and stops for review;
-- report the final pushed checkpoint and, if `NATIVE-009` exercised the authorized release path, record the immutable tag, workflow, GitHub prerelease, artifact/attestation, and npm `next` evidence; otherwise confirm that no publication, deployment, or PR creation occurred.
+- report the final pushed checkpoint and, if `REL-010` exercised the authorized release path, record immutable tag `v0.6.0`, the non-prerelease GitHub Release, artifact/attestation, npm `latest`, Pages, and public verification evidence; otherwise confirm that no publication, deployment, or PR creation occurred.
 
 ## 9. Orientation helper safety contract
 
@@ -180,8 +180,8 @@ Its output is orientation evidence, not a scheduler and not a substitute for the
 - every `PROGRESS` pass must supply a validated work package, stable release-gap family, and `REDUCED`/`CLOSED` disposition; four reductions in one family force the next pass to close that family before other progress is accepted;
 - state and dependency caches stay under ignored `.autodevelop/` storage;
 - every invocation explicitly selects the approved model and reasoning effort with no fallback;
-- the Codex sandbox admits the worktree plus the worktree/common Git metadata needed for local commits, while the prompt forbids the main checkout and every outward mutation except the exact post-gate `NATIVE-009` tag/workflow action;
+- the Codex sandbox admits the worktree plus the worktree/common Git metadata needed for local commits, while the prompt forbids the main checkout and every outward mutation except the exact post-gate `REL-010` tag/workflow/Pages action;
 - rate limits use bounded backoff, authentication failure pauses immediately, five consecutive tool failures pause, and the same reported blocker must recur three times before the supervisor pauses as blocked;
-- `COMPLETE` verifies and pushes the final clean checkpoint, then stops the loop for operator review. The supervisor never publishes directly; only an eligible `NATIVE-009` model pass may invoke and verify the separately authorized fail-closed tag workflow.
+- `COMPLETE` verifies and pushes the final clean checkpoint, then stops the loop for operator review. The supervisor never publishes directly; only an eligible `REL-010` model pass may invoke and verify the separately authorized fail-closed tag workflow.
 
 `scripts/autodevelop/selftest.sh` tests isolated final-message classification, prompt-echo rejection, release-gap validation and forced convergence, rate-limit parsing, timeout precedence, authentication detection, exact CLI arguments, recovery-only and integrated push readback, and atomic state counters without a model call or production-remote mutation. The control script exposes no install/deploy/publish command.

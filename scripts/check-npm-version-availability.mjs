@@ -11,9 +11,7 @@ function fail(message) {
 
 export function checkNpmVersionAvailability(version, source) {
   const parsedVersion = parseReleaseVersion(version, 'npm publication version')
-  if (parsedVersion.prerelease === null) {
-    fail('the next channel accepts only a canonical prerelease version')
-  }
+  const channel = parsedVersion.prerelease === null ? 'latest' : 'next'
   if (typeof source !== 'string' || source.length === 0 || source.length > 1024 * 1024) {
     fail('registry version inventory is empty or oversized')
   }
@@ -36,7 +34,12 @@ export function checkNpmVersionAvailability(version, source) {
     seen.add(candidate)
   }
   if (seen.has(version)) fail(`npm version ${version} is already published and immutable`)
-  return { version, publishedVersions: versions.length, channel: 'next' }
+  return {
+    version,
+    publishedVersions: versions.length,
+    channel,
+    githubPrerelease: parsedVersion.prerelease !== null,
+  }
 }
 
 function readVersionsFile(filename) {
@@ -55,16 +58,41 @@ function readVersionsFile(filename) {
   return fs.readFileSync(filename, 'utf8')
 }
 
+function writeGithubOutput(filename, result) {
+  if (typeof filename !== 'string' || !path.isAbsolute(filename)) {
+    fail('GitHub output file must be an explicit absolute path')
+  }
+  let stat
+  try {
+    stat = fs.lstatSync(filename)
+  } catch (error) {
+    fail(`GitHub output file is unavailable: ${error.message}`)
+  }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) {
+    fail('GitHub output file must be a bounded regular non-symlink file')
+  }
+  fs.appendFileSync(
+    filename,
+    `channel=${result.channel}\ngithub_prerelease=${result.githubPrerelease}\n`,
+    { encoding: 'utf8' },
+  )
+}
+
 function parseArgs(args) {
-  if (args.length !== 4) fail('usage: --version semver --versions-file absolute-path')
+  if (![4, 6].includes(args.length)) {
+    fail('usage: --version semver --versions-file absolute-path [--github-output absolute-path]')
+  }
   const values = {}
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
-    if (!['--version', '--versions-file'].includes(name) || value === undefined || Object.hasOwn(values, name)) {
-      fail('usage: --version semver --versions-file absolute-path')
+    if (!['--version', '--versions-file', '--github-output'].includes(name) || value === undefined || Object.hasOwn(values, name)) {
+      fail('usage: --version semver --versions-file absolute-path [--github-output absolute-path]')
     }
     values[name] = value
+  }
+  if (values['--version'] === undefined || values['--versions-file'] === undefined) {
+    fail('usage: --version semver --versions-file absolute-path [--github-output absolute-path]')
   }
   return values
 }
@@ -75,6 +103,9 @@ function main() {
     values['--version'],
     readVersionsFile(values['--versions-file']),
   )
+  if (values['--github-output'] !== undefined) {
+    writeGithubOutput(values['--github-output'], result)
+  }
   process.stdout.write(
     `npm publication preflight verified: ${result.version} is absent from ${result.publishedVersions} immutable versions and will use ${result.channel}.\n`,
   )

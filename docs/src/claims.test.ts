@@ -65,9 +65,11 @@ describe('public recovery claims', () => {
     ])
   })
 
-  test('withdraws legacy benchmarks and marks generated releases as prereleases', () => {
+  test('withdraws legacy benchmarks and derives GitHub release visibility from SemVer', () => {
     expect(read('BENCHMARK_REPORT.md')).toMatch(/performance claims are withdrawn/i)
     expect(read('BENCHMARK_REPORT.md')).toMatch(/not semantically equivalent/i)
-    expect(read('.github/workflows/release.yml')).toContain('prerelease: true')
+    expect(read('.github/workflows/release.yml')).toContain(
+      'prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}',
+    )
   })
 })

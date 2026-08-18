@@ -9,6 +9,8 @@ import {
 const version = '0.6.0-rc.2'
 const visibleVersion = JSON.stringify(version)
 const visibleTags = JSON.stringify({ latest: '0.3.0', next: version })
+const stableVersion = '0.6.0'
+const stableTags = JSON.stringify({ latest: stableVersion, next: version })
 
 test('readback accepts the exact immutable version on next without moving latest', () => {
   assert.deepEqual(npmPublicationReadbackPolicy, { attempts: 12, delayMs: 5_000 })
@@ -18,11 +20,14 @@ test('readback accepts the exact immutable version on next without moving latest
   })
 })
 
-test('readback rejects malformed, mismatched, stable-channel, and unbounded responses', () => {
-  assert.throws(
-    () => validateNpmPublicationReadback('0.4.0', '"0.4.0"', '{"next":"0.4.0"}'),
-    /only.*prerelease/,
+test('readback accepts the exact stable version on latest while retaining next', () => {
+  assert.deepEqual(
+    validateNpmPublicationReadback(stableVersion, JSON.stringify(stableVersion), stableTags),
+    { version: stableVersion, channel: 'latest' },
   )
+})
+
+test('readback rejects malformed, mismatched, wrong-channel, and unbounded responses', () => {
   assert.throws(
     () => validateNpmPublicationReadback(version, 'null', visibleTags),
     /published version must be/,
@@ -46,6 +51,18 @@ test('readback rejects malformed, mismatched, stable-channel, and unbounded resp
   assert.throws(
     () => validateNpmPublicationReadback(version, visibleVersion, JSON.stringify({ next: version })),
     /retain a stable latest/,
+  )
+  assert.throws(
+    () => validateNpmPublicationReadback(stableVersion, JSON.stringify(stableVersion), JSON.stringify({ latest: version, next: version })),
+    /latest tag must be/,
+  )
+  assert.throws(
+    () => validateNpmPublicationReadback(stableVersion, JSON.stringify(stableVersion), JSON.stringify({ latest: stableVersion })),
+    /retain a prerelease next/,
+  )
+  assert.throws(
+    () => validateNpmPublicationReadback(stableVersion, JSON.stringify(stableVersion), JSON.stringify({ latest: stableVersion, next: '0.3.0' })),
+    /retain a prerelease next/,
   )
   assert.throws(
     () => validateNpmPublicationReadback(version, visibleVersion, ' '.repeat(256 * 1024 + 1)),

@@ -246,6 +246,8 @@ autodevelop_should_integrate_main() {
   local result="${4:-}"
   [ "$decision" = INTEGRATE ] \
     || [ "$package" = NATIVE-009 ] \
+    || { [ "$package" = REL-010 ] \
+      && [ "$family" = stable-release-promotion ]; } \
     || { [ "$package" = NATIVE-007 ] \
       && [ "$family" = native-five-target-ci-throughput ] \
       && [ "$result" = CLOSED ]; }

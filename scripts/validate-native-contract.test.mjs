@@ -1603,9 +1603,12 @@ test('binds the finite NATIVE-009 published release terminal', () => {
   )
   assert.throws(
     () => validateContract(contract, {
-      releaseWorkflow: releaseWorkflow.replace('needs: create-release', 'needs: release'),
+      releaseWorkflow: releaseWorkflow.replace(
+        'needs: [npm-preflight, create-release]',
+        'needs: [npm-preflight, release]',
+      ),
     }),
-    /npm publication dependency on GitHub prerelease is missing/,
+    /npm publication dependency on preflight and GitHub release is missing/,
   )
 })
 
@@ -2590,7 +2593,7 @@ test('release tags require the exact owner publication authority after graduatio
   )
 })
 
-test('requires the native interlock before npm publication preflight', () => {
+test('requires the stable promotion interlock before npm publication preflight', () => {
   const releaseWorkflow = fs.readFileSync(
     path.join(repositoryRoot, '.github/workflows/release.yml'),
     'utf8',

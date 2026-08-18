@@ -29,9 +29,7 @@ function parseJson(source, label) {
 
 export function validateNpmPublicationReadback(version, versionSource, tagsSource) {
   const parsedVersion = parseReleaseVersion(version, 'npm publication version')
-  if (parsedVersion.prerelease === null) {
-    fail('the next channel accepts only a canonical prerelease version')
-  }
+  const channel = parsedVersion.prerelease === null ? 'latest' : 'next'
 
   const publishedVersion = parseJson(versionSource, 'published version response')
   if (publishedVersion !== version) {
@@ -53,13 +51,17 @@ export function validateNpmPublicationReadback(version, versionSource, tagsSourc
     }
     parsedTags.set(name, parseReleaseVersion(value, `npm distribution tag ${name}`))
   }
-  if (tags.next !== version) {
-    fail(`next tag must be ${version}, received ${JSON.stringify(tags.next)}`)
+  if (tags[channel] !== version) {
+    fail(`${channel} tag must be ${version}, received ${JSON.stringify(tags[channel])}`)
   }
-  if (!parsedTags.has('latest') || parsedTags.get('latest').prerelease !== null) {
-    fail('prerelease publication must retain a stable latest tag')
+  if (channel === 'next') {
+    if (!parsedTags.has('latest') || parsedTags.get('latest').prerelease !== null) {
+      fail('prerelease publication must retain a stable latest tag')
+    }
+  } else if (!parsedTags.has('next') || parsedTags.get('next').prerelease === null) {
+    fail('stable publication must retain a prerelease next tag')
   }
-  return { version, channel: 'next' }
+  return { version, channel }
 }
 
 function runNpmView(args, label) {
@@ -86,10 +88,7 @@ function readRegistry(version) {
 }
 
 export async function verifyNpmPublication(version, options = {}) {
-  const parsedVersion = parseReleaseVersion(version, 'npm publication version')
-  if (parsedVersion.prerelease === null) {
-    fail('the next channel accepts only a canonical prerelease version')
-  }
+  parseReleaseVersion(version, 'npm publication version')
   const attempts = options.attempts ?? npmPublicationReadbackPolicy.attempts
   const delayMs = options.delayMs ?? npmPublicationReadbackPolicy.delayMs
   const read = options.read ?? readRegistry

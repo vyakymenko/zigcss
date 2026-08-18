@@ -32,6 +32,7 @@ export const releaseSourcePaths = Object.freeze([
   'neovim-config/README.md',
   'package-lock.json',
   'package.json',
+  'release/stable-promotion.json',
   'src/main.zig',
   'tests/preprocessors/native/contract.json',
   'tests/regressions/audit.zig',
@@ -131,6 +132,7 @@ export function validateReleaseSources(sources) {
   const vscodeManifest = parseJson(sources, 'vscode-extension/package.json')
   const vscodeLock = parseJson(sources, 'vscode-extension/package-lock.json')
   const nativeContract = parseJson(sources, 'tests/preprocessors/native/contract.json')
+  const stablePromotion = parseJson(sources, 'release/stable-promotion.json')
 
   expectEqual(rootManifest.name, 'zigcss', 'root npm package name')
   expectEqual(rootManifest.version, version, 'root npm package version')
@@ -160,6 +162,13 @@ export function validateReleaseSources(sources) {
   expectEqual(nativeContract.nativeReleaseVersion, version, 'graduated native release version')
   expectEqual(nativeContract.releaseGraduation?.state, 'closed', 'native release candidate state')
   expectEqual(nativeContract.releaseGraduation?.packageState, 'verified', 'native publication state')
+  expectEqual(stablePromotion.candidateVersion, parsed.base, 'stable promotion candidate version')
+  expectEqual(stablePromotion.candidateTag, `v${parsed.base}`, 'stable promotion candidate tag')
+  if (parsed.prerelease !== null) {
+    expectEqual(stablePromotion.previousPrerelease?.version, version, 'stable promotion previous prerelease')
+  } else {
+    expectEqual(stablePromotion.candidateVersion, version, 'active stable promotion version')
+  }
   expectEqual(nativeContract.adapters?.length, 5, 'native adapter inventory')
   for (const adapter of nativeContract.adapters ?? []) {
     expectEqual(adapter.current, 'native-graduated', `${adapter.id} native adapter state`)
@@ -184,6 +193,16 @@ export function validateReleaseSources(sources) {
     rootManifest.scripts?.['test:npm-publication'],
     'node --test scripts/check-npm-version-availability.test.mjs scripts/verify-npm-publication.test.mjs',
     'npm publication policy test script',
+  )
+  expectEqual(
+    rootManifest.scripts?.['check:stable-release'],
+    'node scripts/validate-stable-release.mjs --check',
+    'stable release check script',
+  )
+  expectEqual(
+    rootManifest.scripts?.['test:stable-release'],
+    'node --test scripts/validate-stable-release.test.mjs',
+    'stable release test script',
   )
 
   const zigVersion = singleCapture(sources.get('build.zig.zon'), /^\s*\.version\s*=\s*"([^"]+)",$/gm, 'Zig package version')

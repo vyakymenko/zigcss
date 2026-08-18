@@ -73,6 +73,8 @@
     "test:preprocessor-product": "node --test tests/preprocessors/product/*.test.mjs",
     "check:native-contract": "node scripts/validate-native-contract.mjs --check",
     "test:native-contract": "node --test scripts/validate-native-contract.test.mjs",
+    "check:stable-release": "node scripts/validate-stable-release.mjs --check",
+    "test:stable-release": "node --test scripts/validate-stable-release.test.mjs",
     "test:native-package-evidence": "node --test scripts/validate-native-package-evidence.test.mjs",
     "generate:preprocessor-package": "node scripts/validate-preprocessor-package.mjs --write",
     "check:preprocessor-package": "node scripts/validate-preprocessor-package.mjs --check",

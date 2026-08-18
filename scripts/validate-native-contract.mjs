@@ -2022,13 +2022,13 @@ function validateReleaseGraduation(release, plan, buildWorkflow, releaseWorkflow
     ['name: Native Package Evidence', 'hosted aggregate package evidence'],
     ['  npm-preflight:\n', 'release npm preflight'],
     ['  release:\n', 'release artifact matrix'],
-    ['  create-release:\n', 'GitHub prerelease creation'],
-    ['  publish-npm:\n', 'npm next publication'],
+    ['  create-release:\n', 'GitHub release creation'],
+    ['  publish-npm:\n', 'npm publication'],
     ['needs: npm-preflight', 'artifact dependency on npm preflight'],
-    ['needs: release', 'GitHub prerelease dependency on artifacts'],
-    ['needs: create-release', 'npm publication dependency on GitHub prerelease'],
-    ['npm publish --tag next --provenance', 'npm next provenance publication'],
-    ['prerelease: true', 'GitHub prerelease boundary'],
+    ['needs: [npm-preflight, release]', 'GitHub release dependency on preflight and artifacts'],
+    ['needs: [npm-preflight, create-release]', 'npm publication dependency on preflight and GitHub release'],
+    ['npm publish --tag "$RELEASE_CHANNEL" --provenance', 'channel-aware npm provenance publication'],
+    ['prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}', 'SemVer-derived GitHub release boundary'],
   ]) {
     requireText(
       needle.startsWith('name:') ? buildWorkflow : releaseWorkflow,
@@ -3590,7 +3590,7 @@ export function validateContract(
   const candidateCommitLookup = 'git rev-parse "${GITHUB_SHA}^{commit}"'
   const originMainLookup = 'git ls-remote --exit-code --refs origin refs/heads/main'
   const releaseGate = '--release-tag "$GITHUB_REF_NAME"'
-  requireText(releaseWorkflow, 'npm run check:native-contract -- \\', 'release workflow')
+  requireText(releaseWorkflow, 'npm run check:stable-release -- \\', 'release workflow')
   requireText(releaseWorkflow, candidateCommitLookup, 'release workflow candidate commit lookup')
   requireText(releaseWorkflow, originMainLookup, 'release workflow exact origin main lookup')
   requireText(releaseWorkflow, releaseGate, 'release workflow')
@@ -3604,12 +3604,12 @@ export function validateContract(
     '--origin-main-commit "$origin_main_commit"',
     'release workflow origin main commit',
   )
-  requireText(releaseWorkflow, 'npm publish --tag next --provenance', 'release workflow')
+  requireText(releaseWorkflow, 'npm publish --tag "$RELEASE_CHANNEL" --provenance', 'release workflow')
   if (releaseWorkflow.indexOf(candidateCommitLookup) > releaseWorkflow.indexOf(releaseGate)) {
-    fail('release candidate commit lookup must run before native tag admission')
+    fail('release candidate commit lookup must run before stable tag admission')
   }
   if (releaseWorkflow.indexOf(originMainLookup) > releaseWorkflow.indexOf(releaseGate)) {
-    fail('release exact origin main lookup must run before native tag admission')
+    fail('release exact origin main lookup must run before stable tag admission')
   }
   if (releaseWorkflow.indexOf(releaseGate) > releaseWorkflow.indexOf('npm whoami')) {
     fail('release interlock must run before npm authentication/publication preflight')

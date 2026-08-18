@@ -237,7 +237,8 @@ test('release workflow generates, signs, verifies, and uploads the closed five-t
     attestations: 2,
     signatureVerifications: 2,
     npmPreflight: true,
-    npmChannel: 'next',
+    npmChannels: ['next', 'latest'],
+    githubReleaseMode: 'semver',
     npmProvenance: true,
   })
 })
@@ -252,7 +253,8 @@ test('workflow validation normalizes Windows CRLF and rejects bare carriage retu
     attestations: 2,
     signatureVerifications: 2,
     npmPreflight: true,
-    npmChannel: 'next',
+    npmChannels: ['next', 'latest'],
+    githubReleaseMode: 'semver',
     npmProvenance: true,
   }
 
@@ -306,8 +308,8 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     /npm publication preflight/,
   )
   assert.throws(
-    () => validateReleaseWorkflowSource(workflow.replace('npm publish --tag next --provenance', 'npm publish --tag latest')),
-    /npm prerelease publication/,
+    () => validateReleaseWorkflowSource(workflow.replace('npm publish --tag "$RELEASE_CHANNEL" --provenance', 'npm publish --provenance')),
+    /channel-aware npm publication/,
   )
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace('node scripts/verify-npm-publication.mjs', 'node scripts/removed-readback.mjs')),

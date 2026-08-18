@@ -87,13 +87,13 @@ assert_equal "$(autodevelop_classify_pass 0 "$TMP/complete")" COMPLETE 'complete
 
 PROMPT_OUTPUT="$TMP/run-pass-prompt"
 bash "$HERE/run-pass.sh" --print-prompt > "$PROMPT_OUTPUT"
-assert_equal "$(grep -Fc 'Milestone 10 self-contained native stylesheet frontend work is active.' "$PROMPT_OUTPUT")" 1 'prompt selects active native milestone'
-assert_equal "$(grep -Fc 'NSASS-010 through NSASS-012' "$PROMPT_OUTPUT")" 1 'prompt retains native Sass dependency order'
-assert_equal "$(grep -Fc 'NLESS-010 through NLESS-012' "$PROMPT_OUTPUT")" 1 'prompt retains native Less dependency order'
-assert_equal "$(grep -Fc 'NSTYLUS-010 through NSTYLUS-012' "$PROMPT_OUTPUT")" 1 'prompt retains native Stylus dependency order'
-assert_equal "$(grep -Fc 'NATIVE-006 through NATIVE-009' "$PROMPT_OUTPUT")" 1 'prompt retains native graduation dependency order'
+assert_equal "$(grep -Fc 'Milestone 10 and NATIVE-009 are verified.' "$PROMPT_OUTPUT")" 1 'prompt closes the native graduation milestone'
+assert_equal "$(grep -Fc 'REL-010 stable-promotion sequence is active.' "$PROMPT_OUTPUT")" 1 'prompt selects the stable promotion package'
+assert_equal "$(grep -Fc 'earliest dependency-eligible REL-010 slice not marked VERIFIED' "$PROMPT_OUTPUT")" 1 'prompt retains stable promotion dependency order'
+assert_equal "$(grep -Fc 'pending external BENCH-007 runner must not block REL-010' "$PROMPT_OUTPUT")" 1 'prompt keeps benchmark evidence independent'
+assert_equal "$(grep -Fc 'exact stable `v0.6.0` promotion' "$PROMPT_OUTPUT")" 1 'prompt binds the stable candidate identity'
 assert_equal "$(if grep -Fq 'Milestone 9 canonical frontend work is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale provider milestone'
-assert_equal "$(grep -Fc 'only the first fully graduated native release' "$PROMPT_OUTPUT")" 1 'prompt binds guarded native publication authority'
+assert_equal "$(grep -Fc 'non-prerelease GitHub Release, npm `latest`, and the existing GitHub Pages deployment' "$PROMPT_OUTPUT")" 1 'prompt binds guarded stable publication authority'
 assert_equal "$(grep -Fc 'A sibling search is inspection, not an automatic work queue.' "$PROMPT_OUTPUT")" 1 'prompt forbids unbounded sibling queues'
 assert_equal "$(grep -Fc 'predeclared finite terminal bound' "$PROMPT_OUTPUT")" 1 'prompt requires finite numeric bounds'
 assert_equal "$(grep -Fc 'ZIGCSS-AUTODEVELOP-GAP:' "$PROMPT_OUTPUT")" 1 'prompt requires release-gap marker'
@@ -156,6 +156,7 @@ assert_equal "$(autodevelop_state_get main-batch-count)" 0 'successful main inte
 assert_equal "$(if autodevelop_should_integrate_main RECOVERY NSASS-011 native-sass-evaluation CLOSED; then printf yes; else printf no; fi)" no 'ordinary early batch stays recovery-only'
 assert_equal "$(if autodevelop_should_integrate_main INTEGRATE NSASS-011 native-sass-evaluation CLOSED; then printf yes; else printf no; fi)" yes 'batch threshold integrates main'
 assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-009 native-release-evidence REDUCED; then printf yes; else printf no; fi)" yes 'native release validation integrates main immediately'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY REL-010 stable-release-promotion REDUCED; then printf yes; else printf no; fi)" yes 'stable promotion validation integrates main immediately'
 assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-007 native-five-target-ci-throughput CLOSED; then printf yes; else printf no; fi)" yes 'native hosted-validation terminal integrates main immediately'
 assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-007 native-five-target-ci-throughput REDUCED; then printf yes; else printf no; fi)" no 'incomplete native hosted-validation family stays batched'
 assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-007 native-zero-dependency-package CLOSED; then printf yes; else printf no; fi)" no 'ordinary native package family stays batched'

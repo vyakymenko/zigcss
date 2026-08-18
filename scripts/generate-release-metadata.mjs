@@ -556,9 +556,28 @@ export function validateReleaseWorkflowSource(source) {
     1,
     'npm immutable-version preflight',
   )
-  expectLiteralCount(source, '        run: npm publish --tag next --provenance', 1, 'npm prerelease publication')
+  expectLiteralCount(source, '            --github-output "$GITHUB_OUTPUT"', 1, 'npm channel output')
+  expectLiteralCount(
+    source,
+    '      release-channel: ${{ steps.npm-policy.outputs.channel }}',
+    1,
+    'npm channel job output',
+  )
+  expectLiteralCount(
+    source,
+    '      github-prerelease: ${{ steps.npm-policy.outputs.github_prerelease }}',
+    1,
+    'GitHub release mode output',
+  )
+  expectLiteralCount(source, '        run: npm publish --tag "$RELEASE_CHANNEL" --provenance', 1, 'channel-aware npm publication')
+  expectLiteralCount(
+    source,
+    '          prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}',
+    1,
+    'channel-aware GitHub release',
+  )
   expectLiteralCount(source, 'npm version ', 0, 'npm package version mutation')
-  expectLiteralCount(source, '- name: Verify npm prerelease publication', 1, 'npm publication readback')
+  expectLiteralCount(source, '      - name: Verify npm publication\n', 1, 'npm publication readback')
   expectLiteralCount(
     source,
     '        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}"',
@@ -587,13 +606,13 @@ export function validateReleaseWorkflowSource(source) {
     '- name: Verify Signed Attestation Bundles',
     '- name: Upload Release Assets',
     '  create-release:',
-    '    needs: release',
+    '    needs: [npm-preflight, release]',
     '- name: Create Release',
     '  publish-npm:',
-    '    needs: create-release',
+    '    needs: [npm-preflight, create-release]',
     '- name: Publish to npm',
-    'npm publish --tag next --provenance',
-    '- name: Verify npm prerelease publication',
+    'npm publish --tag "$RELEASE_CHANNEL" --provenance',
+    '      - name: Verify npm publication\n',
   ])
 
   validateWorkflowSource('release.yml', source)
@@ -604,7 +623,8 @@ export function validateReleaseWorkflowSource(source) {
     attestations: 2,
     signatureVerifications: 2,
     npmPreflight: true,
-    npmChannel: 'next',
+    npmChannels: ['next', 'latest'],
+    githubReleaseMode: 'semver',
     npmProvenance: true,
   }
 }
@@ -873,7 +893,7 @@ function main() {
   if (same(args, ['--check-workflow'])) {
     const result = validateReleaseWorkflow()
     process.stdout.write(
-      `Release workflow metadata verified: ${result.targets} native-smoked targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications, npm ${result.npmChannel} preflight with provenance.\n`,
+      `Release workflow metadata verified: ${result.targets} native-smoked targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications, npm ${result.npmChannels.join('/')} SemVer channels with provenance.\n`,
     )
     return
   }

@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "ownerPackage": "REL-010",
+  "releaseGapFamily": "stable-release-promotion",
+  "state": "in-progress",
+  "packageState": "in-progress",
+  "stableReleaseReady": false,
+  "candidateVersion": "0.6.0",
+  "candidateTag": "v0.6.0",
+  "previousPrerelease": {
+    "version": "0.6.0-rc.2",
+    "tag": "v0.6.0-rc.2",
+    "commit": "b63e190f7edeccd829abe34bfb96d9e1a8a320e2",
+    "githubReleaseId": 369856953,
+    "npmDistTag": "next"
+  },
+  "candidateSelection": {
+    "selectedOn": "2026-08-18",
+    "selectedFromCommit": "a956145a92a0461d5baca07bb132e7c3ff9185ba",
+    "githubRepository": "vyakymenko/zigcss",
+    "githubTagStateAtSelection": "absent",
+    "githubReleaseStateAtSelection": "absent",
+    "npmPackage": "zigcss",
+    "npmVersionStateAtSelection": "absent",
+    "observedPublishedNpmVersions": [
+      "0.2.0",
+      "0.2.1",
+      "0.3.0",
+      "0.4.0-rc.3",
+      "0.6.0-rc.2"
+    ]
+  },
+  "claimsPolicy": {
+    "benchmarkPublicationStatus": "withdrawn",
+    "comparativeClaimsAllowed": false,
+    "requiredRunner": "controlled non-emulated Linux x64",
+    "prohibitedUnverifiedClaim": "world's fastest"
+  },
+  "terminalContract": {
+    "syntaxes": ["css", "scss", "sass", "less", "stylus"],
+    "targets": [
+      "x86_64-linux",
+      "aarch64-linux",
+      "x86_64-macos",
+      "aarch64-macos",
+      "x86_64-windows"
+    ],
+    "assetsPerTarget": 5,
+    "preTagSurfaces": [
+      "authority-contract",
+      "immutable-candidate",
+      "native-prerelease-evidence",
+      "release-channel-policy",
+      "benchmark-claims-policy",
+      "local-validation",
+      "documentation-pages-validation",
+      "hosted-validation",
+      "origin-main-integration"
+    ],
+    "postTagSurfaces": ["tag-workflow-publication"],
+    "publicationChannels": ["github-stable-release", "npm-latest", "github-pages"],
+    "npmDistTag": "latest",
+    "githubPrerelease": false,
+    "preservedNpmDistTags": {
+      "next": "0.6.0-rc.2"
+    }
+  },
+  "gates": [
+    {
+      "id": "authority-contract",
+      "state": "verified",
+      "evidence": ["ADR-015 and plan v1.6 record the owner's bounded stable release and Pages authority"]
+    },
+    {
+      "id": "immutable-candidate",
+      "state": "verified",
+      "evidence": ["GitHub tag and release v0.6.0 plus npm version 0.6.0 were absent at selection"]
+    },
+    {
+      "id": "native-prerelease-evidence",
+      "state": "verified",
+      "evidence": ["v0.6.0-rc.2 closed every native release gate on GitHub prerelease and npm next"]
+    },
+    {
+      "id": "release-channel-policy",
+      "state": "verified",
+      "evidence": ["Semantic Versioning selects next/prerelease or latest/stable before authentication and publication"]
+    },
+    {
+      "id": "benchmark-claims-policy",
+      "state": "verified",
+      "evidence": ["withdrawn benchmark publication emits no timing ranking ratio or superlative claim"]
+    },
+    {
+      "id": "local-validation",
+      "state": "pending",
+      "evidence": []
+    },
+    {
+      "id": "documentation-pages-validation",
+      "state": "pending",
+      "evidence": []
+    },
+    {
+      "id": "hosted-validation",
+      "state": "pending",
+      "evidence": []
+    },
+    {
+      "id": "origin-main-integration",
+      "state": "pending",
+      "evidence": []
+    },
+    {
+      "id": "tag-workflow-publication",
+      "state": "pending",
+      "evidence": []
+    }
+  ],
+  "publicationEvidence": null
+}

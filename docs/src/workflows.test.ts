@@ -173,7 +173,7 @@ describe('native artifact workflows', () => {
     expect(compatibility).toBeGreaterThan(consumerTests)
   })
 
-  test('keeps native migration and tag publication fail closed', () => {
+  test('keeps native migration and stable tag publication fail closed', () => {
     const releaseMetadata = buildWorkflow.indexOf('npm run test:release-metadata')
     const nativeContract = buildWorkflow.indexOf(
       'npm run test:native-contract && npm run test:native-package-evidence && npm run check:native-contract',
@@ -183,12 +183,17 @@ describe('native artifact workflows', () => {
       'npm run test:release-smoke',
       nativeContract,
     )
-    const tagInterlock = releaseWorkflow.indexOf('- name: Verify native release graduation')
+    const stableContract = buildWorkflow.indexOf(
+      'npm run test:stable-release && npm run check:stable-release',
+      nativeContract,
+    )
+    const tagInterlock = releaseWorkflow.indexOf('- name: Verify stable release promotion')
     const npmAuthority = releaseWorkflow.indexOf('npm whoami')
-    const npmPublish = releaseWorkflow.indexOf('npm publish --tag next --provenance')
+    const npmPublish = releaseWorkflow.indexOf('npm publish --tag "$RELEASE_CHANNEL" --provenance')
 
     expect(nativeContract).toBeGreaterThan(releaseMetadata)
-    expect(releaseConsumers).toBeGreaterThan(nativeContract)
+    expect(stableContract).toBeGreaterThan(nativeContract)
+    expect(releaseConsumers).toBeGreaterThan(stableContract)
     expect(tagInterlock).toBeGreaterThan(-1)
     expect(releaseWorkflow).toContain('--release-tag "$GITHUB_REF_NAME"')
     expect(releaseWorkflow).toContain('--candidate-commit "$candidate_commit"')
