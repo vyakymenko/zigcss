@@ -74,6 +74,13 @@ function fail(message) {
   throw new Error(`release smoke integrity: ${message}`)
 }
 
+export function compilerWarningForVersion(version) {
+  const parsed = parseReleaseVersion(version, 'release smoke version')
+  return parsed.prerelease === null
+    ? ''
+    : `Warning: ZigCSS ${parsed.value} is an experimental release candidate; do not use it for production CSS.\n`
+}
+
 export function archiveExecutable(platform = process.platform, systemRoot = process.env.SystemRoot) {
   if (platform !== 'win32') return 'tar'
   // Git Bash can shadow Windows' ZIP-capable bsdtar with GNU tar.
@@ -386,7 +393,7 @@ function checkCompiler(command, argsPrefix, working, environment, version, label
     env: environment,
     label: `${label} compile smoke`,
   })
-  const warning = `Warning: ZigCSS ${version} is an experimental release candidate; do not use it for production CSS.\n`
+  const warning = compilerWarningForVersion(version)
   if (compile.stdout !== '.smoke{color:red}' || compile.stderr !== warning) fail(`${label} returned an unexpected compiler contract`)
 }
 
@@ -461,7 +468,7 @@ function checkNativePreprocessors(command, argsPrefix, working, environment, ver
       env: environment,
       label: `${label} ${item.extension} native compile smoke`,
     })
-    const warning = `Warning: ZigCSS ${version} is an experimental release candidate; do not use it for production CSS.\n`
+    const warning = compilerWarningForVersion(version)
     if (result.stdout !== item.expected || result.stderr !== warning) {
       fail(`${label} ${item.extension} returned an unexpected native compiler contract`)
     }

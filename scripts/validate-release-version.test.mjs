@@ -26,37 +26,38 @@ function replace(sources, filename, current, replacement) {
 
 test('all release, package, runtime, editor, container, formula, and documentation versions agree', () => {
   assert.deepEqual(validateReleaseVersion(), {
-    version: '0.6.0-rc.2',
+    version: '0.6.0',
     vscodeVersion: '0.6.0',
-    surfaces: 30,
+    surfaces: 35,
   })
 })
 
 test('canonical versions and release tags fail closed', () => {
-  assert.deepEqual(parseReleaseVersion('0.6.0-rc.2'), {
-    value: '0.6.0-rc.2',
+  assert.deepEqual(parseReleaseVersion('0.6.0'), {
+    value: '0.6.0',
     base: '0.6.0',
-    prerelease: 'rc.2',
+    prerelease: null,
     build: null,
   })
+  assert.equal(parseReleaseVersion('0.6.0-rc.2').prerelease, 'rc.2')
   for (const invalid of ['v0.6.0', '0.6', '00.6.0', '0.6.0-01', '0.6.0-']) {
     assert.throws(() => parseReleaseVersion(invalid), /not canonical Semantic Versioning/)
   }
-  assert.equal(validateReleaseTag('0.6.0-rc.2', 'v0.6.0-rc.2'), true)
-  assert.throws(() => validateReleaseTag('0.6.0-rc.2', 'v0.6.0'), /release tag must be v0\.6\.0-rc\.2/)
+  assert.equal(validateReleaseTag('0.6.0', 'v0.6.0'), true)
+  assert.throws(() => validateReleaseTag('0.6.0', 'v0.6.0-rc.2'), /release tag must be v0\.6\.0/)
 
   const plan = cloneSources()
   replace(plan, 'DEVELOPMENT_PLAN.md', 'Candidate: `0.6.0-rc.2`', 'Candidate: `0.6.0-rc.3`')
-  assert.throws(() => validateReleaseSources(plan), /VERSION must be 0\.6\.0-rc\.3, received "0\.6\.0-rc\.2"/)
+  assert.throws(() => validateReleaseSources(plan), /Milestone 10 candidate/)
 })
 
 test('manifest, lockfile, Zig, CLI, and Marketplace mapping drift fails closed', () => {
   const rootLock = cloneSources()
-  replace(rootLock, 'package-lock.json', '"version": "0.6.0-rc.2"', '"version": "9.9.9"')
+  replace(rootLock, 'package-lock.json', '"version": "0.6.0"', '"version": "9.9.9"')
   assert.throws(() => validateReleaseSources(rootLock), /root npm lock version/)
 
   const docsLock = cloneSources()
-  replace(docsLock, 'docs/package-lock.json', '"version": "0.6.0-rc.2"', '"version": "9.9.9"')
+  replace(docsLock, 'docs/package-lock.json', '"version": "0.6.0"', '"version": "9.9.9"')
   assert.throws(() => validateReleaseSources(docsLock), /documentation linked ZigCSS version/)
 
   const vscode = cloneSources()
@@ -64,17 +65,17 @@ test('manifest, lockfile, Zig, CLI, and Marketplace mapping drift fails closed',
   assert.throws(() => validateReleaseSources(vscode), /VS Code Marketplace package version/)
 
   const zig = cloneSources()
-  replace(zig, 'build.zig.zon', '.version = "0.6.0-rc.2"', '.version = "9.9.9"')
+  replace(zig, 'build.zig.zon', '.version = "0.6.0"', '.version = "9.9.9"')
   assert.throws(() => validateReleaseSources(zig), /Zig package version/)
 
   const cli = cloneSources()
-  replace(cli, 'src/main.zig', 'const version = "0.6.0-rc.2";', 'const version = "9.9.9";')
+  replace(cli, 'src/main.zig', 'const version = "0.6.0";', 'const version = "9.9.9";')
   assert.throws(() => validateReleaseSources(cli), /CLI version constant/)
 
   const nativeCandidate = cloneSources()
   replace(nativeCandidate, 'tests/preprocessors/native/contract.json',
     '"candidateVersion": "0.6.0-rc.2"', '"candidateVersion": "0.6.0-rc.3"')
-  assert.throws(() => validateReleaseSources(nativeCandidate), /native candidate version/)
+  assert.throws(() => validateReleaseSources(nativeCandidate), /native historical candidate version/)
 
   const closedInterlock = cloneSources()
   replace(closedInterlock, 'tests/preprocessors/native/contract.json',
@@ -105,24 +106,24 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
   assert.throws(() => validateReleaseSources(formulaToolchain), /Homebrew Zig dependency/)
 
   const docker = cloneSources()
-  replace(docker, 'Dockerfile.docs', 'ARG ZIGCSS_VERSION=0.6.0-rc.2', 'ARG ZIGCSS_VERSION=0.6.0')
+  replace(docker, 'Dockerfile.docs', 'ARG ZIGCSS_VERSION=0.6.0', 'ARG ZIGCSS_VERSION=9.9.9')
   assert.throws(() => validateReleaseSources(docker), /Dockerfile\.docs product version/)
 
   const releaseDocker = cloneSources()
-  replace(releaseDocker, 'Dockerfile.release', 'ARG ZIGCSS_VERSION=0.6.0-rc.2', 'ARG ZIGCSS_VERSION=0.6.0')
+  replace(releaseDocker, 'Dockerfile.release', 'ARG ZIGCSS_VERSION=0.6.0', 'ARG ZIGCSS_VERSION=9.9.9')
   assert.throws(() => validateReleaseSources(releaseDocker), /Dockerfile\.release product version/)
 
   const changelog = cloneSources()
-  replace(changelog, 'CHANGELOG.md', 'Target release: `0.6.0-rc.2`', 'Target release: `0.6.0`')
-  assert.throws(() => validateReleaseSources(changelog), /published changelog target/)
+  replace(changelog, 'CHANGELOG.md', '## [0.6.0] - 2026-08-18', '## [9.9.9] - 2026-08-18')
+  assert.throws(() => validateReleaseSources(changelog), /stable changelog target/)
 
   const docs = cloneSources()
-  replace(docs, 'README.md', 'Native prerelease: 0.6.0-rc.2', 'Native prerelease: 9.9.9')
-  assert.throws(() => validateReleaseSources(docs), /README release claims/)
+  docs.set('README.md', docs.get('README.md').replaceAll('Stable package identity: 0.6.0', 'Stable package identity: 9.9.9'))
+  assert.throws(() => validateReleaseSources(docs), /README stable identity/)
 
   const npmGuide = cloneSources()
-  replace(npmGuide, 'NPM_PUBLISH.md', '0.6.0-rc.2', '9.9.9')
-  assert.throws(() => validateReleaseSources(npmGuide), /npm publishing guide release claims/)
+  replace(npmGuide, 'NPM_PUBLISH.md', 'Stable promotion target: `zigcss@0.6.0`', 'Stable promotion target: `zigcss@9.9.9`')
+  assert.throws(() => validateReleaseSources(npmGuide), /npm publishing guide stable identity/)
 })
 
 test('CI ordering, release-tag preflight, and VS Code prerelease packaging fail closed', () => {
@@ -139,7 +140,7 @@ test('CI ordering, release-tag preflight, and VS Code prerelease packaging fail 
   assert.throws(() => validateReleaseSources(vscode), /VS Code package verifier/)
 
   const inventory = cloneSources()
-  inventory.set('unowned-version.txt', '0.6.0-rc.2\n')
+  inventory.set('unowned-version.txt', '0.6.0\n')
   assert.throws(() => validateReleaseSources(inventory), /release surface inventory changed/)
 
   const npmPolicy = cloneSources()
@@ -176,12 +177,12 @@ test('release source inventory normalizes checkout CRLF and rejects bare carriag
     }
 
     assert.deepEqual(validateReleaseVersion(temporary), {
-      version: '0.6.0-rc.2',
+      version: '0.6.0',
       vscodeVersion: '0.6.0',
-      surfaces: 30,
+      surfaces: 35,
     })
 
-    fs.writeFileSync(path.join(temporary, 'VERSION'), '0.6.0-rc.2\r')
+    fs.writeFileSync(path.join(temporary, 'VERSION'), '0.6.0\r')
     assert.throws(
       () => readReleaseSources(temporary),
       /VERSION contains an unsupported bare carriage return/,

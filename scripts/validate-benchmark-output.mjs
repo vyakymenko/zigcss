@@ -16,8 +16,6 @@ const oraclePackage = JSON.parse(
 )
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
-const releaseVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
-
 const manifest = {
   schemaVersion: 1,
   oracle: {
@@ -37,7 +35,7 @@ const manifest = {
     {
       id: 'zigcss',
       arguments: ['{input}', '--minify', '-o', '{output}'],
-      stderr: 'experimental-warning',
+      stderr: 'compile-message',
     },
     {
       id: 'esbuild',
@@ -198,9 +196,8 @@ function validateStderr(tool, stderr, input, output) {
     if (stderr !== '') fail(`${tool.id} emitted unexpected stderr: ${JSON.stringify(stderr)}`)
     return
   }
-  const warning = `Warning: ZigCSS ${releaseVersion} is an experimental release candidate; do not use it for production CSS.\n`
-  const expected = `${warning}Compiled: ${input} -> ${output}\n`
-  if (tool.stderr !== 'experimental-warning' || stderr !== expected) {
+  const expected = `Compiled: ${input} -> ${output}\n`
+  if (tool.stderr !== 'compile-message' || stderr !== expected) {
     fail(`${tool.id} stderr drifted: ${JSON.stringify(stderr)}`)
   }
 }

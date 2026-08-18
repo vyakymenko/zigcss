@@ -2,7 +2,7 @@
 
 The ZigCSS source-built binary owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. Run `zig-out/bin/zigcss --help` for the authoritative option list.
 
-CSS enters the stable native compile facade. SCSS, indented Sass, Less, and Stylus enter self-contained native Zig parser/evaluators, then their complete generated CSS passes through the same recovery-disabled core. The root JavaScript launcher only locates and invokes the binary; it hosts no language semantics. The public npm `next` release is the native five-language `0.6.0-rc.2` prerelease described by this page; npm `latest` remains the stable 0.3.0 line.
+CSS enters the stable native compile facade. SCSS, indented Sass, Less, and Stylus enter self-contained native Zig parser/evaluators, then their complete generated CSS passes through the same recovery-disabled core. The root JavaScript launcher only locates and invokes the binary; it hosts no language semantics. Stable source identity 0.6.0 contains the five-language compiler described by this page; npm `latest` is updated only after the exact stable promotion workflow passes.
 
 ## Inputs and native frontends
 

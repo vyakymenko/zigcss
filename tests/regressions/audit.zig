@@ -252,6 +252,10 @@ test "LSP transport accepts sequential frames and bodies above 8 KiB (LSP-001)" 
     var result = try runWithStdin(&.{"--lsp"}, transcript.items);
     defer deinitRun(&result);
     try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        "Warning: ZigCSS LSP is experimental; evaluate before production editor use.\n",
+        result.stderr,
+    );
 
     var offset: usize = 0;
     const initialize_response = try nextLspFrame(result.stdout, &offset);
@@ -1359,7 +1363,7 @@ test "CLI informational and failure modes have stable streams and exit codes (CL
     var version = try runInDir(tmp.dir, &.{"--version"});
     defer deinitRun(&version);
     try expectExitCode(version, 0);
-    try std.testing.expectEqualStrings("zigcss 0.6.0-rc.2\n", version.stdout);
+    try std.testing.expectEqualStrings("zigcss 0.6.0\n", version.stdout);
     try std.testing.expectEqual(@as(usize, 0), version.stderr.len);
 
     var no_input = try runInDir(tmp.dir, &.{});
@@ -1431,7 +1435,7 @@ test "CLI stdin and explicit stdout share the public compile contract (CLI-011)"
     defer deinitRun(&stream);
     try expectExitCode(stream, 0);
     try std.testing.expectEqualStrings(".stream{width:3px;color:#fff}", stream.stdout);
-    try std.testing.expect(std.mem.indexOf(u8, stream.stderr, "experimental release candidate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stream.stderr, "experimental release candidate") == null);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1871,20 +1875,21 @@ test "CLI strictness: output-dir is rejected outside explicit batch mode (CLI-00
     try expectFailureContaining(result, "--output-dir requires multiple inputs");
 }
 
-test "recovery CLI identifies the current compiler as experimental (SAFE-001)" {
+test "recovery CLI identifies the current compiler as stable (SAFE-001)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var help = try runInDir(tmp.dir, &.{"--help"});
     defer deinitRun(&help);
     try expectSuccess(help);
-    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "EXPERIMENTAL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "ZigCSS 0.6.0 native stylesheet compiler") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "EXPERIMENTAL") == null);
     try std.testing.expect(std.mem.indexOf(u8, help.stdout, "--optimize               Run the closed verified optimizer preset") != null);
     try std.testing.expectEqual(@as(usize, 0), help.stderr.len);
 
     var compile = try runCompiler(@embedFile("fixtures/simple.css"), &.{"--minify"});
     defer deinitRun(&compile);
     try expectSuccess(compile);
-    try std.testing.expect(std.mem.indexOf(u8, compile.stderr, "experimental release candidate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compile.stderr, "experimental release candidate") == null);
 }
 
 test "recovery CLI rejects experimental format adapters before writing (SAFE-001)" {

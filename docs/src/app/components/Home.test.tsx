@@ -16,16 +16,16 @@ describe('Home', () => {
     expect(screen.getByRole('dialog', { name: /zigcss boot sequence/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /exact in\. deterministic out\. denied by default/i })).toBeInTheDocument()
     expect(screen.getByText('Compile CSS. Keep the meaning.')).toBeInTheDocument()
-    expect(screen.getByText(/0\.6\.0-rc\.2.*experimental.*evaluate before production/i)).toBeInTheDocument()
-    expect(screen.getByText(/version 0\.6\.0-rc\.2 is published from one immutable tag as a GitHub prerelease and on npm next/i)).toBeInTheDocument()
-    expect(screen.getByText(/npm latest remains stable/i)).toBeInTheDocument()
+    expect(screen.getByText(/0\.6\.0.*stable candidate.*zero runtime dependencies/i)).toBeInTheDocument()
+    expect(screen.getByText(/stable source identity 0\.6\.0 is bound to one immutable promotion workflow/i)).toBeInTheDocument()
+    expect(screen.getByText(/comparative speed claims remain locked until controlled Linux x64 evidence exists/i)).toBeInTheDocument()
     expect(screen.getByText(/^all five source inputs run through self-contained native zig frontends\. one self-contained compiler/i)).toBeInTheDocument()
   })
 
   it('puts the real install command and lab entry in the hero', () => {
     renderHome()
 
-    expect(screen.getByRole('button', { name: /copy install command: npm install --save-dev zigcss@next/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /copy install command: npm install --save-dev zigcss@0\.6\.0/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /enter the lab/i })).toHaveAttribute('href', '#formats')
     expect(screen.getByRole('link', { name: /five inputs converge/i })).toHaveAttribute('href', '#convergence')
   })
@@ -45,13 +45,13 @@ describe('Home', () => {
     expect(screen.getByText('OWNED COMPILE RESULT')).toBeInTheDocument()
   })
 
-  it('marks the native prerelease as published and exposes real deployment surfaces', () => {
+  it('marks the stable promotion as gated and exposes real deployment surfaces', () => {
     renderHome()
 
-    expect(screen.getByText('NATIVE PRERELEASE · PUBLISHED ON NEXT')).toBeInTheDocument()
+    expect(screen.getByText('STABLE PROMOTION · GATES ACTIVE')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /the providers are oracles/i })).toBeInTheDocument()
     expect(screen.getByText(/one self-contained compiler\. zero production package dependencies/i)).toBeInTheDocument()
-    expect(screen.getByText(/nativeReleaseReady: true.*0\.6\.0-rc\.2/i)).toBeInTheDocument()
+    expect(screen.getByText(/REL-010.*0\.6\.0.*exact promotion evidence required/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /choose your entry point/i })).toBeInTheDocument()
     for (const target of ['Linux x64', 'Linux arm64', 'macOS x64', 'macOS arm64', 'Windows x64']) {
       expect(screen.getByText(target)).toBeInTheDocument()

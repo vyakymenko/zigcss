@@ -637,7 +637,7 @@ test "stable native syntax selection and help agree with executable CLI tests" {
         defer deinitRun(&result);
         try expectExitCode(result, 0);
         try std.testing.expectEqualStrings(case.expected, result.stdout);
-        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "experimental release candidate") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "experimental release candidate") == null);
     }
 }
 
@@ -662,7 +662,7 @@ test "binary CLI routes the finite native syntax set through the pre-graduation 
         try expectExitCode(second, 0);
         try std.testing.expectEqualStrings(case.expected, first.stdout);
         try std.testing.expectEqualStrings(first.stdout, second.stdout);
-        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") != null);
+        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") == null);
     }
 }
 
@@ -817,7 +817,7 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
     defer deinitRun(&implicit);
     try expectExitCode(implicit, 0);
     try std.testing.expectEqualStrings(route_cases[0].expected, implicit.stdout);
-    try std.testing.expect(std.mem.indexOf(u8, implicit.stderr, "experimental release candidate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, implicit.stderr, "experimental release candidate") == null);
 
     var css_gate = try runCompilerNamed("input.css", ".a { color: red; }", &.{
         "--experimental-native",
@@ -1094,7 +1094,7 @@ test "binary CLI routes the finite native syntax set from stdin" {
         try expectExitCode(second, 0);
         try std.testing.expectEqualStrings(case.expected, first.stdout);
         try std.testing.expectEqualStrings(first.stdout, second.stdout);
-        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") != null);
+        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") == null);
     }
 }
 

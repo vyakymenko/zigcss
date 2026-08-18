@@ -1575,9 +1575,9 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
     'zig-out/bin/zigcss --syntax scss input.scss -o output.css --minify',
     'website native source command',
   )
-  requireText(home, 'NATIVE PRERELEASE · PUBLISHED ON NEXT', 'website published native release boundary')
+  requireText(home, 'STABLE PROMOTION · GATES ACTIVE', 'website stable promotion boundary')
   requireText(home, 'The providers are ', 'website development-oracle heading')
-  requireText(home, 'nativeReleaseReady: true · 0.6.0-rc.2 · publication verified', 'website published native interlock')
+  requireText(home, 'REL-010 · 0.6.0 · exact promotion evidence required', 'website stable promotion interlock')
   requireText(home, 'CLI · JS wrapper · Zig API', 'website thin wrapper interface claim')
   requireText(
     gettingStarted,
@@ -1679,7 +1679,7 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
     ],
     ['assert.equal(result.status, 0', 'website lab native exit evidence'],
     ['assert.equal(result.stdout, example.output, example.id)', 'website lab exact output evidence'],
-    ['assert.match(result.stderr, /experimental release candidate/)', 'website lab warning evidence'],
+    ['assert.doesNotMatch(result.stderr, /experimental release candidate/)', 'website stable warning boundary'],
   ]) {
     requireText(siteExamplesTests, needle, label)
   }
@@ -3225,6 +3225,7 @@ export function validateContract(
   contract,
   {
     manifest = loadJson('package.json'),
+    stablePromotion = loadJson('release/stable-promotion.json'),
     plan = fs.readFileSync(repositoryFile('DEVELOPMENT_PLAN.md'), 'utf8'),
     decision = fs.readFileSync(
       repositoryFile('docs/adr/ADR-013-self-contained-native-frontends.md'),
@@ -3523,8 +3524,19 @@ export function validateContract(
     fail(`adapter inventory must contain ${expectedAdapterIds.length} rows`)
   }
 
-  if (manifest.version !== contract.releaseGraduation.candidateVersion) {
-    fail('package version is not the selected native candidate')
+  const stablePromotionOwnsCurrentVersion =
+    stablePromotion?.ownerPackage === 'REL-010'
+    && stablePromotion?.releaseGapFamily === 'stable-release-promotion'
+    && stablePromotion?.candidateVersion === manifest.version
+    && stablePromotion?.candidateTag === `v${manifest.version}`
+    && stablePromotion?.previousPrerelease?.version === contract.releaseGraduation.candidateVersion
+    && stablePromotion?.previousPrerelease?.tag === contract.releaseGraduation.candidateTag
+    && ['in-progress', 'candidate-ready', 'closed'].includes(stablePromotion?.state)
+  if (
+    manifest.version !== contract.releaseGraduation.candidateVersion
+    && !stablePromotionOwnsCurrentVersion
+  ) {
+    fail('package version is neither the selected native prerelease nor its bounded stable promotion')
   }
   if (!same(manifest.dependencies ?? {}, {})) {
     fail('native package production dependency graph is not empty')

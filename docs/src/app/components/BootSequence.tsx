@@ -44,7 +44,7 @@ export function BootSequence() {
     >
       <div className="w-full max-w-3xl font-mono">
         <p className="boot-line text-xs uppercase tracking-[0.18em] text-[#73806f]">
-          zigcss 0.6.0-rc.2 · deterministic · fail-closed
+          zigcss 0.6.0 · deterministic · fail-closed
         </p>
         <div className="mt-8 space-y-3 text-sm sm:text-base">
           {bootLines.map((line, index) => (

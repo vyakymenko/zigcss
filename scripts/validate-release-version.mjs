@@ -21,11 +21,16 @@ export const releaseSourcePaths = Object.freeze([
   'README.md',
   'VERSION',
   'build.zig.zon',
+  'docs/index.html',
   'docs/package-lock.json',
   'docs/package.json',
+  'docs/scripts/generate-seo-pages.mjs',
+  'docs/src/app/components/BootSequence.tsx',
   'docs/src/app/components/GettingStarted.tsx',
   'docs/src/app/components/Home.tsx',
   'docs/src/content/docs/guide/build-from-source.md',
+  'docs/src/content/docs/guide/format-compatibility.md',
+  'docs/src/content/docs/guide/recovery-cli.md',
   'docs/src/content/docs/guide/status.md',
   'docs/src/data/capabilities.json',
   'install.js',
@@ -91,6 +96,10 @@ function expectContains(source, fragment, label) {
   if (!source.includes(fragment)) fail(`${label} is missing ${JSON.stringify(fragment)}`)
 }
 
+function expectNotContains(source, fragment, label) {
+  if (source.includes(fragment)) fail(`${label} contains ${JSON.stringify(fragment)}`)
+}
+
 function expectLiteralCount(source, literal, expected, label) {
   const actual = source.split(literal).length - 1
   if (actual !== expected) fail(`${label} must contain ${JSON.stringify(literal)} ${expected} times, received ${actual}`)
@@ -123,7 +132,6 @@ export function validateReleaseSources(sources) {
     'Milestone 10 release candidate',
   )
   parseReleaseVersion(planTarget, 'Milestone 10 candidate')
-  expectEqual(version, planTarget, 'VERSION')
 
   const rootManifest = parseJson(sources, 'package.json')
   const rootLock = parseJson(sources, 'package-lock.json')
@@ -145,8 +153,9 @@ export function validateReleaseSources(sources) {
   expectEqual(vscodeLock.version, vscodeVersion, 'VS Code lock version')
   expectEqual(vscodeLock.packages?.['']?.version, vscodeVersion, 'VS Code lock package version')
   expectEqual(nativeContract.referenceCandidate, '0.5.0-rc.1', 'native reference candidate')
-  expectEqual(nativeContract.releaseGraduation?.candidateVersion, version, 'native candidate version')
-  expectEqual(nativeContract.releaseGraduation?.candidateTag, `v${version}`, 'native candidate tag')
+  expectEqual(stablePromotion.previousPrerelease?.version, planTarget, 'Milestone 10 candidate')
+  expectEqual(nativeContract.releaseGraduation?.candidateVersion, planTarget, 'native historical candidate version')
+  expectEqual(nativeContract.releaseGraduation?.candidateTag, `v${planTarget}`, 'native historical candidate tag')
   expectEqual(
     nativeContract.releaseGraduation?.gates?.find(gate => gate.id === 'immutable-candidate')?.state,
     'verified',
@@ -159,12 +168,13 @@ export function validateReleaseSources(sources) {
   )
   expectEqual(nativeContract.state, 'native-graduated', 'native migration state')
   expectEqual(nativeContract.nativeReleaseReady, true, 'native release interlock')
-  expectEqual(nativeContract.nativeReleaseVersion, version, 'graduated native release version')
+  expectEqual(nativeContract.nativeReleaseVersion, planTarget, 'graduated native release version')
   expectEqual(nativeContract.releaseGraduation?.state, 'closed', 'native release candidate state')
   expectEqual(nativeContract.releaseGraduation?.packageState, 'verified', 'native publication state')
   expectEqual(stablePromotion.candidateVersion, parsed.base, 'stable promotion candidate version')
   expectEqual(stablePromotion.candidateTag, `v${parsed.base}`, 'stable promotion candidate tag')
   if (parsed.prerelease !== null) {
+    expectEqual(version, planTarget, 'prerelease VERSION')
     expectEqual(stablePromotion.previousPrerelease?.version, version, 'stable promotion previous prerelease')
   } else {
     expectEqual(stablePromotion.candidateVersion, version, 'active stable promotion version')
@@ -211,8 +221,12 @@ export function validateReleaseSources(sources) {
   const main = sources.get('src/main.zig')
   const cliVersion = singleCapture(main, /^const version = "([^"]+)";$/gm, 'CLI version constant')
   expectEqual(cliVersion, version, 'CLI version constant')
-  expectContains(main, '"Warning: ZigCSS {s} is an experimental release candidate', 'CLI warning')
-  expectContains(main, 'std.fmt.comptimePrint("ZigCSS {s} recovery CLI', 'CLI help')
+  if (parsed.prerelease === null) {
+    expectNotContains(main, 'experimental release candidate', 'stable CLI')
+    expectContains(main, 'std.fmt.comptimePrint("ZigCSS {s} native stylesheet compiler', 'stable CLI help')
+  } else {
+    expectContains(main, '"Warning: ZigCSS {s} is an experimental release candidate', 'CLI warning')
+  }
   expectContains(sources.get('tests/regressions/audit.zig'), `"zigcss ${version}\\n"`, 'CLI version regression')
   expectContains(sources.get('install.js'), "const VERSION = require('./package.json').version", 'npm installer')
 
@@ -250,28 +264,30 @@ export function validateReleaseSources(sources) {
   expectContains(capabilityById.get('zig-package')?.behavior ?? '', `Package \`zigcss\` ${version}`, 'Zig package capability')
   const vscodeBehavior = capabilityById.get('vscode')?.behavior ?? ''
   expectContains(vscodeBehavior, `Marketplace version ${vscodeVersion}`, 'VS Code capability')
-  expectContains(vscodeBehavior, `core ${version}`, 'VS Code capability')
+  expectContains(vscodeBehavior, `core ${planTarget}`, 'VS Code capability')
   expectContains(vscodeBehavior, 'pre-release marker', 'VS Code capability')
   expectEqual(capabilityMetadata.gates?.['release-version']?.command, 'npm run check:version', 'release-version evidence gate')
 
   const readme = sources.get('README.md')
   const status = sources.get('docs/src/content/docs/guide/status.md')
-  expectLiteralCount(readme, version, 3, 'README release claims')
-  expectLiteralCount(sources.get('NPM_PUBLISH.md'), version, 2, 'npm publishing guide release claims')
-  expectLiteralCount(status, version, 11, 'status guide release claims')
-  expectLiteralCount(sources.get('docs/src/content/docs/guide/build-from-source.md'), version, 1, 'build guide release claims')
-  expectLiteralCount(sources.get('docs/src/app/components/GettingStarted.tsx'), version, 1, 'getting-started release claims')
-  expectLiteralCount(sources.get('docs/src/app/components/Home.tsx'), version, 5, 'homepage release claims')
-  expectLiteralCount(sources.get('neovim-config/README.md'), version, 2, 'Neovim release claims')
+  expectContains(readme, `Stable package identity: ${version}`, 'README stable identity')
+  expectContains(sources.get('NPM_PUBLISH.md'), `Stable promotion target: \`zigcss@${version}\``, 'npm publishing guide stable identity')
+  expectContains(status, `ZigCSS ${version}`, 'status guide stable identity')
+  expectContains(sources.get('docs/src/content/docs/guide/build-from-source.md'), `package \`zigcss\` ${version}`, 'build guide stable identity')
+  expectContains(sources.get('docs/src/content/docs/guide/format-compatibility.md'), `Stable source identity ${version}`, 'format guide stable identity')
+  expectContains(sources.get('docs/src/content/docs/guide/recovery-cli.md'), `Stable source identity ${version}`, 'CLI guide stable identity')
+  expectContains(sources.get('docs/src/app/components/GettingStarted.tsx'), `ZigCSS ${version}`, 'getting-started stable identity')
+  expectContains(sources.get('docs/src/app/components/Home.tsx'), `Stable source identity is ${version}`, 'homepage stable identity')
+  expectContains(sources.get('docs/src/app/components/BootSequence.tsx'), `zigcss ${version} ·`, 'boot stable identity')
+  expectContains(sources.get('docs/index.html'), `"version": "${version}"`, 'structured software version')
+  expectContains(sources.get('docs/scripts/generate-seo-pages.mjs'), `Install and run ZigCSS ${version}`, 'static route stable identity')
+  expectContains(sources.get('neovim-config/README.md'), `ZigCSS ${version}`, 'Neovim stable identity')
   expectContains(readme, `Marketplace version ${vscodeVersion}`, 'README VS Code mapping')
   expectContains(status, `Marketplace version ${vscodeVersion}`, 'status VS Code mapping')
 
   const changelog = sources.get('CHANGELOG.md')
-  expectContains(
-    changelog,
-    `Target release: \`${version}\` (published as a GitHub prerelease and on npm \`next\`).`,
-    'published changelog target',
-  )
+  expectContains(changelog, `## [${version}] - 2026-08-18`, 'stable changelog target')
+  expectContains(changelog, 'npm `latest` promotion workflow', 'stable changelog channel')
   if (/ZigCSS 0\.3 (?:is|and)/.test(changelog)) fail('changelog recovery note still claims the 0.3 line is current')
 
   const buildWorkflow = sources.get('.github/workflows/build.yml')

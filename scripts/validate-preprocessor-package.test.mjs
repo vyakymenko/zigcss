@@ -272,9 +272,23 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
   assert.throws(
     () => validatePreprocessorPackagingWorkflows(
       build,
-      release.replace('npm publish --tag next --provenance', 'npm publish --tag next'),
+      release.replace(
+        'npm publish --tag "$RELEASE_CHANNEL" --provenance',
+        'npm publish --tag "$RELEASE_CHANNEL"',
+      ),
       docs,
     ),
     /provenance/,
+  )
+  assert.throws(
+    () => validatePreprocessorPackagingWorkflows(
+      build,
+      release.replace(
+        'RELEASE_CHANNEL: ${{ needs.npm-preflight.outputs.release-channel }}',
+        'RELEASE_CHANNEL: next',
+      ),
+      docs,
+    ),
+    /SemVer-selected channel/,
   )
 })

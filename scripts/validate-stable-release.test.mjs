@@ -27,13 +27,13 @@ test('accepts the finite in-progress stable promotion contract', () => {
       version: '0.6.0',
       tag: 'v0.6.0',
       state: 'in-progress',
-      verifiedGates: 5,
+      verifiedGates: 6,
       totalGates: 10,
     },
   )
   assert.match(
     execFileSync(process.execPath, [script, '--check'], { encoding: 'utf8' }),
-    /0\.6\.0 \(in-progress\), 5\/10 gates/,
+    /0\.6\.0 \(in-progress\), 6\/10 gates/,
   )
 })
 
@@ -118,7 +118,7 @@ test('keeps the immutable tag gate closed before every pre-tag surface is verifi
   )
 })
 
-test('rejects missing, extra, and prematurely versioned release sources', () => {
+test('rejects missing, extra, and prerelease-regressed release sources', () => {
   const missing = readStableReleaseSources()
   missing.delete('README.md')
   assert.throws(
@@ -136,7 +136,7 @@ test('rejects missing, extra, and prematurely versioned release sources', () => 
   assert.throws(
     () => validateStableReleaseContract(
       readStableReleaseContract(),
-      changedSources('VERSION', () => '0.6.0\n'),
+      changedSources('VERSION', () => '0.6.0-rc.2\n'),
     ),
     /current source VERSION/,
   )

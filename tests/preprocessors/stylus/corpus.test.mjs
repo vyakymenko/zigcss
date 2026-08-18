@@ -249,7 +249,7 @@ function runZigCss(input, id, pass) {
   assert.equal(result.error, undefined, `${id}: ZigCSS ${pass} launch`)
   assert.equal(result.signal, null, `${id}: ZigCSS ${pass} signal`)
   assert.equal(result.status, 0, `${id}: ZigCSS ${pass}\n${result.stderr}`)
-  assert.match(result.stderr, /experimental release candidate/, `${id}: ZigCSS safety notice`)
+  assert.doesNotMatch(result.stderr, /experimental release candidate/, `${id}: stable ZigCSS warning boundary`)
   return result.stdout
 }
 

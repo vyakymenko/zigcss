@@ -42,9 +42,10 @@ describe('public recovery claims', () => {
     expect(content).not.toMatch(/production-ready CSS/i)
   })
 
-  test('marks package, compiler documentation, and editor integration experimental', () => {
-    expect(JSON.parse(read('package.json')).description).toMatch(/experimental/i)
-    expect(read('README.md')).toMatch(/experimental prerelease/i)
+  test('publishes the stable compiler identity while keeping editor integrations experimental', () => {
+    expect(JSON.parse(read('package.json')).description).toMatch(/self-contained native CSS, SCSS, Sass, Less, and Stylus compiler/i)
+    expect(JSON.parse(read('package.json')).description).not.toMatch(/experimental/i)
+    expect(read('README.md')).toMatch(/stable package identity: 0\.6\.0/i)
     expect(JSON.parse(read('vscode-extension/package.json')).description).toMatch(/experimental/i)
     expect(read('Formula/zigcss.rb')).toMatch(/experimental/i)
   })

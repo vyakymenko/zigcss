@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
+  compilerWarningForVersion,
   archiveExecutable,
   nativePreprocessorSmokeCases,
   nativeSmokeTargets,
@@ -14,6 +15,14 @@ import {
 } from './smoke-release-artifact.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+test('release smokes emit the safety notice only for prerelease binaries', () => {
+  assert.equal(compilerWarningForVersion('0.6.0'), '')
+  assert.equal(
+    compilerWarningForVersion('0.6.0-rc.2'),
+    'Warning: ZigCSS 0.6.0-rc.2 is an experimental release candidate; do not use it for production CSS.\n',
+  )
+})
 
 function runtimeTraceFixture(temporary) {
   const archive = 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz'

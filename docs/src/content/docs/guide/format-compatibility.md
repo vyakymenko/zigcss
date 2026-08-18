@@ -2,7 +2,7 @@
 
 The ZigCSS source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. CSS enters the verified core directly. Each preprocessor frontend evaluates to complete CSS, which is then parsed with recovery disabled before output can be returned or committed.
 
-The public npm `next` release is the self-contained native `0.6.0-rc.2` prerelease. npm `latest` remains the stable 0.3.0 line.
+Stable source identity 0.6.0 contains the self-contained native five-language surface. npm `latest` is updated only by the exact stable promotion workflow; immutable `0.6.0-rc.2` remains available on `next`.
 
 The four preprocessor rows are `native-graduated` on the published prerelease: their pinned corpora, strict negative/resource cases, deterministic reruns, generated-CSS validation, product routing, zero-dependency package, five-target, artifact, provenance, consumer, documentation, and publication gates pass. Executable plugin parity remains separate.
 

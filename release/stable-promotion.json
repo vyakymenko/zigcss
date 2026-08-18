@@ -93,8 +93,12 @@
     },
     {
       "id": "local-validation",
-      "state": "pending",
-      "evidence": []
+      "state": "verified",
+      "evidence": [
+        "Pinned Zig 0.15.2 Debug and ReleaseSafe each pass 88/88 steps and 1644/1644 tests",
+        "All five targets pass ReleaseSafe and ReleaseFast architecture verification",
+        "Package, dependency, documentation, site, consumer, release-policy, and benchmark-withdrawal gates pass locally"
+      ]
     },
     {
       "id": "documentation-pages-validation",

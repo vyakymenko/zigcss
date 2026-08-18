@@ -9,7 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No later native release candidate is selected.
+No later stable identity is selected.
+
+## [0.6.0] - 2026-08-18
+
+Target release: `0.6.0` on one immutable non-prerelease GitHub Release and npm `latest` promotion workflow.
+
+Stable `0.6.0` promotes the exact self-contained native surface proven by immutable `0.6.0-rc.2`; it does not move, replace, or republish the RC. The package retains zero production and optional dependencies, five native stylesheet syntaxes, five architecture-matched targets, signed provenance/SBOM assets, deterministic and fail-closed compilation, and explicit plugin boundaries.
+
+### Changed
+
+- Remove the release-candidate warning from the stable CLI while keeping unavailable transforms, executable plugins, arbitrary project code, and experimental library/editor surfaces explicitly bounded.
+- Make the tag workflow choose GitHub prerelease state and npm `next`/`latest` from canonical SemVer, with exact-main and stable-promotion interlocks before authentication or artifacts.
+- Refresh the README, npm metadata, getting-started flow, capability pages, release notes, and terminal website around the verified native product.
+- Add static canonical metadata for public routes, software-source structured data, a crawl policy, and an XML sitemap for the GitHub Pages project site.
+- Keep every comparative timing, ranking, throughput, memory, ratio, and superlative speed claim withdrawn until the controlled non-emulated Linux x64 benchmark archive passes its publication gate.
 
 ## [0.6.0-rc.2] - 2026-08-13
 

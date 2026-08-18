@@ -482,8 +482,8 @@ async function validateCliProbes(compiler, matrix) {
             fail(`${adapter.id}/${extension}: expected exit 0, received ${result.status}\n${result.stderr}`)
           }
           if (result.stdout !== adapter.probeOutput) fail(`${adapter.id}/${extension}: native probe output changed`)
-          if (!result.stderr.includes('experimental release candidate')) {
-            fail(`${adapter.id}/${extension}: native probe omitted the release warning`)
+          if (result.stderr !== '') {
+            fail(`${adapter.id}/${extension}: stable native probe emitted unexpected stderr`)
           }
           if (fs.existsSync(output)) fail(`${adapter.id}/${extension}: stdout probe created an output file`)
           nativeCount += 1

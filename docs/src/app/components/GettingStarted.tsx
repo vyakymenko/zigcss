@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { AlertTriangle, ArrowRight, CheckCircle2, Package, Terminal } from "lucide-react";
+import { ArrowRight, CheckCircle2, Package, Terminal } from "lucide-react";
 
 export function GettingStarted() {
   return (
@@ -15,10 +15,10 @@ export function GettingStarted() {
       </section>
 
       <div className="mx-auto max-w-5xl px-5 py-14 sm:px-8 md:py-20">
-        <div className="mb-10 flex gap-4 border border-[#d0a43f] bg-[#fff2bf] p-5 text-[#4d3a0e]">
-          <AlertTriangle className="mt-0.5 size-5 flex-shrink-0" />
+        <div className="mb-10 flex gap-4 border border-[#79a633] bg-[#e8f5cd] p-5 text-[#263d0d]">
+          <CheckCircle2 className="mt-0.5 size-5 flex-shrink-0" />
           <p className="leading-7">
-            The five-language 0.6.0-rc.2 prerelease is published on npm next and remains experimental; npm latest stays on the stable 0.3.0 line. Evaluate before production.
+            ZigCSS 0.6.0 is the exact stable source candidate. npm latest becomes available only after its immutable GitHub, artifact, provenance, Pages, and registry gates pass; the published RC remains unchanged on next.
           </p>
         </div>
 
@@ -27,12 +27,12 @@ export function GettingStarted() {
             <Package className="size-7 text-[#476f14]" />
             <h2 className="mt-5 text-3xl font-semibold tracking-[-0.03em]">Install from npm</h2>
             <p className="mt-4 leading-7 text-[#5f675f]">
-              This release candidate installs the matching native binary for your OS and architecture. Its npm package exposes the five-language product surface shown below.
+              After promotion, exact version 0.6.0 installs the matching native binary for your OS and architecture. Its npm package exposes the five-language product surface shown below.
             </p>
           </div>
           <div className="bg-[#101914] p-7 text-[#f7f3e8] sm:p-9">
-            <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Prerelease channel</p>
-            <pre className="mt-4 overflow-x-auto bg-[#080d0a] p-4 text-sm sm:text-base"><code data-language="bash">npm install --save-dev zigcss@next</code></pre>
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Exact stable candidate</p>
+            <pre className="mt-4 overflow-x-auto bg-[#080d0a] p-4 text-sm sm:text-base"><code data-language="bash">npm install --save-dev zigcss@0.6.0</code></pre>
             <p className="mt-6 font-mono text-xs uppercase tracking-[0.16em] text-[#829087]">Compile published CSS surface</p>
             <pre className="mt-4 overflow-x-auto bg-[#080d0a] p-4 text-sm sm:text-base"><code data-language="bash">npx zigcss input.css -o output.css --minify</code></pre>
           </div>

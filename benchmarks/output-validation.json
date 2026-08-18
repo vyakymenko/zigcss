@@ -26,7 +26,7 @@
         "-o",
         "{output}"
       ],
-      "stderr": "experimental-warning"
+      "stderr": "compile-message"
     },
     {
       "id": "esbuild",

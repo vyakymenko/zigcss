@@ -47,6 +47,6 @@ test('website input/output lab is exact executable evidence for all five syntaxe
     assert.equal(result.signal, null, example.id)
     assert.equal(result.status, 0, `${example.id}: ${result.stderr}`)
     assert.equal(result.stdout, example.output, example.id)
-    assert.match(result.stderr, /experimental release candidate/)
+    assert.doesNotMatch(result.stderr, /experimental release candidate/)
   }
 })

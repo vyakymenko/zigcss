@@ -623,8 +623,11 @@ export function validatePreprocessorPackagingWorkflows(build, release, docs) {
   if (literalCount(docs, "node-version: '22.22.0'") !== 1) {
     fail('documentation package consumer must use exact Node 22.22.0')
   }
-  if (literalCount(release, 'npm publish --tag next --provenance') !== 1) {
-    fail('npm publication must retain provenance')
+  if (
+    literalCount(release, 'npm publish --tag "$RELEASE_CHANNEL" --provenance') !== 1
+    || literalCount(release, 'RELEASE_CHANNEL: ${{ needs.npm-preflight.outputs.release-channel }}') !== 1
+  ) {
+    fail('npm publication must retain the SemVer-selected channel and provenance')
   }
   return true
 }

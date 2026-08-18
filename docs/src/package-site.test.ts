@@ -13,8 +13,9 @@ describe('consumer package website', () => {
     const html = read('docs/index.html')
 
     expect(manifest.homepage).toBe('https://vyakymenko.github.io/zigcss/')
-    expect(manifest.description).toMatch(/experimental.*CSS compiler/i)
-    expect(html).toContain('<title>ZigCSS — Five languages. One compiler contract.</title>')
+    expect(manifest.description).toMatch(/self-contained native CSS, SCSS, Sass, Less, and Stylus compiler/i)
+    expect(manifest.description).not.toMatch(/experimental/i)
+    expect(html).toContain('<title>ZigCSS — Native CSS, SCSS, Sass, Less &amp; Stylus compiler</title>')
     expect(html).toContain('https://vyakymenko.github.io/zigcss/')
     expect(html).toContain('og:image')
 

@@ -954,6 +954,19 @@ test('accepts the published native stylesheet implementation contract', () => {
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
 })
 
+test('binds the stable package identity to the immutable native prerelease evidence', () => {
+  const stablePromotion = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'release/stable-promotion.json'),
+    'utf8',
+  ))
+  stablePromotion.candidateVersion = '0.7.0'
+  stablePromotion.candidateTag = 'v0.7.0'
+  assert.throws(
+    () => validateContract(loadContract(), { stablePromotion }),
+    /neither the selected native prerelease nor its bounded stable promotion/,
+  )
+})
+
 test('rejects widened, unpinned, or unevidenced native Sass conformance progress', () => {
   for (const mutate of [
     contract => { contract.sassConformance.releaseGapFamily = 'renamed-conformance' },

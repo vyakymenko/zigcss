@@ -7,11 +7,8 @@ const lsp_transport = @import("lsp_transport.zig");
 
 const native_api = zigcss.experimental_native;
 
-const version = "0.6.0-rc.2";
-const experimental_notice = std.fmt.comptimePrint(
-    "Warning: ZigCSS {s} is an experimental release candidate; do not use it for production CSS.\n",
-    .{version},
-);
+const version = "0.6.0";
+const lsp_experimental_notice = "Warning: ZigCSS LSP is experimental; evaluate before production editor use.\n";
 const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
 const max_input_bytes = 10 * 1024 * 1024;
 const max_native_rendered_output_bytes = 96 * 1024 * 1024;
@@ -1440,7 +1437,7 @@ fn requireOptionValue(args: []const []const u8, index: usize, option: []const u8
 
 fn printUsage() !void {
     try writeStdout(
-        std.fmt.comptimePrint("ZigCSS {s} recovery CLI — EXPERIMENTAL, not production-ready\n\n", .{version}) ++
+        std.fmt.comptimePrint("ZigCSS {s} native stylesheet compiler\n\n", .{version}) ++
             "Usage: zigcss <input.css|-> [-o <output.css|->] [options]\n" ++
             "       zigcss <input1.css> <input2.css> ... -o <output-dir> --output-dir [options]\n" ++
             "       zigcss --lsp          Start experimental Language Server Protocol server\n" ++
@@ -1457,7 +1454,7 @@ fn printUsage() !void {
             "  -V, --version            Show the package version\n" ++
             "  -h, --help               Show this help\n" ++
             "\nExit status: 0 success/info, 1 compilation or I/O failure, 2 usage error.\n" ++
-            "\nUnavailable and rejected during recovery:\n" ++
+            "\nUnavailable by the stable contract:\n" ++
             "  --autoprefix, --browsers, --critical-*\n",
     );
 }
@@ -1668,7 +1665,7 @@ pub fn main() !void {
     }
     if (args.len >= 2 and (std.mem.eql(u8, args[1], "--lsp") or std.mem.eql(u8, args[1], "-lsp"))) {
         if (args.len != 2) exitWithCliError("--lsp does not accept additional arguments", .{});
-        std.debug.print("{s}", .{experimental_notice});
+        std.debug.print("{s}", .{lsp_experimental_notice});
         const status = try runLspServer(allocator);
         if (status == .failure) std.process.exit(exit_compile_failure);
         return;
@@ -1828,8 +1825,6 @@ pub fn main() !void {
             );
         }
     }
-
-    std.debug.print("{s}", .{experimental_notice});
 
     if (input_files.items.len == 1) {
         if (output_file) |out| {

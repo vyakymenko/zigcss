@@ -2,6 +2,22 @@
 
 ZigCSS packages are published only by the tag-triggered GitHub release workflow. Do not run `npm publish` manually from a workstation.
 
+## Stable promotion
+
+Stable promotion target: `zigcss@0.6.0` on npm `latest`, with provenance, from exact immutable tag `v0.6.0`. The same workflow must create the matching non-prerelease GitHub Release only after the stable machine contract, exact `origin/main`, version/tag availability, five-target artifacts, and consumer gates pass. A failed tag is immutable evidence and is never retried by moving or recreating it.
+
+The existing npm `next` tag remains bound to `0.6.0-rc.2`. Stable publication does not delete, overwrite, or republish that package, and it does not publish Homebrew, editor-extension, container, service, or other npm channels.
+
+Before creating the stable tag, verify:
+
+```bash
+npm run test:stable-release
+npm run check:stable-release
+npm run test:npm-publication
+```
+
+After the workflow succeeds, exact `0.6.0`, `dist-tags.latest`, retained `dist-tags.next`, provenance, GitHub assets, and anonymous installation are recorded in `release/stable-promotion.json` and `DEVELOPMENT_STATUS.md`.
+
 ## Published release-candidate evidence
 
 Immutable tag `v0.6.0-rc.2` points to release-ready commit `b63e190f7edeccd829abe34bfb96d9e1a8a320e2`. Its automatic workflow completed successfully on attempt 1, created the GitHub prerelease with the exact 25-asset inventory, and published `zigcss@0.6.0-rc.2` with provenance on npm `next`. npm `latest` remains 0.3.0. The tag and package version must never be moved, recreated, reused, or republished.
@@ -36,11 +52,13 @@ Any later candidate requires a new version and tag identity plus the complete re
 
 The five-file npm package contains the JavaScript wrapper and installer, not a bundled native executable. During installation, `install.js` selects one of the five release targets, downloads only the matching GitHub Release archive and checksum manifest, verifies SHA-256 and executable architecture, extracts exactly one executable, and replaces the local binary only after every check passes.
 
-Use the prerelease explicitly:
+Install the exact stable version while publication is still gated:
 
 ```bash
-npm install --global zigcss@next
+npm install --global zigcss@0.6.0
 zigcss --version
 ```
 
-Source builds remain the fallback documented in `README.md` and the public build guide. Publication does not expand the experimental feature boundary or authorize performance claims.
+The immutable RC can still be installed explicitly with `zigcss@next` for historical comparison; the stable workflow never moves that tag.
+
+After the verified public readback closes the promotion contract, the ordinary `npm install --global zigcss` command resolves to the same `0.6.0` bytes through `latest`. Source builds remain the fallback documented in `README.md` and the public build guide. Stable publication does not expand executable-plugin, editor, service, or other experimental boundaries and does not authorize comparative performance claims.
