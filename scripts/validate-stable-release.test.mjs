@@ -20,20 +20,20 @@ function changedSources(relativePath, transform) {
   return sources
 }
 
-test('accepts the finite in-progress stable promotion contract', () => {
+test('accepts the finite candidate-ready stable promotion contract', () => {
   assert.deepEqual(
     validateStableReleaseContract(readStableReleaseContract(), readStableReleaseSources()),
     {
       version: '0.6.0',
       tag: 'v0.6.0',
-      state: 'in-progress',
-      verifiedGates: 6,
+      state: 'candidate-ready',
+      verifiedGates: 9,
       totalGates: 10,
     },
   )
   assert.match(
     execFileSync(process.execPath, [script, '--check'], { encoding: 'utf8' }),
-    /0\.6\.0 \(in-progress\), 6\/10 gates/,
+    /0\.6\.0 \(candidate-ready\), 9\/10 gates/,
   )
 })
 
@@ -96,25 +96,47 @@ test('binds native prerelease, zero-dependency, benchmark, plan, and workflow ev
   )
 })
 
-test('keeps the immutable tag gate closed before every pre-tag surface is verified', () => {
+test('admits only an exact-main immutable tag after every pre-tag surface is verified', () => {
   const commit = 'a'.repeat(40)
-  assert.throws(
-    () => validateStableReleaseContract(
+  assert.equal(
+    validateStableReleaseContract(
       readStableReleaseContract(),
       readStableReleaseSources(),
       { releaseTag: 'v0.6.0', candidateCommit: commit, originMainCommit: commit },
-    ),
-    /not release-ready/,
+    ).state,
+    'candidate-ready',
   )
-  assert.throws(
-    () => execFileSync(process.execPath, [
+  assert.match(
+    execFileSync(process.execPath, [
       script,
       '--check',
       '--release-tag', 'v0.6.0',
       '--candidate-commit', commit,
       '--origin-main-commit', commit,
-    ], { stdio: 'pipe' }),
-    /Command failed/,
+    ], { encoding: 'utf8' }),
+    /0\.6\.0 \(candidate-ready\), 9\/10 gates/,
+  )
+  assert.throws(
+    () => validateStableReleaseContract(
+      readStableReleaseContract(),
+      readStableReleaseSources(),
+      { releaseTag: 'v0.6.0', candidateCommit: commit, originMainCommit: 'b'.repeat(40) },
+    ),
+    /must equal origin main commit/,
+  )
+
+  const blocked = readStableReleaseContract()
+  blocked.state = 'in-progress'
+  blocked.stableReleaseReady = false
+  blocked.gates[8].state = 'pending'
+  blocked.gates[8].evidence = []
+  assert.throws(
+    () => validateStableReleaseContract(
+      blocked,
+      readStableReleaseSources(),
+      { releaseTag: 'v0.6.0', candidateCommit: commit, originMainCommit: commit },
+    ),
+    /not release-ready/,
   )
 })
 

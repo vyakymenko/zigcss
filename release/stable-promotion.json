@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "ownerPackage": "REL-010",
   "releaseGapFamily": "stable-release-promotion",
-  "state": "in-progress",
+  "state": "candidate-ready",
   "packageState": "in-progress",
-  "stableReleaseReady": false,
+  "stableReleaseReady": true,
   "candidateVersion": "0.6.0",
   "candidateTag": "v0.6.0",
   "previousPrerelease": {
@@ -102,18 +102,27 @@
     },
     {
       "id": "documentation-pages-validation",
-      "state": "pending",
-      "evidence": []
+      "state": "verified",
+      "evidence": [
+        "Documentation run 32120272302 completed success on exact candidate checkpoint 6793a29c9f864880e998067e14f6de32f9056fd5",
+        "Public HTTPS readback verified route-specific canonical metadata, SoftwareSourceCode JSON-LD, nine sitemap URLs, and the project-path crawl policy"
+      ]
     },
     {
       "id": "hosted-validation",
-      "state": "pending",
-      "evidence": []
+      "state": "verified",
+      "evidence": [
+        "Build run 32120272415 completed success on exact candidate checkpoint 6793a29c9f864880e998067e14f6de32f9056fd5",
+        "Test Suite, five architecture-matched builds, five provenance jobs, and Native Package Evidence all completed success"
+      ]
     },
     {
       "id": "origin-main-integration",
-      "state": "pending",
-      "evidence": []
+      "state": "verified",
+      "evidence": [
+        "Non-force fast-forward integrated 6793a29c9f864880e998067e14f6de32f9056fd5 to origin/main",
+        "Fresh remote readback matched origin/main and origin/vale/zigcss-recovery at the exact candidate checkpoint"
+      ]
     },
     {
       "id": "tag-workflow-publication",
