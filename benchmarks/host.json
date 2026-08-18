@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "requiredPlatform": "linux",
+  "requiredArchitecture": "x64",
+  "attestationStatus": "verified-bare-metal",
+  "detectorExecutable": "/usr/bin/systemd-detect-virt",
+  "requiredDetectorResults": {
+    "vm": "none",
+    "container": "none"
+  },
+  "requiredChecks": [
+    "systemd-detect-virt-vm",
+    "systemd-detect-virt-container",
+    "cpu-hypervisor-flag-absent",
+    "sys-hypervisor-type-absent",
+    "container-marker-files-absent",
+    "container-cgroup-markers-absent",
+    "dmi-identity-present",
+    "dmi-virtualization-markers-absent"
+  ],
+  "publicDmiFields": [
+    "systemVendor",
+    "productName",
+    "boardVendor"
+  ]
+}

@@ -40,7 +40,7 @@ The reproducible corpus, pinned competitor binaries, semantics-first output admi
 
 ## Publication gate
 
-\`scripts/publish-benchmark-report.mjs\` accepts only the exact two-file archive created by the controlled schedule. It revalidates all 43 ordered series and 860 retained raw observations, report and hardware identity, source/run provenance, artifact link, and archive digest before rendering deterministic Markdown. The repository remains on this exact withdrawal notice until a retained scheduled artifact is explicitly reviewed, committed under \`benchmarks/publications/\`, selected by \`benchmarks/publication.json\`, and reproduced byte-for-byte by the publication gate.
+\`scripts/publish-benchmark-report.mjs\` accepts only the exact two-file archive created by the controlled schedule. It revalidates all 43 ordered series and 860 retained raw observations, machine-verified bare-metal host attestation, report and hardware identity, source/run provenance, artifact link, and archive digest before rendering deterministic Markdown. The repository remains on this exact withdrawal notice until a retained scheduled artifact is explicitly reviewed, committed under \`benchmarks/publications/\`, selected by \`benchmarks/publication.json\`, and reproduced byte-for-byte by the publication gate.
 
 Any future report must keep cold and warm CLI comparisons separate, label ZigCSS-only API, allocator-memory, and throughput metrics as non-comparative, link the retained raw archive, and state the controlled-host and corpus limits. A generated report is benchmark evidence for the exact archived run, not a production-readiness claim.
 `
@@ -182,6 +182,7 @@ export function renderBenchmarkPublication(directory, artifactUrl, root = reposi
   const url = validateArtifactUrl(artifactUrl, archive.manifest)
   const report = archive.report
   const manifest = archive.manifest
+  const host = report.environment.hostAttestation
   const series = reportSeries(report)
   const committedArchive = `benchmarks/publications/${manifest.run.artifactName}`
   const runUrl = `https://github.com/vyakymenko/zigcss/actions/runs/${manifest.run.id}`
@@ -214,6 +215,10 @@ export function renderBenchmarkPublication(directory, artifactUrl, root = reposi
     `| CPU | ${markdownCell(report.environment.cpuModel)} |`,
     `| Logical CPUs | ${markdownCell(report.environment.logicalCpuCount)} |`,
     `| Total memory (bytes) | ${markdownCell(report.environment.totalMemoryBytes)} |`,
+    `| Host isolation | ${markdownCell(host.status)} |`,
+    `| Virtualization detector | ${markdownCell(host.detector.version)}; VM=${markdownCell(host.detector.vm)}; container=${markdownCell(host.detector.container)} |`,
+    `| System | ${markdownCell(host.dmi.systemVendor)} ${markdownCell(host.dmi.productName)} |`,
+    `| Board vendor | ${markdownCell(host.dmi.boardVendor)} |`,
     `| Node | ${markdownCell(report.environment.nodeVersion)} |`,
     `| Zig | ${markdownCell(report.environment.zigVersion)} |`,
     `| Optimization | ${markdownCell(report.environment.optimizationMode)} |`,

@@ -514,6 +514,9 @@ jobs:
       - name: Validate benchmark modes
         run: npm run test:benchmark-modes && npm run check:benchmark-modes
 
+      - name: Validate benchmark host policy
+        run: npm run test:benchmark-host && npm run check:benchmark-host
+
       - name: Run validated benchmark smoke
         run: zig build bench
 

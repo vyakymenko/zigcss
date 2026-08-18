@@ -94,7 +94,7 @@ function completeReport() {
     'input-bytes-per-second',
   ))
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: '2026-07-13T00:00:00.000Z',
     environment: {
       platform: 'linux',
@@ -106,6 +106,24 @@ function completeReport() {
       nodeVersion: 'v22.0.0',
       zigVersion: '0.15.2',
       optimizationMode: 'ReleaseFast',
+      hostAttestation: {
+        schemaVersion: 1,
+        status: 'verified-bare-metal',
+        detector: {
+          executable: '/usr/bin/systemd-detect-virt',
+          version: 'systemd 255 (255.4-1)',
+          vm: 'none',
+          container: 'none',
+        },
+        cpuHypervisorFlag: false,
+        sysHypervisorType: 'none',
+        containerMarkers: [],
+        dmi: {
+          systemVendor: 'Example Systems',
+          productName: 'Dedicated Benchmark Host',
+          boardVendor: 'Example Boards',
+        },
+      },
       clock: 'monotonic-nanoseconds',
       runnerExecutableSha256: 'e'.repeat(64),
       tools: [
@@ -160,6 +178,9 @@ test('a complete verified archive renders deterministic provenance-bound Markdow
   assert.match(first, /Allocator-requested memory is not RSS/)
   assert.match(first, /Raw samples are retained only in the committed verified archive/)
   assert.match(first, /Report SHA-256.*[0-9a-f]{64}/)
+  assert.match(first, /\| Host isolation \| verified-bare-metal \|/)
+  assert.match(first, /VM=none; container=none/)
+  assert.equal(first.match(/\| cold CLI \| small-flat \| zigcss \|/g)?.length, 1)
   assert.doesNotMatch(first, /"samples"/)
 })
 

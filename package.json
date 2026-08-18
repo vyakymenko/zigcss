@@ -43,6 +43,8 @@
     "test:benchmark-output": "node --test scripts/validate-benchmark-output.test.mjs",
     "check:benchmark-modes": "node scripts/validate-benchmark-modes.mjs --check",
     "test:benchmark-modes": "node --test scripts/validate-benchmark-modes.test.mjs",
+    "check:benchmark-host": "node scripts/attest-benchmark-host.mjs --check",
+    "test:benchmark-host": "node --test scripts/attest-benchmark-host.test.mjs",
     "check:benchmark-statistics": "node scripts/report-benchmark-statistics.mjs --check",
     "test:benchmark-statistics": "node --test scripts/report-benchmark-statistics.test.mjs",
     "check:benchmark-archive": "node scripts/archive-benchmark-report.mjs --check-policy",

@@ -3,13 +3,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { validateBenchmarkHostAttestation } from './attest-benchmark-host.mjs'
 import { validateBenchmarkReport } from './report-benchmark-statistics.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 
 const contract = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   benchmarkId: 'zigcss-benchmark-v1',
   repository: 'vyakymenko/zigcss',
   branch: 'main',
@@ -25,6 +26,7 @@ const contract = {
       'cpuModel',
       'logicalCpuCount',
       'totalMemoryBytes',
+      'hostAttestation',
     ],
   },
   concurrencyGroup: 'zigcss-benchmark-v1',
@@ -104,7 +106,11 @@ function sha256(bytes) {
 }
 
 function hardwareFingerprint(environment) {
-  const values = contract.runner.fingerprintFields.map(field => String(environment[field]))
+  const values = contract.runner.fingerprintFields.map(field => (
+    typeof environment[field] === 'object'
+      ? JSON.stringify(environment[field])
+      : String(environment[field])
+  ))
   return sha256(Buffer.from(values.join('\0'), 'utf8'))
 }
 
@@ -116,6 +122,7 @@ function validateControlledReport(report) {
   if (report.environment.architecture !== contract.runner.architecture) {
     fail(`controlled hardware architecture must be ${contract.runner.architecture}`)
   }
+  validateBenchmarkHostAttestation(report.environment.hostAttestation, { controlledRequired: true })
 }
 
 function readReport(directory) {
@@ -161,6 +168,7 @@ function expectedManifest(reportValue, reportBytes, reportStat, provenance) {
       cpuModel: reportValue.environment.cpuModel,
       logicalCpuCount: reportValue.environment.logicalCpuCount,
       totalMemoryBytes: reportValue.environment.totalMemoryBytes,
+      hostAttestation: reportValue.environment.hostAttestation,
       fingerprint: hardwareFingerprint(reportValue.environment),
     },
     report: {
@@ -284,8 +292,13 @@ export function validateBenchmarkArchiveWorkflowSource(benchmarkWorkflow, buildW
   )
   requireContains(
     benchmarkWorkflow,
-    'node scripts/report-benchmark-statistics.mjs --output "$BENCHMARK_ARCHIVE_DIR/benchmark-report.json"',
-    'scheduled workflow must collect the complete validated report',
+    'npm run test:benchmark-host && npm run check:benchmark-host',
+    'scheduled workflow must validate the bare-metal host contract before collection',
+  )
+  requireContains(
+    benchmarkWorkflow,
+    'node scripts/report-benchmark-statistics.mjs --output "$BENCHMARK_ARCHIVE_DIR/benchmark-report.json" --require-controlled-host',
+    'scheduled workflow must collect the complete report only after live bare-metal attestation',
   )
   requireContains(
     benchmarkWorkflow,
@@ -305,14 +318,19 @@ export function validateBenchmarkArchiveWorkflowSource(benchmarkWorkflow, buildW
     'scheduled workflow cleanup must remain exact and unconditional',
   )
 
+  const host = buildWorkflow.indexOf('- name: Validate benchmark host policy')
+  const hostCommand = buildWorkflow.indexOf(
+    'npm run test:benchmark-host && npm run check:benchmark-host',
+    host,
+  )
   const statistics = buildWorkflow.indexOf('- name: Validate benchmark statistics')
   const archive = buildWorkflow.indexOf('- name: Validate benchmark archive policy')
   const command = buildWorkflow.indexOf(
     'npm run test:benchmark-archive && npm run check:benchmark-archive',
     archive,
   )
-  if (statistics === -1 || archive <= statistics || command <= archive) {
-    fail('build workflow must validate the benchmark archive policy after statistics')
+  if (host === -1 || hostCommand <= host || statistics <= hostCommand || archive <= statistics || command <= archive) {
+    fail('build workflow must validate the host and archive policies in dependency order')
   }
   return true
 }

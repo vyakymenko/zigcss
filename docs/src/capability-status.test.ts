@@ -72,6 +72,7 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('release-artifacts')?.behavior).toContain('one GitHub prerelease')
     expect(byId.get('release-artifacts')?.behavior).toContain('25 exact assets')
     expect(byId.get('benchmark-report')?.statusKind).toBe('unavailable')
+    expect(byId.get('benchmark-report')?.behavior).toContain('machine-attested Linux x64 bare metal')
     expect(byId.get('benchmark-report')?.behavior).toContain('no archive is selected')
     expect(byId.get('public-compile')?.statusKind).toBe('disabled')
     expect(byId.get('public-compile')?.behavior).toContain('HTTP 503')

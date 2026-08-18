@@ -128,7 +128,7 @@ The benchmark program is already executable and publication-gated:
 | Workload coverage | Small, medium, and large deterministic corpora are versioned and checksum-bound. |
 | Execution modes | Cold CLI, warm CLI, in-process API, allocator memory, and throughput stay separately labeled. |
 | Statistics | 43 ordered series and 860 raw observations are retained—never only the winning median. |
-| Hardware | The publishable archive must come from dedicated, non-emulated, controlled Linux x64 hardware. |
+| Hardware | The publishable archive must come from dedicated Linux x64 bare metal. The runner records `systemd-detect-virt`, CPU-flag, sysfs, container-marker, cgroup, and bounded DMI evidence; any ambiguous or virtualized result fails closed. |
 | Reproduction | Source SHA, runner identity, tool versions, raw report, manifest, digest, and artifact link are sealed together. |
 
 **Current status:** the pipeline is ready, but the final controlled runner archive does not exist yet. Timing, ranking, throughput, memory, and ratio numbers remain unpublished until that evidence lands.
@@ -284,7 +284,7 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 - Production package closure: verified with zero production dependencies and no provider or host bytes; the compiler itself starts no child process and performs no network access.
 - Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
 - Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; `NATIVE-009` binds the immutable prerelease evidence and `REL-010` binds the stable identity.
-- Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
+- Controlled comparative benchmark: the machine-verifiable bare-metal gate is implemented; publication is waiting for the dedicated Linux x64 runner and its scheduled archive.
 - Stable publication: verified on immutable tag `v0.6.0` at commit `6786655d66ca65c5a06421c8ed70d84183722dce`; GitHub Release, 25 signed assets, npm `latest`, SLSA provenance, preserved `next`, and anonymous five-syntax installation all passed exact readback. The immutable RC remains separate.
 
 The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.

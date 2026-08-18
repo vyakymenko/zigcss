@@ -70,7 +70,7 @@ function completeReport() {
     'input-bytes-per-second',
   ))
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: '2026-07-13T00:00:00.000Z',
     environment: {
       platform: 'linux',
@@ -82,6 +82,24 @@ function completeReport() {
       nodeVersion: 'v22.0.0',
       zigVersion: '0.15.2',
       optimizationMode: 'ReleaseFast',
+      hostAttestation: {
+        schemaVersion: 1,
+        status: 'verified-bare-metal',
+        detector: {
+          executable: '/usr/bin/systemd-detect-virt',
+          version: 'systemd 255 (255.4-1)',
+          vm: 'none',
+          container: 'none',
+        },
+        cpuHypervisorFlag: false,
+        sysHypervisorType: 'none',
+        containerMarkers: [],
+        dmi: {
+          systemVendor: 'Example Systems',
+          productName: 'Dedicated Benchmark Host',
+          boardVendor: 'Example Boards',
+        },
+      },
       clock: 'monotonic-nanoseconds',
       runnerExecutableSha256: 'e'.repeat(64),
       tools: [
@@ -111,6 +129,7 @@ function createArchiveDirectory(t) {
 
 test('archive contract and scheduled controlled-runner workflow are closed', () => {
   const contract = validateBenchmarkArchiveContract(repositoryRoot)
+  assert.equal(contract.schemaVersion, 2)
   assert.equal(contract.benchmarkId, 'zigcss-benchmark-v1')
   assert.deepEqual(contract.runner.labels, ['self-hosted', 'linux', 'x64', 'zigcss-benchmark-v1'])
   assert.equal(contract.artifact.retentionDays, 90)
@@ -123,6 +142,7 @@ test('archive binds a complete validated report to source, run, and hardware ide
   assert.equal(manifest.source.commit, provenance.commit)
   assert.equal(manifest.run.id, provenance.runId)
   assert.equal(manifest.controlledHardware.cpuModel, 'Controlled Benchmark CPU')
+  assert.equal(manifest.controlledHardware.hostAttestation.status, 'verified-bare-metal')
   assert.match(manifest.controlledHardware.fingerprint, /^[0-9a-f]{64}$/)
   assert.equal(validateBenchmarkArchive(directory, provenance).report.path, 'benchmark-report.json')
   assert.deepEqual(fs.readdirSync(directory).sort(), ['benchmark-archive.json', 'benchmark-report.json'])
@@ -167,6 +187,11 @@ test('archive rejects symlink substitution and uncontrolled hardware reports', t
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`)
   assert.throws(() => writeBenchmarkArchive(directory, provenance), /controlled hardware platform/)
 
+  report.environment.platform = 'linux'
+  report.environment.hostAttestation = { schemaVersion: 1, status: 'not-requested' }
+  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`)
+  assert.throws(() => writeBenchmarkArchive(directory, provenance), /verified bare-metal attestation/)
+
   fs.rmSync(reportPath)
   fs.symlinkSync(path.join(repositoryRoot, 'benchmarks', 'statistics.json'), reportPath)
   assert.throws(() => writeBenchmarkArchive(directory, provenance), /regular non-symlink file/)
@@ -203,6 +228,13 @@ test('schedule, runner, retention, cleanup, and build-gate drift fail closed', (
       buildWorkflow,
     ),
     /controlled runner/,
+  )
+  assert.throws(
+    () => validateBenchmarkArchiveWorkflowSource(
+      benchmarkWorkflow.replace(' --require-controlled-host', ''),
+      buildWorkflow,
+    ),
+    /bare-metal attestation/,
   )
   assert.throws(
     () => validateBenchmarkArchiveWorkflowSource(

@@ -71,7 +71,7 @@ describe('autonomous development operations', () => {
       expect(fs.statSync(script).mode & 0o111).not.toBe(0)
     }
     expect(after).toBe(before)
-    expect(selftest).toContain('PASS=103 FAIL=0')
+    expect(selftest).toContain('PASS=104 FAIL=0')
     expect(prompt).toContain('Use only gpt-5.6-sol with max reasoning')
     expect(prompt).toContain('Never delegate, spawn subagents, create child tasks, or fall back')
     expect(prompt).toContain('Milestone 10, NATIVE-009, and the REL-010 stable v0.6.0 publication terminal are verified and closed')

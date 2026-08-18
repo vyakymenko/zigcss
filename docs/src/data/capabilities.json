@@ -282,6 +282,10 @@
           "contains": ["renderBenchmarkPublication", "validateBenchmarkPublication", "exact no-claims notice"]
         },
         {
+          "path": "scripts/attest-benchmark-host.mjs",
+          "contains": ["verified-bare-metal", "systemd-detect-virt", "hypervisor CPU flag"]
+        },
+        {
           "path": "BENCHMARK_REPORT.md",
           "contains": ["Performance claims are withdrawn", "No controlled scheduled archive has been selected"]
         }
@@ -478,7 +482,7 @@
       "surface": "Performance benchmark report",
       "status": "Unavailable",
       "statusKind": "unavailable",
-      "behavior": "The BENCH-007 generator accepts only a committed, provenance-bound controlled scheduled archive and renders its 43 complete series deterministically; no archive is selected, so the current report contains no timing, ranking, or ratio claim.",
+      "behavior": "The BENCH-007 generator accepts only a committed, provenance-bound scheduled archive from machine-attested Linux x64 bare metal and renders its 43 complete series deterministically; VM, container, or ambiguous host evidence fails closed, and no archive is selected, so the current report contains no timing, ranking, or ratio claim.",
       "evidence": ["benchmark-publication"]
     },
     {

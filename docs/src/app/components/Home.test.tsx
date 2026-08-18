@@ -65,7 +65,9 @@ describe('Home', () => {
     const copy = document.body.textContent ?? ''
 
     expect(screen.getByRole('heading', { name: /native is the architecture\. evidence decides the ranking/i })).toBeInTheDocument()
-    expect(copy).toMatch(/comparative rankings remain unpublished until the controlled pipeline lands/i)
+    expect(copy).toMatch(/bare-metal Linux x64 attestation required/i)
+    expect(copy).toMatch(/VM and container evidence rejected/i)
+    expect(copy).toMatch(/comparative rankings remain unpublished until the attested scheduled archive lands/i)
     expect(copy).not.toMatch(/world.?s fastest|\d+\s*[x×]\s*faster/i)
     expect(copy).not.toMatch(/blazingly|supercharge|seamless|effortless|next-generation|game-changing|revolutionize/i)
     expect(copy).not.toContain('!')

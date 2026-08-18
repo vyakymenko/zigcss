@@ -17,7 +17,7 @@ const samples = Array.from({ length: 20 }, (_, index) => String(index + 1))
 function sampleReport() {
   const statistics = summarizeSamples(samples)
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: '2026-07-13T00:00:00.000Z',
     environment: {
       platform: 'linux',
@@ -29,6 +29,10 @@ function sampleReport() {
       nodeVersion: 'v22.0.0',
       zigVersion: '0.15.2',
       optimizationMode: 'ReleaseFast',
+      hostAttestation: {
+        schemaVersion: 1,
+        status: 'not-requested',
+      },
       clock: 'monotonic-nanoseconds',
       runnerExecutableSha256: 'e'.repeat(64),
       tools: [
@@ -79,7 +83,7 @@ test('statistics reject incomplete, negative, unsafe, and altered raw samples', 
 
 test('statistics contract is closed and requires twenty measured observations', () => {
   const contract = validateBenchmarkStatisticsContract(repositoryRoot)
-  assert.equal(contract.schemaVersion, 1)
+  assert.equal(contract.schemaVersion, 2)
   assert.equal(contract.sampleCount, 20)
   assert.deepEqual(contract.statistics, {
     median: 'sorted-middle-average',
@@ -98,6 +102,10 @@ test('statistics manifest drift and symlink substitution fail closed', t => {
   fs.copyFileSync(
     path.join(repositoryRoot, 'benchmarks', 'modes.json'),
     path.join(root, 'benchmarks', 'modes.json'),
+  )
+  fs.copyFileSync(
+    path.join(repositoryRoot, 'benchmarks', 'host.json'),
+    path.join(root, 'benchmarks', 'host.json'),
   )
   const source = path.join(repositoryRoot, 'benchmarks', 'statistics.json')
   const target = path.join(root, 'benchmarks', 'statistics.json')

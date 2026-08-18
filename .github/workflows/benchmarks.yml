@@ -50,6 +50,7 @@ jobs:
           npm run test:benchmark-tools && npm run check:benchmark-tools
           npm run test:benchmark-output && npm run check:benchmark-output
           npm run test:benchmark-modes && npm run check:benchmark-modes
+          npm run test:benchmark-host && npm run check:benchmark-host
           npm run test:benchmark-statistics
           npm run test:benchmark-archive && npm run check:benchmark-archive
           npm run test:benchmark-publication && npm run check:benchmark-publication
@@ -66,7 +67,7 @@ jobs:
       - name: Collect complete benchmark report
         env:
           BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive
-        run: node scripts/report-benchmark-statistics.mjs --output "$BENCHMARK_ARCHIVE_DIR/benchmark-report.json"
+        run: node scripts/report-benchmark-statistics.mjs --output "$BENCHMARK_ARCHIVE_DIR/benchmark-report.json" --require-controlled-host
 
       - name: Seal and verify benchmark archive
         env:

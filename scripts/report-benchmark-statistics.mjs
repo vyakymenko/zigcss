@@ -6,6 +6,12 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { expectedCorpus } from './generate-benchmark-corpora.mjs'
+import {
+  collectBenchmarkHostAttestation,
+  notRequestedHostAttestation,
+  validateBenchmarkHostAttestation,
+  validateBenchmarkHostContract,
+} from './attest-benchmark-host.mjs'
 import { collectBenchmarkCliSeries } from './validate-benchmark-modes.mjs'
 import { resolveBenchmarkExecutables } from './validate-benchmark-output.mjs'
 
@@ -26,7 +32,7 @@ const memoryFields = {
   resizeCount: 'count',
 }
 const contract = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   sampleCount,
   rawSamples: 'required',
   sampleEncoding: 'unsigned-decimal-string',
@@ -45,6 +51,7 @@ const contract = {
     'nodeVersion',
     'zigVersion',
     'optimizationMode',
+    'hostAttestation',
     'clock',
     'runnerExecutableSha256',
     'tools',
@@ -135,6 +142,7 @@ export function summarizeSamples(rawSamples) {
 }
 
 export function validateBenchmarkStatisticsContract(root = repositoryRoot) {
+  validateBenchmarkHostContract(root)
   const manifestPath = path.join(root, 'benchmarks', 'statistics.json')
   const actual = readJson(manifestPath, 'benchmarks/statistics.json')
   if (fs.readFileSync(manifestPath, 'utf8') !== `${JSON.stringify(contract, null, 2)}\n`) {
@@ -217,6 +225,7 @@ function validateEnvironment(environment) {
   if (environment.optimizationMode !== 'ReleaseFast') {
     fail('report environment must identify ReleaseFast benchmark executables')
   }
+  validateBenchmarkHostAttestation(environment.hostAttestation)
   if (environment.clock !== 'monotonic-nanoseconds') fail('report environment clock drifted')
   if (!/^[0-9a-f]{64}$/.test(environment.runnerExecutableSha256)) {
     fail('report environment runner executable digest is invalid')
@@ -416,6 +425,9 @@ function reportSeries(series) {
 
 export function createBenchmarkReport(root = repositoryRoot, options = {}) {
   validateBenchmarkStatisticsContract(root)
+  const hostAttestation = options.requireControlledHost === true
+    ? collectBenchmarkHostAttestation()
+    : notRequestedHostAttestation()
   const compiler = options.compiler ?? path.join(
     root,
     'zig-out',
@@ -438,7 +450,7 @@ export function createBenchmarkReport(root = repositoryRoot, options = {}) {
     ['lightningcss', '1.30.1'],
   ])
   const report = {
-    schemaVersion: 1,
+    schemaVersion: contract.schemaVersion,
     generatedAt: new Date().toISOString(),
     environment: {
       platform: process.platform,
@@ -450,6 +462,7 @@ export function createBenchmarkReport(root = repositoryRoot, options = {}) {
       nodeVersion: process.version,
       zigVersion: fragment.zigVersion,
       optimizationMode: fragment.optimizationMode,
+      hostAttestation,
       clock: 'monotonic-nanoseconds',
       runnerExecutableSha256: digest(runner),
       tools: tools.map(id => ({
@@ -471,6 +484,11 @@ export function createBenchmarkReport(root = repositoryRoot, options = {}) {
 export function validateBenchmarkStatisticsWorkflow(root = repositoryRoot) {
   const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'build.yml'), 'utf8')
   const modes = workflow.indexOf('- name: Validate benchmark modes')
+  const host = workflow.indexOf('- name: Validate benchmark host policy', modes)
+  const hostCommand = workflow.indexOf(
+    'npm run test:benchmark-host && npm run check:benchmark-host',
+    host,
+  )
   const smoke = workflow.indexOf('- name: Run validated benchmark smoke')
   const build = workflow.indexOf('- name: Build optimized benchmark executables')
   const buildCompiler = workflow.indexOf('zig build -Doptimize=ReleaseFast', build)
@@ -485,7 +503,9 @@ export function validateBenchmarkStatisticsWorkflow(root = repositoryRoot) {
   )
   if (
     modes === -1 ||
-    smoke <= modes ||
+    host <= modes ||
+    hostCommand <= host ||
+    smoke <= hostCommand ||
     build <= smoke ||
     buildCompiler <= build ||
     buildRunner <= buildCompiler ||
@@ -500,17 +520,26 @@ export function validateBenchmarkStatisticsWorkflow(root = repositoryRoot) {
 function parseArguments(argumentsList) {
   if (argumentsList.length === 1 && argumentsList[0] === '--check') return { check: true }
   if (argumentsList.length < 2 || argumentsList[0] !== '--output') {
-    fail('usage: node scripts/report-benchmark-statistics.mjs --check|--output absolute-path [--compiler absolute-path] [--runner absolute-path]')
+    fail('usage: node scripts/report-benchmark-statistics.mjs --check|--output absolute-path [--compiler absolute-path] [--runner absolute-path] [--require-controlled-host]')
   }
   const options = { check: false, output: argumentsList[1] }
   if (!path.isAbsolute(options.output)) fail('report output path must be absolute')
-  for (let index = 2; index < argumentsList.length; index += 2) {
+  const seen = new Set()
+  for (let index = 2; index < argumentsList.length;) {
     const name = argumentsList[index]
+    if (seen.has(name)) fail('duplicate report argument')
+    seen.add(name)
+    if (name === '--require-controlled-host') {
+      options.requireControlledHost = true
+      index += 1
+      continue
+    }
     const value = argumentsList[index + 1]
     if (value === undefined || !['--compiler', '--runner'].includes(name)) fail('invalid report argument')
     if (!path.isAbsolute(value)) fail(`${name} path must be absolute`)
     if (name === '--compiler') options.compiler = value
     else options.runner = value
+    index += 2
   }
   return options
 }

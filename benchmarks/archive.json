@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "benchmarkId": "zigcss-benchmark-v1",
   "repository": "vyakymenko/zigcss",
   "branch": "main",
@@ -19,7 +19,8 @@
       "architecture",
       "cpuModel",
       "logicalCpuCount",
-      "totalMemoryBytes"
+      "totalMemoryBytes",
+      "hostAttestation"
     ]
   },
   "concurrencyGroup": "zigcss-benchmark-v1",

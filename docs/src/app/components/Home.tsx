@@ -131,11 +131,12 @@ function BenchmarkLock() {
           </h2>
         </div>
         <div className="self-end border-l border-[#b7f34a] pl-6 font-mono text-sm leading-7 text-[#91a08f]">
-          <p>Controlled benchmark pipeline required.</p>
+          <p>Bare-metal Linux x64 attestation required.</p>
+          <p>VM and container evidence rejected.</p>
           <p>Comparative ranking locked.</p>
           <p>Timing multiplier locked.</p>
           <p>Published claim locked.</p>
-          <p className="mt-5 text-[#eef5ec]">Comparative rankings remain unpublished until the controlled pipeline lands.</p>
+          <p className="mt-5 text-[#eef5ec]">Comparative rankings remain unpublished until the attested scheduled archive lands.</p>
           <a className="terminal-link mt-5 inline-block text-[#b7f34a]" href="https://github.com/vyakymenko/zigcss/blob/main/BENCHMARK_REPORT.md" target="_blank" rel="noopener noreferrer">
             read benchmark contract →
           </a>

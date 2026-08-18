@@ -91,6 +91,7 @@ assert_equal "$(grep -Fc 'Milestone 10, NATIVE-009, and the REL-010 stable v0.6.
 assert_equal "$(grep -Fc 'Only BENCH-007 remains' "$PROMPT_OUTPUT")" 1 'prompt selects the sole remaining benchmark terminal'
 assert_equal "$(grep -Fc 'stable code controlled-benchmark-archive' "$PROMPT_OUTPUT")" 1 'prompt binds the stable external blocker'
 assert_equal "$(grep -Fc 'follow DEVELOPMENT_PLAN.md section 19 exactly' "$PROMPT_OUTPUT")" 1 'prompt follows the controlled benchmark sequence'
+assert_equal "$(grep -Fc 'report/archive schema v2' "$PROMPT_OUTPUT")" 1 'prompt requires machine-verifiable bare-metal evidence'
 assert_equal "$(grep -Fc 'Stable publication authority was successfully consumed and closed on 2026-08-18.' "$PROMPT_OUTPUT")" 1 'prompt closes stable publication authority'
 assert_equal "$(if grep -Fq 'REL-010 stable-promotion sequence is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale stable-promotion work'
 assert_equal "$(grep -Fc 'Never move, delete, recreate, or republish `v0.6.0-rc.2`, `v0.6.0`, npm `0.6.0-rc.2`, or npm `0.6.0`' "$PROMPT_OUTPUT")" 1 'prompt preserves immutable public releases'
