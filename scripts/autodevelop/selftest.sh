@@ -87,13 +87,13 @@ assert_equal "$(autodevelop_classify_pass 0 "$TMP/complete")" COMPLETE 'complete
 
 PROMPT_OUTPUT="$TMP/run-pass-prompt"
 bash "$HERE/run-pass.sh" --print-prompt > "$PROMPT_OUTPUT"
-assert_equal "$(grep -Fc 'Milestone 10 and NATIVE-009 are verified.' "$PROMPT_OUTPUT")" 1 'prompt closes the native graduation milestone'
-assert_equal "$(grep -Fc 'REL-010 stable-promotion sequence is active.' "$PROMPT_OUTPUT")" 1 'prompt selects the stable promotion package'
-assert_equal "$(grep -Fc 'earliest dependency-eligible REL-010 slice not marked VERIFIED' "$PROMPT_OUTPUT")" 1 'prompt retains stable promotion dependency order'
-assert_equal "$(grep -Fc 'pending external BENCH-007 runner must not block REL-010' "$PROMPT_OUTPUT")" 1 'prompt keeps benchmark evidence independent'
-assert_equal "$(grep -Fc 'exact stable `v0.6.0` promotion' "$PROMPT_OUTPUT")" 1 'prompt binds the stable candidate identity'
-assert_equal "$(if grep -Fq 'Milestone 9 canonical frontend work is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale provider milestone'
-assert_equal "$(grep -Fc 'non-prerelease GitHub Release, npm `latest`, and the existing GitHub Pages deployment' "$PROMPT_OUTPUT")" 1 'prompt binds guarded stable publication authority'
+assert_equal "$(grep -Fc 'Milestone 10, NATIVE-009, and the REL-010 stable v0.6.0 publication terminal are verified and closed.' "$PROMPT_OUTPUT")" 1 'prompt closes the stable publication terminal'
+assert_equal "$(grep -Fc 'Only BENCH-007 remains' "$PROMPT_OUTPUT")" 1 'prompt selects the sole remaining benchmark terminal'
+assert_equal "$(grep -Fc 'stable code controlled-benchmark-archive' "$PROMPT_OUTPUT")" 1 'prompt binds the stable external blocker'
+assert_equal "$(grep -Fc 'follow DEVELOPMENT_PLAN.md section 19 exactly' "$PROMPT_OUTPUT")" 1 'prompt follows the controlled benchmark sequence'
+assert_equal "$(grep -Fc 'Stable publication authority was successfully consumed and closed on 2026-08-18.' "$PROMPT_OUTPUT")" 1 'prompt closes stable publication authority'
+assert_equal "$(if grep -Fq 'REL-010 stable-promotion sequence is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale stable-promotion work'
+assert_equal "$(grep -Fc 'Never move, delete, recreate, or republish `v0.6.0-rc.2`, `v0.6.0`, npm `0.6.0-rc.2`, or npm `0.6.0`' "$PROMPT_OUTPUT")" 1 'prompt preserves immutable public releases'
 assert_equal "$(grep -Fc 'A sibling search is inspection, not an automatic work queue.' "$PROMPT_OUTPUT")" 1 'prompt forbids unbounded sibling queues'
 assert_equal "$(grep -Fc 'predeclared finite terminal bound' "$PROMPT_OUTPUT")" 1 'prompt requires finite numeric bounds'
 assert_equal "$(grep -Fc 'ZIGCSS-AUTODEVELOP-GAP:' "$PROMPT_OUTPUT")" 1 'prompt requires release-gap marker'

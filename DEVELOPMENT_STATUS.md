@@ -14,6 +14,15 @@ Last updated: 2026-08-18
 
 ## Autonomous runtime control
 
+- Work package: `OPS-011`
+- State: `VERIFIED`
+- Decision: the published stable `v0.6.0` terminal is immutable and must not remain selectable work. With zero matching runners and no retained controlled archive, automatically spending repeated max-reasoning passes on the unchanged `BENCH-007` blocker is not productive progress.
+- Change: plan v1.7 records the verified release and exact final controlled-benchmark sequence. The pass prompt selects only `BENCH-007`, requires schedule-produced non-emulated Linux x64 evidence, emits stable blocker `controlled-benchmark-archive` when the archive is absent, and mechanically forbids moving, recreating, or republishing the existing RC/stable GitHub and npm identities. Prompt and documentation regressions reject the former active-`REL-010` instructions.
+- Gates: autonomous runner passes 103/103; native contract 30/30 plus check; stable release 6/6 plus check; benchmark archive 5/5 plus policy check; benchmark publication 7/7 plus check; workflow policy 27/27 plus check; documentation 7/7 plus check; website 164/164 plus production build, nine generated SEO routes, and 100.1 KiB landing budget; format policy 2/2; Bash/JavaScript syntax and diff integrity pass.
+- Activation: the detached supervisor remains healthy, model-pinned, and intentionally paused. It becomes productive only after a matching runner produces a retained schedule artifact; no release, package, deployment, tag, or infrastructure mutation is eligible from this operations package.
+
+## Prior autonomous runtime control (max-reasoning activation)
+
 - Work package: `OPS-010`
 - State: `VERIFIED`
 - Implementation checkpoint: `6b071badc81bf5005183210e5c9b59156a9fe3a3`
@@ -35,6 +44,20 @@ Last updated: 2026-08-18
 - Blockers and external state: none for this remediation. The autonomous runner remains paused until the integrated checkpoint is pushed and hosted Build closes green. No tag, release, package publication, deployment, or release interlock changed.
 
 ## Current work
+
+- Milestone: Milestone 8 controlled benchmark publication terminal
+- Work package: `BENCH-007` generated publication from an archived controlled run
+- State: `BLOCKED`
+- Active phase: `BENCH-007-CONTROLLED-ARCHIVE-HANDOFF`. `BENCH-001` through `BENCH-006` are `VERIFIED`; the schedule-only workflow, archive validator, deterministic statistics, and generated withdrawn/publication paths are implemented. The only missing input is a retained archive produced on a dedicated non-emulated Linux x64 runner carrying `[self-hosted, linux, x64, zigcss-benchmark-v1]`.
+- Exit-criterion mapping: plan section 19 requires one successful scheduled run on exact `origin/main`, one retained two-file artifact, exact commit/run/attempt binding, controlled hardware evidence, 43 complete benchmark series, 860 raw observations, output equivalence, reproducible environment/provenance, generated publication, matching hosted validation, and public readback. Laptop, GitHub-hosted, virtualized, emulated, manually dispatched, synthetic, or copied measurements cannot satisfy the terminal.
+- External measurement evidence: read-only GitHub API inspection on 2026-08-18 reports `total_count: 0` repository self-hosted runners. The five most recent schedule runs (`31996381237`, `31356834112`, `30787385782`, `30240048163`, and `29719313189`) each waited approximately 24 hours and completed `cancelled`; latest run `31996381237` retained zero artifacts. No qualifying archive exists.
+- Repository evidence: `benchmarks/publication.json` remains `status: withdrawn` with no archive directory or artifact URL, and `BENCHMARK_REPORT.md` remains the exact generated no-claims notice. This is the correct fail-closed public state.
+- Current checkpoint: `OPS-011` / `controlled-benchmark-handoff` / `CLOSED`. Plan v1.7 records the completed stable product terminal and the exact final benchmark sequence. The autonomous pass prompt now treats `REL-010` and its one-time release authority as closed, makes all existing RC/stable tags and npm identities immutable, selects only `BENCH-007`, and reports stable blocker `controlled-benchmark-archive` without inventing commits when external state is unchanged.
+- Blocker: `controlled-benchmark-archive`. Productive continuation requires an eligible physical Linux x64 host to be registered externally with the exact dedicated label and kept online for the scheduled workflow. Provisioning or registering that infrastructure requires operator execution or separate external-infrastructure authority; weakening the runner boundary is forbidden.
+- Next eligible package: when and only when a qualifying schedule-produced artifact exists, execute plan section 19 from archive validation through generated report, green checkpoint, exact `main` integration, hosted validation, Pages deployment, and anonymous readback. Until then there is no dependency-eligible local implementation package.
+- Runtime control: the detached autonomous supervisor is healthy on `gpt-5.6-sol` with max reasoning but intentionally paused. Resuming it with zero runners would spend three model passes rediscovering the same stable blocker and then pause again; it must remain paused until the external archive condition changes.
+
+## Latest verified release terminal
 
 - Milestone: Milestone 10 and `REL-010` stable promotion are complete; only the independent Milestone 8 controlled benchmark terminal remains active
 - Work package: `REL-010` stable release, package presentation, Pages SEO, and evidence-bound benchmark claims

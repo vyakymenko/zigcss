@@ -268,7 +268,7 @@ function validateSources(contract, gates, sources) {
 
   const plan = sources.get('DEVELOPMENT_PLAN.md')
   const adr = sources.get('docs/adr/ADR-015-stable-promotion-and-performance-claims.md')
-  requireText(plan, 'Plan version: 1.6', 'development plan')
+  requireText(plan, 'Plan version: 1.7', 'development plan')
   requireText(plan, '## 18. First stable-promotion and public-evidence sequence', 'development plan')
   requireText(plan, 'one unused immutable `v0.6.0`', 'development plan')
   requireText(adr, '- Status: Accepted', 'ADR-015')
