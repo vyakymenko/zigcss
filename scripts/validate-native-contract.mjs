@@ -3569,7 +3569,7 @@ export function validateContract(
   )
   validateNativeImportClosure(contract, productionSources)
 
-  requireText(plan, 'Plan version: 1.5', 'DEVELOPMENT_PLAN.md')
+  requireText(plan, 'Plan version: 1.6', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## Milestone 10: Self-contained native stylesheet frontends', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## 17. First self-contained-native autonomous sequence', 'DEVELOPMENT_PLAN.md')
   requireText(decision, '- Status: Accepted', 'ADR-013')

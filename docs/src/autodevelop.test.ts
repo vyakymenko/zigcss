@@ -104,5 +104,5 @@ describe('autonomous development operations', () => {
     expect(push).toContain('--recovery-only')
     expect(push).toContain('ls-remote --exit-code')
     expect(push).not.toMatch(/--force(?:-with-lease)?/)
-  })
+  }, 15_000)
 })

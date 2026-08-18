@@ -1,9 +1,9 @@
 # ZigCSS Development Plan
 
 Status: Approved and in execution
-Plan version: 1.5
+Plan version: 1.6
 Prepared: 2026-07-11  
-Amended: 2026-08-08 (owner-approved `gpt-5.6-sol` max autonomous runtime)
+Amended: 2026-08-18 (owner-approved stable `0.6.0`, npm `latest`, Pages/SEO, and evidence-bound performance publication)
 Primary target: a trustworthy, standards-oriented CSS compiler, minifier, Zig library, and CLI  
 Core target release: `0.4.0`
 Preprocessor expansion target: `0.5.0`
@@ -11,7 +11,7 @@ Self-contained native target: `0.6.0`
 
 ## 1. Purpose
 
-This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.5 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, the owner-approved self-contained native frontend program defined by ADR-013, the `gpt-5.6-sol` max autonomous runtime, and the fail-closed native publication path. ADR-014 adds finite release-directed convergence and hosted-CI throughput controls so autonomous passes reduce a bounded definition-of-done inventory instead of creating open-ended sibling work.
+This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.6 preserves the completed `0.4.x` CSS recovery, verified unpublished `0.5.x` canonical-preprocessor reference implementation, and published `0.6.0-rc.2` native terminal; retains the owner-approved self-contained native frontend program defined by ADR-013, the `gpt-5.6-sol` max autonomous runtime, and ADR-014 finite convergence; and adds ADR-015's separate fail-closed stable promotion, Pages/SEO, and evidence-bound performance-claim contract.
 
 The current repository is an ambitious prototype. It has useful scaffolding for parsing, optimization, preprocessors, a CLI, an LSP, documentation, packaging, and benchmarks, but the core parser and optimizer are not yet safe enough for production CSS. Development must therefore prioritize correctness and security before new features or performance work.
 
@@ -77,6 +77,8 @@ The run may not, without separate explicit authorization:
 On 2026-07-27 the owner granted one bounded publication authorization: after `NATIVE-009` proves every native graduation, hosted, release, artifact, provenance, and consumer gate on one immutable candidate already integrated to `origin/main`, the autonomous executor may create and push that candidate's single unused `v*` tag and monitor the existing fail-closed `.github/workflows/release.yml` path through a GitHub prerelease and exact npm `next` publication. This authorization does not revive or publish the provider-backed `0.5.0-rc.1` reference candidate, permit moving or reusing a tag, target npm `latest`, bypass the native machine interlock or workflow, or publish Homebrew, editor-extension, or container channels. Any failed release remains immutable evidence and requires a new ledgered candidate identity before another attempt.
 
 On 2026-08-02 the owner approved ADR-014 and superseded the earlier every-pass `main` integration cadence. The supervisor must still non-force push every clean green checkpoint to the approved recovery branch. It integrates `main` after four green passes, and immediately for `COMPLETE`, a release-candidate gate, or an operator-directed integration. This preserves every checkpoint remotely while giving the bounded hosted Build queue enough time to finish. No publication authority is expanded.
+
+On 2026-08-18 the owner approved ADR-015 and explicitly authorized finishing the public product presentation plus one proper stable native release. After the finite `REL-010` stable-promotion contract passes on an exact green commit already integrated to `origin/main`, the executor may deploy the existing GitHub Pages site, create and push one unused immutable `v0.6.0` tag through the fail-closed release workflow, create its non-prerelease GitHub Release, and publish exact npm `0.6.0` with provenance on `latest`. The existing `v0.6.0-rc.2` tag and npm `next` evidence may not be moved, deleted, republished, or overwritten. Homebrew, editor-extension, container-registry, service, and unrelated infrastructure publication remain excluded. `BENCH-007` retains its controlled non-emulated Linux x64 requirement and independently gates every public timing, ranking, ratio, or superlative speed claim.
 
 ### 3.4 Work loop
 
@@ -582,6 +584,7 @@ Target: `0.4.0-rc.3`
 | `REL-003` | Verify release assets in npm installer, Docker, and Homebrew paths | `REL-002` |
 | `REL-004` | Scope workflow permissions per job and pin external actions | None |
 | `REL-005` | Smoke-test every native artifact and npm installation path | `REL-003` |
+| `REL-010` | Promote the closed native prerelease to one immutable stable `0.6.0` GitHub/npm release; validate Pages, route SEO, package metadata, and conservative benchmark claims | `NATIVE-009`, `DOC-002`, `REL-005`, ADR-015 |
 
 ### Exit criteria
 
@@ -945,6 +948,7 @@ The following decisions are captured or queued under `docs/adr/` during implemen
 - `ADR-012-canonical-preprocessor-host.md`
 - `ADR-013-self-contained-native-frontends.md`
 - `ADR-014-autonomous-convergence-and-ci-throughput.md`
+- `ADR-015-stable-promotion-and-performance-claims.md`
 
 ## 13. Release roadmap
 
@@ -1032,7 +1036,10 @@ The following decisions are captured or queued under `docs/adr/` during implemen
 
 - Every Milestone 10 package is verified on one immutable release commit.
 - No fallback, partial output, dependency leak, child-process/network compile path, semantic P0/P1, or unverified native claim remains.
-- Publication occurs only through the owner-authorized fail-closed release workflow after the native machine interlock is enabled and every `NATIVE-009` gate passes on the exact integrated candidate.
+- The closed `v0.6.0-rc.2` evidence remains immutable; stable promotion uses a separate exact `0.6.0` candidate and new `v0.6.0` tag.
+- Publication occurs only through the owner-authorized fail-closed release workflow after the native machine interlock and every finite `REL-010` pre-tag gate pass on the exact integrated candidate.
+- The GitHub release is non-prerelease and npm `latest` resolves exact `0.6.0` with provenance; npm `next` may retain the historical RC.
+- Public timing, ranking, ratio, or superlative performance copy remains unavailable until `BENCH-007` generates it from the accepted controlled archive.
 
 ### `1.0.0`
 
@@ -1117,3 +1124,22 @@ Milestone 9 is verified as an unpublished reference. After the 2026-07-17 owner 
 12. Complete `NATIVE-009`: choose an unused native candidate identity, run the complete local/hosted/release matrix, enable the native release interlock only after all gates pass, ensure the exact candidate is integrated to `origin/main`, then use the 2026-07-27 owner authorization to push its single immutable tag and verify the existing workflow's GitHub prerelease plus npm `next` publication. Never revive `0.5.0-rc.1`, move a tag, target npm `latest`, bypass a failed gate, or publish another channel.
 
 Every native package uses the existing common work loop and two additional rules: the canonical provider path may judge a native result but may not enter production bytes or runtime execution; and every pass must reduce a finite release-gap family under section 3.4.1 rather than extend an open-ended sibling sequence. A partial native implementation remains internal and unavailable rather than replacing a verified reference path.
+
+## 18. First stable-promotion and public-evidence sequence
+
+Milestone 10 and its immutable `0.6.0-rc.2` publication are verified. After the 2026-08-18 owner decision and ADR-015 acceptance, `REL-010` follows this exact dependency-ordered sequence while the externally controlled `BENCH-007` runner may remain pending:
+
+1. Record ADR-015, plan v1.6, the owner's expanded but bounded publication authority, and one finite machine-readable stable-promotion terminal. Preserve every RC tag, package, release, asset, attestation, and ledger fact.
+2. Select only unused stable version `0.6.0` and tag `v0.6.0`. Prove both are absent from npm and GitHub before activating the candidate; a collision fails closed and requires a new owner decision.
+3. Extend release policy test-first so canonical prereleases use npm `next` plus GitHub prerelease state, canonical stable versions use npm `latest` plus non-prerelease state, and mismatched tags/channels fail before authentication or artifact work.
+4. Synchronize the exact stable version across owned release surfaces without changing the separately versioned unpublished editor extension or the immutable Homebrew reference formula. Remove prerelease warnings from stable CLI/help and retain every experimental capability boundary that still applies.
+5. Rework README, npm metadata, release notes, getting-started material, package website, and capability output around the verified native product. Add canonical route metadata, structured software metadata, `robots.txt`, and `sitemap.xml`; keep executable plugin parity and unavailable features explicit.
+6. Keep benchmark publication generated and fail-closed. Run local calibration only as non-public diagnostic evidence. Publish comparative measurements only after one scheduled archive from controlled non-emulated Linux x64 hardware passes output equivalence, complete-series, raw-sample, environment, provenance, and reproduction checks.
+7. Run focused tests, complete local validation, package dry-run/offline consumer checks, documentation integrity, site tests/build/bundle budget, dependency audits, release-policy tests, cross-target builds, artifact metadata/smokes, and diff/format checks. Record exact evidence in `DEVELOPMENT_STATUS.md`.
+8. Non-force push every green checkpoint to the approved recovery branch. Integrate the stable candidate to `origin/main`, then require matching successful Build and Documentation/Pages runs and exact public site metadata readback before tag creation.
+9. Re-read live GitHub tags/releases and npm versions/dist-tags. If and only if exact `v0.6.0` and npm `0.6.0` remain unused and every pre-tag gate is verified, create and push that immutable tag once. Do not dispatch, rerun, move, delete, or recreate it.
+10. Monitor the automatically triggered workflow through all five signed target assets, non-prerelease GitHub Release creation, npm `latest` provenance publication, and bounded registry readback. A failure remains immutable evidence and requires a new owner-approved identity.
+11. After successful publication, update only post-tag evidence and public availability wording, re-run the affected gates, deploy the exact ledger checkpoint, and verify GitHub, npm, Pages, `robots.txt`, `sitemap.xml`, canonical metadata, and package installation anonymously.
+12. Keep `BENCH-007` open until its controlled archive exists. Stable `0.6.0` may close without comparative numbers, but the autonomous program and any “fastest” claim remain incomplete until that independent evidence terminal closes.
+
+Every stable-promotion package uses the common work loop and exactly one `stable-release-promotion` family. The terminal is finite: one version, one tag, one integrated commit, five target archives, five asset classes per target, one GitHub stable release, one npm `latest` version, one Pages deployment, and one post-publication readback. No ordinal release series, alternate channel, or manually copied benchmark number is eligible.

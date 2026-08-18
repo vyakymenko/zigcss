@@ -25,6 +25,7 @@ describe('foundational architecture decisions', () => {
     'ADR-012-canonical-preprocessor-host.md',
     'ADR-013-self-contained-native-frontends.md',
     'ADR-014-autonomous-convergence-and-ci-throughput.md',
+    'ADR-015-stable-promotion-and-performance-claims.md',
   ]
 
   test.each(decisions)('%s is accepted and records consequences', name => {
@@ -130,6 +131,17 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('non-cancelling concurrency group per ref')
     expect(adr).toContain('`main` is integrated after four green passes')
     expect(adr).toContain('ZIGCSS-AUTODEVELOP-GAP: <work-package> <stable-family> <REDUCED|CLOSED>')
+  })
+
+  test('promotes one immutable stable release without weakening benchmark evidence', () => {
+    const adr = read('ADR-015-stable-promotion-and-performance-claims.md')
+
+    expect(adr).toContain('`v0.6.0`')
+    expect(adr).toContain('npm `latest`')
+    expect(adr).toContain('GitHub Pages')
+    expect(adr).toContain('controlled non-emulated Linux x64')
+    expect(adr).toContain('must not move, delete, or recreate `v0.6.0-rc.2`')
+    expect(adr).toMatch(/world(?:'s|’s) fastest.*prohibited/i)
   })
 
   test('chooses one strict strategy for every inherited format adapter', () => {
