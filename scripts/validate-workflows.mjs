@@ -29,8 +29,9 @@ export const actionPins = Object.freeze({
     runtime: 'node24',
   }),
   'actions/upload-artifact': Object.freeze({
-    sha: 'ea165f8d65b6e75b540449e92b4886f43607fa02',
-    version: 'v4.6.2',
+    sha: '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+    version: 'v7.0.1',
+    runtime: 'node24',
   }),
   'actions/setup-node': Object.freeze({
     sha: '820762786026740c76f36085b0efc47a31fe5020',
@@ -38,16 +39,19 @@ export const actionPins = Object.freeze({
     runtime: 'node24',
   }),
   'actions/upload-pages-artifact': Object.freeze({
-    sha: '7b1f4a764d45c48632c6b24a0339c27f5614fb0b',
-    version: 'v4.0.0',
+    sha: 'fc324d3547104276b827a68afc52ff2a11cc49c9',
+    version: 'v5.0.0',
+    runtime: 'node24',
   }),
   'actions/deploy-pages': Object.freeze({
-    sha: 'd6db90164ac5ed86f2b6aed7e0febac5b3c0c03e',
-    version: 'v4.0.5',
+    sha: 'cd2ce8fcbc39b97be8ca5fce6e763baed58fa128',
+    version: 'v5.0.0',
+    runtime: 'node24',
   }),
   'actions/download-artifact': Object.freeze({
-    sha: 'd3f86a106a0bac45b974a628896c90dbdf5c8093',
-    version: 'v4.3.0',
+    sha: '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+    version: 'v8.0.1',
+    runtime: 'node24',
   }),
   'actions/attest': Object.freeze({
     sha: 'a1948c3f048ba23858d222213b7c278aabede763',
@@ -59,14 +63,19 @@ export const actionPins = Object.freeze({
   }),
 })
 
-// Public Build annotations define this exact finite migration inventory. The
-// two official workflow actions have tagged Node 24 releases. The sole tagged
-// setup-zig remainder is retired in favor of the repository-owned composite.
+// Public Build and Documentation annotations define this exact finite
+// migration inventory. Every retained official JavaScript/composite action
+// below has a reviewed tagged Node 24 terminal. The sole tagged setup-zig
+// remainder is retired in favor of the repository-owned composite.
 export const actionRuntimeMigration = Object.freeze({
   requiredRuntime: 'node24',
   terminalActions: Object.freeze([
     'actions/checkout',
     'actions/setup-node',
+    'actions/upload-artifact',
+    'actions/download-artifact',
+    'actions/upload-pages-artifact',
+    'actions/deploy-pages',
     'mlugg/setup-zig',
   ]),
   replacedActions: Object.freeze(['mlugg/setup-zig']),

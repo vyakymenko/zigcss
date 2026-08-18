@@ -80,8 +80,15 @@ test('Windows checkout preserves the finite native conformance text-fixture surf
 
 test('the hosted action runtime migration has a finite reviewed terminal', () => {
   assert.deepEqual(validateActionRuntimeMigration(), {
-    actions: 3,
-    node24Actions: ['actions/checkout', 'actions/setup-node'],
+    actions: 7,
+    node24Actions: [
+      'actions/checkout',
+      'actions/setup-node',
+      'actions/upload-artifact',
+      'actions/download-artifact',
+      'actions/upload-pages-artifact',
+      'actions/deploy-pages',
+    ],
     replacedActions: ['mlugg/setup-zig'],
     pendingActions: [],
   })

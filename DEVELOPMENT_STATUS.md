@@ -32,7 +32,18 @@ Last updated: 2026-08-18
 - Activation evidence: the prior xhigh pass finished and pushed clean cache-conformance checkpoint `c05e1bfe1ab595ebb8a6cc9f8d45a0a69b5651a7` before the old supervisor stopped. A fresh detached supervisor started at clean head `6b071ba`, and both live status and doctor report `model=gpt-5.6-sol`, `reasoning=max`, ready authentication, confined ignored state, and the approved non-force recovery/main push boundary. It remains paused only for this ledger checkpoint and will resume after delivery.
 - Scope: no compiler behavior, capability row, dependency, release interlock, tag, publication, deployment, secret, or other external authority changed.
 
-## CI security remediation
+## CI runtime maintenance
+
+- Work package: `CI-003`
+- State: `IMPLEMENTED`
+- Trigger: exact Documentation/Pages run `32143456860` on `OPS-011` checkpoint `03ce6437039430fa5164e6eed13100cac2d816e6` passed, but GitHub annotated both jobs because pinned `actions/upload-artifact@v4.6.2` and `actions/deploy-pages@v4.0.5` target deprecated Node 20 and were being forcibly executed on Node 24. The same upload action is used by Build, Benchmarks, and Release; the paired download and Pages wrapper actions belonged to the same finite runtime boundary.
+- Test-first evidence: the focused runtime-terminal assertion was strengthened from three historical entries to seven exact retained/replaced actions and failed 0/1 with the expected actual three versus required seven diff. The implementation makes the complete workflow suite pass 27/27 plus policy check.
+- Change: immutable official tag refs verified through the GitHub API advance `actions/upload-artifact` to `v7.0.1` / `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`, `actions/download-artifact` to `v8.0.1` / `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c`, `actions/upload-pages-artifact` to `v5.0.0` / `fc324d3547104276b827a68afc52ff2a11cc49c9`, and `actions/deploy-pages` to `v5.0.0` / `cd2ce8fcbc39b97be8ca5fce6e763baed58fa128`. Official manifests prove Node 24 execution for the three JavaScript actions; the Pages wrapper is a composite over `upload-artifact@v7`.
+- Security and compatibility boundary: all 39 workflow action placements remain immutable, reviewed, least-privilege pins. Artifact upload stays archived by default; download v8's new default digest mismatch failure strengthens fail-closed behavior. No action input, artifact name/path, job permission, trigger, release identity, package byte, compiler behavior, or publication authority changed.
+- Local gates: workflow policy passes 27/27 plus check; release metadata 6/6 plus check; stable release 6/6 plus check; benchmark archive/publication 12/12 plus both checks; native contract 30/30 plus check; autonomous runner 103/103; documentation 7/7 plus check; website 164/164 plus production build, nine SEO routes, and 100.1 KiB landing budget; Bash/JavaScript syntax and diff integrity pass.
+- Next gate: a matching automatic Build must pass all 12 jobs and Documentation/Pages must build and deploy without the former Node 20 annotations on the exact integrated checkpoint before `CI-003` becomes `VERIFIED`.
+
+## Prior CI security remediation
 
 - Work package: `SEC-ADVISORY-2026-07-28`
 - State: `VERIFIED`
@@ -54,7 +65,7 @@ Last updated: 2026-08-18
 - Repository evidence: `benchmarks/publication.json` remains `status: withdrawn` with no archive directory or artifact URL, and `BENCHMARK_REPORT.md` remains the exact generated no-claims notice. This is the correct fail-closed public state.
 - Current checkpoint: `OPS-011` / `controlled-benchmark-handoff` / `CLOSED`. Plan v1.7 records the completed stable product terminal and the exact final benchmark sequence. The autonomous pass prompt now treats `REL-010` and its one-time release authority as closed, makes all existing RC/stable tags and npm identities immutable, selects only `BENCH-007`, and reports stable blocker `controlled-benchmark-archive` without inventing commits when external state is unchanged.
 - Blocker: `controlled-benchmark-archive`. Productive continuation requires an eligible physical Linux x64 host to be registered externally with the exact dedicated label and kept online for the scheduled workflow. Provisioning or registering that infrastructure requires operator execution or separate external-infrastructure authority; weakening the runner boundary is forbidden.
-- Next eligible package: when and only when a qualifying schedule-produced artifact exists, execute plan section 19 from archive validation through generated report, green checkpoint, exact `main` integration, hosted validation, Pages deployment, and anonymous readback. Until then there is no dependency-eligible local implementation package.
+- Next eligible package: when and only when a qualifying schedule-produced artifact exists, execute plan section 19 from archive validation through generated report, green checkpoint, exact `main` integration, hosted validation, Pages deployment, and anonymous readback. Until then there is no dependency-eligible planned compiler or benchmark implementation package; reactive `CI-003` runtime maintenance remains a separate finite hosted-validation handoff.
 - Runtime control: the detached autonomous supervisor is healthy on `gpt-5.6-sol` with max reasoning but intentionally paused. Resuming it with zero runners would spend three model passes rediscovering the same stable blocker and then pause again; it must remain paused until the external archive condition changes.
 
 ## Latest verified release terminal
