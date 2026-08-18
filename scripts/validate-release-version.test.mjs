@@ -122,7 +122,7 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
   assert.throws(() => validateReleaseSources(docs), /README stable identity/)
 
   const npmGuide = cloneSources()
-  replace(npmGuide, 'NPM_PUBLISH.md', 'Stable promotion target: `zigcss@0.6.0`', 'Stable promotion target: `zigcss@9.9.9`')
+  replace(npmGuide, 'NPM_PUBLISH.md', 'Stable `zigcss@0.6.0` is published on npm `latest`', 'Stable `zigcss@9.9.9` is published on npm `latest`')
   assert.throws(() => validateReleaseSources(npmGuide), /npm publishing guide stable identity/)
 })
 

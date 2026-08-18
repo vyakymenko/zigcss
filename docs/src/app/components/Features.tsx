@@ -25,14 +25,14 @@ export function Features() {
         <div className="mb-12 max-w-4xl">
           <div className="mb-5 inline-flex items-center gap-2 border border-[#d0a43f] bg-[#fff2bf] px-3 py-1.5 font-mono text-xs uppercase tracking-[0.16em] text-[#5e470f]">
             <AlertTriangle className="size-4" />
-            Experimental compiler
+            Stable package · bounded capabilities
           </div>
           <h1 className="display-type text-5xl tracking-[-0.05em] sm:text-6xl">Current capability status</h1>
           <p className="mt-6 max-w-3xl text-xl leading-8 text-[#5f675f]">
-            This site describes the published native prerelease. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version.
+            This site describes the published stable 0.6.0 release. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version.
           </p>
           <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#6e776e]">
-            The compatibility table below records the published NATIVE-009 native-graduated prerelease; GitHub prerelease and npm next publication are verified.
+            The compatibility table below records the native-graduated contract promoted by REL-010; the non-prerelease GitHub Release and npm latest publication are verified, while the immutable RC remains on next.
           </p>
         </div>
 

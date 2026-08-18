@@ -13,9 +13,9 @@ No later stable identity is selected.
 
 ## [0.6.0] - 2026-08-18
 
-Target release: `0.6.0` on one immutable non-prerelease GitHub Release and npm `latest` promotion workflow.
+Released as immutable tag `v0.6.0`, non-prerelease GitHub Release `372291445`, and `zigcss@0.6.0` on npm `latest` with provenance.
 
-Stable `0.6.0` promotes the exact self-contained native surface proven by immutable `0.6.0-rc.2`; it does not move, replace, or republish the RC. The package retains zero production and optional dependencies, five native stylesheet syntaxes, five architecture-matched targets, signed provenance/SBOM assets, deterministic and fail-closed compilation, and explicit plugin boundaries.
+Stable `0.6.0` promotes the exact self-contained native surface proven by immutable `0.6.0-rc.2`; it does not move, replace, or republish the RC. Release run `32130950531` passed on attempt 1 with five architecture-matched archives, 25 signed assets, npm SLSA provenance, preserved `next`, and anonymous CSS/SCSS/Sass/Less/Stylus installation. The package retains zero production and optional dependencies, deterministic and fail-closed compilation, and explicit plugin boundaries.
 
 ### Changed
 

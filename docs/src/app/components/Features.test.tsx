@@ -13,6 +13,8 @@ describe('Features', () => {
     renderFeatures()
     expect(screen.getByRole('heading', { name: /current capability status/i })).toBeInTheDocument()
     expect(screen.getByText(/not a compatibility promise/i)).toBeInTheDocument()
+    expect(screen.getByText(/published stable 0\.6\.0 release/i)).toBeInTheDocument()
+    expect(screen.getByText(/GitHub Release and npm latest publication are verified/i)).toBeInTheDocument()
   })
 
   it('marks the core compiler and format adapters experimental', () => {

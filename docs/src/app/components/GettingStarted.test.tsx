@@ -8,12 +8,12 @@ function renderGettingStarted() {
 }
 
 describe('GettingStarted', () => {
-  it('starts with the gated stable installation path', () => {
+  it('starts with the published stable installation path', () => {
     renderGettingStarted()
     expect(screen.getByRole('heading', { name: /start with any of five stylesheet languages/i })).toBeInTheDocument()
-    expect(screen.getByText('npm install --save-dev zigcss@0.6.0')).toBeInTheDocument()
-    expect(screen.getByText(/ZigCSS 0\.6\.0 is the exact stable source candidate/i)).toBeInTheDocument()
-    expect(screen.getByText(/npm latest becomes available only after.*gates pass.*published RC remains unchanged on next/i)).toBeInTheDocument()
+    expect(screen.getByText('npm install --save-dev zigcss')).toBeInTheDocument()
+    expect(screen.getByText(/ZigCSS 0\.6\.0 is published on npm latest and as a non-prerelease GitHub Release/i)).toBeInTheDocument()
+    expect(screen.getByText(/published RC remains unchanged on next/i)).toBeInTheDocument()
   })
 
   it('shows the verified source build and test commands', () => {

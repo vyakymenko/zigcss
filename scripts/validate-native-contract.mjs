@@ -1575,9 +1575,9 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
     'zig-out/bin/zigcss --syntax scss input.scss -o output.css --minify',
     'website native source command',
   )
-  requireText(home, 'STABLE PROMOTION · GATES ACTIVE', 'website stable promotion boundary')
+  requireText(home, 'STABLE RELEASE · VERIFIED', 'website stable publication boundary')
   requireText(home, 'The providers are ', 'website development-oracle heading')
-  requireText(home, 'REL-010 · 0.6.0 · exact promotion evidence required', 'website stable promotion interlock')
+  requireText(home, 'REL-010 · 0.6.0 · 25 signed assets · npm latest', 'website stable publication evidence')
   requireText(home, 'CLI · JS wrapper · Zig API', 'website thin wrapper interface claim')
   requireText(
     gettingStarted,
@@ -1612,7 +1612,7 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   requireText(showcase, '{selected.frontend}', 'website native lab frontend label')
   requireText(
     features,
-    'The compatibility table below records the published NATIVE-009 native-graduated prerelease; GitHub prerelease and npm next publication are verified.',
+    'The compatibility table below records the native-graduated contract promoted by REL-010; the non-prerelease GitHub Release and npm latest publication are verified, while the immutable RC remains on next.',
     'website published compatibility boundary',
   )
   requireText(playground, 'Playground unavailable', 'website public compile service boundary')
@@ -1948,7 +1948,7 @@ function validateCapabilityGraduation(
       formatGuide,
       'format compatibility guide',
       [
-        'The four preprocessor rows are `native-graduated` on the published prerelease',
+        'The four preprocessor rows are `native-graduated` on the published stable release',
         'These exact providers are development-only reference oracles.',
         'they do not run during compilation',
         'CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavailable.',

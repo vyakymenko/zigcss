@@ -5,7 +5,7 @@ import { Convergence } from "./Convergence";
 import { FormatShowcase } from "./FormatShowcase";
 import { deterministicDigest } from "../lib/compilerEvidence";
 
-const installCommand = "npm install --save-dev zigcss@0.6.0";
+const installCommand = "npm install --save-dev zigcss";
 const deterministicFixture = ":root{--accent:#b7f34a}.button{color:#101914;background:var(--accent)}";
 
 const deploymentModes = [
@@ -13,13 +13,13 @@ const deploymentModes = [
     id: "npm",
     label: "npm",
     code: `${installCommand}\nnpx zigcss input.css -o output.css --minify`,
-    note: "Stable source identity is 0.6.0; npm latest is admitted only by the exact promotion workflow.",
+    note: "Stable 0.6.0 is published on npm latest from the exact immutable release workflow.",
   },
   {
     id: "source",
     label: "from source",
     code: "zig build\nzig-out/bin/zigcss --syntax scss input.scss -o output.css --minify",
-    note: "The native five-language 0.6.0 source candidate uses no provider runtime.",
+    note: "The published native five-language 0.6.0 release uses no provider runtime.",
   },
   {
     id: "zig",
@@ -152,7 +152,7 @@ function Endgame() {
       <div className="relative mx-auto max-w-[96rem] px-5 py-28 sm:px-8 md:py-44 lg:px-12">
         <div className="flex flex-wrap items-center justify-between gap-5">
           <p className="gate-label">── GATE 07 · ADR-013 ──</p>
-          <span className="target-chip">STABLE PROMOTION · GATES ACTIVE</span>
+          <span className="target-chip">STABLE RELEASE · VERIFIED</span>
         </div>
         <h2 id="endgame-title" className="display-type mt-10 max-w-6xl text-[clamp(3.8rem,9vw,9rem)] leading-[0.8] tracking-[-0.08em]">
           The providers are <span className="text-[#b7f34a]">oracles.</span>
@@ -176,8 +176,8 @@ function Endgame() {
           <div className="corridor-arrow" aria-hidden="true">→</div>
           <article className="endgame-target">
             <span>RELEASE GATE</span>
-            <strong>STABLE CANDIDATE</strong>
-            <p>REL-010 · 0.6.0 · exact promotion evidence required</p>
+            <strong>STABLE PUBLISHED</strong>
+            <p>REL-010 · 0.6.0 · 25 signed assets · npm latest</p>
           </article>
         </div>
       </div>
@@ -277,7 +277,7 @@ export function Home() {
         <div className="hero-glow" aria-hidden="true" />
         <div className="relative mx-auto flex min-h-[calc(100svh-4rem)] max-w-[96rem] flex-col justify-center px-5 py-20 sm:px-8 md:py-28 lg:px-12">
           <p className="gate-label">TERMINAL 00 · ZIGCSS NATIVE 0.6.0</p>
-          <div className="experimental-chip mt-7 w-fit">0.6.0 · STABLE CANDIDATE · ZERO RUNTIME DEPENDENCIES</div>
+          <div className="experimental-chip mt-7 w-fit">0.6.0 · STABLE RELEASE · ZERO RUNTIME DEPENDENCIES</div>
           <h1 id="hero-title" className="hero-display display-type mt-9 max-w-[90rem] text-[clamp(4.1rem,12vw,12rem)] leading-[0.74] tracking-[-0.085em]">
             Exact in.<br /><span>Deterministic out.</span><br />Denied by default.
           </h1>
@@ -285,7 +285,7 @@ export function Home() {
             <div>
               <p className="max-w-3xl text-xl leading-8 text-[#cdd6cb] sm:text-2xl">Compile CSS. Keep the meaning.</p>
               <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#81907f] sm:text-sm">
-                A self-contained five-language compiler written in Zig. Stable source identity 0.6.0 is bound to one immutable promotion workflow; all five source inputs run through native Zig frontends. Comparative speed claims remain locked until controlled Linux x64 evidence exists.
+                A self-contained five-language compiler written in Zig. Stable 0.6.0 is published from one immutable release workflow; all five source inputs run through native Zig frontends. Comparative speed claims remain locked until controlled Linux x64 evidence exists.
               </p>
             </div>
             <a href="#convergence" className="terminal-link justify-self-start font-mono text-sm uppercase tracking-[0.16em] text-[#b7f34a] lg:justify-self-end">five inputs converge ↓</a>

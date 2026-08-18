@@ -18,7 +18,7 @@ export function GettingStarted() {
         <div className="mb-10 flex gap-4 border border-[#79a633] bg-[#e8f5cd] p-5 text-[#263d0d]">
           <CheckCircle2 className="mt-0.5 size-5 flex-shrink-0" />
           <p className="leading-7">
-            ZigCSS 0.6.0 is the exact stable source candidate. npm latest becomes available only after its immutable GitHub, artifact, provenance, Pages, and registry gates pass; the published RC remains unchanged on next.
+            ZigCSS 0.6.0 is published on npm latest and as a non-prerelease GitHub Release after its immutable artifact, provenance, Pages, registry, and anonymous-consumer gates passed. The published RC remains unchanged on next.
           </p>
         </div>
 
@@ -27,12 +27,12 @@ export function GettingStarted() {
             <Package className="size-7 text-[#476f14]" />
             <h2 className="mt-5 text-3xl font-semibold tracking-[-0.03em]">Install from npm</h2>
             <p className="mt-4 leading-7 text-[#5f675f]">
-              After promotion, exact version 0.6.0 installs the matching native binary for your OS and architecture. Its npm package exposes the five-language product surface shown below.
+              The stable package installs the matching native binary for your OS and architecture. Its npm package exposes the five-language product surface shown below.
             </p>
           </div>
           <div className="bg-[#101914] p-7 text-[#f7f3e8] sm:p-9">
-            <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Exact stable candidate</p>
-            <pre className="mt-4 overflow-x-auto bg-[#080d0a] p-4 text-sm sm:text-base"><code data-language="bash">npm install --save-dev zigcss@0.6.0</code></pre>
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Published stable release</p>
+            <pre className="mt-4 overflow-x-auto bg-[#080d0a] p-4 text-sm sm:text-base"><code data-language="bash">npm install --save-dev zigcss</code></pre>
             <p className="mt-6 font-mono text-xs uppercase tracking-[0.16em] text-[#829087]">Compile published CSS surface</p>
             <pre className="mt-4 overflow-x-auto bg-[#080d0a] p-4 text-sm sm:text-base"><code data-language="bash">npx zigcss input.css -o output.css --minify</code></pre>
           </div>
@@ -40,7 +40,7 @@ export function GettingStarted() {
 
         <section className="mt-10 border-l-4 border-[#7b493f] bg-[#f9f6ed] p-7 sm:p-8">
           <h2 className="text-2xl font-semibold">Five native inputs, one self-contained compiler</h2>
-          <p className="mt-4 text-lg font-semibold">CSS, SCSS, indented Sass, Less, and Stylus are admitted in the 0.6 release-ready source candidate.</p>
+          <p className="mt-4 text-lg font-semibold">CSS, SCSS, indented Sass, Less, and Stylus are admitted in the published 0.6 stable release.</p>
           <p className="mt-2 leading-7 text-[#5f675f]">
             The native Sass-family, Less, and Stylus frontends evaluate complete stylesheets before recovery-disabled ZigCSS validation returns CSS.
           </p>

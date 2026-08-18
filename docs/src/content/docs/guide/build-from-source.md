@@ -1,6 +1,6 @@
 # Build from source
 
-Source builds are the verified way to evaluate the release-ready five-language native-graduated candidate before its package is published. Local Zig package dependencies and the thin npm delivery wrapper are consumer-tested below.
+Source builds are the verified alternative to the published five-language native-graduated package. Local Zig package dependencies and the thin npm delivery wrapper are consumer-tested below.
 
 ## Requirements
 
@@ -126,7 +126,7 @@ cd tests/package-consumer
 zig build test --summary all
 ```
 
-The package is also verified through a fresh `zig fetch .` cache so the allowlisted copy—not only the full checkout—can satisfy a consumer. A remote URL/hash is intentionally not documented before an artifact is published.
+The package is also verified through a fresh `zig fetch .` cache so the allowlisted copy—not only the full checkout—can satisfy a consumer. The published GitHub release provides architecture-matched binary archives; this source dependency remains intentionally documented through the repository rather than a hand-maintained remote URL/hash.
 
 ## Cached CSS build helper
 

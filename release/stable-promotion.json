@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "ownerPackage": "REL-010",
   "releaseGapFamily": "stable-release-promotion",
-  "state": "candidate-ready",
-  "packageState": "in-progress",
-  "stableReleaseReady": true,
+  "state": "closed",
+  "packageState": "verified",
+  "stableReleaseReady": false,
   "candidateVersion": "0.6.0",
   "candidateTag": "v0.6.0",
   "previousPrerelease": {
@@ -126,9 +126,38 @@
     },
     {
       "id": "tag-workflow-publication",
-      "state": "pending",
-      "evidence": []
+      "state": "verified",
+      "evidence": [
+        "Release run 32130950531 attempt 1 completed success on immutable v0.6.0 at 6786655d66ca65c5a06421c8ed70d84183722dce",
+        "GitHub release 372291445 is non-draft, non-prerelease, and owns the exact 25-asset inventory",
+        "npm serves exact zigcss@0.6.0 on latest with SLSA provenance, preserves next at 0.6.0-rc.2, and passed anonymous five-syntax installation"
+      ]
     }
   ],
-  "publicationEvidence": null
+  "publicationEvidence": {
+    "tagCommit": "6786655d66ca65c5a06421c8ed70d84183722dce",
+    "workflowRunId": 32130950531,
+    "workflowAttempt": 1,
+    "workflowConclusion": "success",
+    "workflowCompletedAt": "2026-08-18T11:23:31Z",
+    "githubReleaseId": 372291445,
+    "githubReleaseUrl": "https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0",
+    "githubPrerelease": false,
+    "githubDraft": false,
+    "githubPublishedAt": "2026-08-18T11:23:10Z",
+    "githubAssetCount": 25,
+    "githubAssetBytes": 16374807,
+    "githubAssetInventorySha256": "65292d754cc559d064f776f0934d399333ba66e1dd2a3b34ec4aac395595dd9b",
+    "assetsPerTarget": 5,
+    "npmVersion": "0.6.0",
+    "npmDistTag": "latest",
+    "npmLatest": "0.6.0",
+    "npmNext": "0.6.0-rc.2",
+    "npmFileCount": 7,
+    "npmUnpackedSize": 47454,
+    "npmIntegrity": "sha512-qJp3h+wO7dM6bU96DJLbUyQ5jNsTCNh1J6TUoxb0wCljpUF+nSXoLW7x2geXznvqCWss1xwK2ISYmT+B/cNcuQ==",
+    "npmShasum": "9bd280f31c5ca1a45a892b76edeb904cf855d461",
+    "npmProvenancePredicateType": "https://slsa.dev/provenance/v1",
+    "anonymousInstall": "verified-five-syntaxes"
+  }
 }

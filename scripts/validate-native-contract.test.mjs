@@ -1794,7 +1794,7 @@ test('binds website claims and the recorded lab to the native product path', () 
     ],
     [
       'docs/src/app/components/Features.tsx',
-      'The compatibility table below records the published NATIVE-009 native-graduated prerelease; GitHub prerelease and npm next publication are verified.',
+      'The compatibility table below records the native-graduated contract promoted by REL-010; the non-prerelease GitHub Release and npm latest publication are verified, while the immutable RC remains on next.',
       'The compatibility table describes an unbounded future product path.',
       /website published compatibility boundary is missing/,
     ],

@@ -20,20 +20,20 @@ function changedSources(relativePath, transform) {
   return sources
 }
 
-test('accepts the finite candidate-ready stable promotion contract', () => {
+test('accepts the closed finite stable publication contract', () => {
   assert.deepEqual(
     validateStableReleaseContract(readStableReleaseContract(), readStableReleaseSources()),
     {
       version: '0.6.0',
       tag: 'v0.6.0',
-      state: 'candidate-ready',
-      verifiedGates: 9,
+      state: 'closed',
+      verifiedGates: 10,
       totalGates: 10,
     },
   )
   assert.match(
     execFileSync(process.execPath, [script, '--check'], { encoding: 'utf8' }),
-    /0\.6\.0 \(candidate-ready\), 9\/10 gates/,
+    /0\.6\.0 \(closed\), 10\/10 gates/,
   )
 })
 
@@ -96,48 +96,51 @@ test('binds native prerelease, zero-dependency, benchmark, plan, and workflow ev
   )
 })
 
-test('admits only an exact-main immutable tag after every pre-tag surface is verified', () => {
+test('closes tag admission after immutable publication', () => {
   const commit = 'a'.repeat(40)
-  assert.equal(
-    validateStableReleaseContract(
-      readStableReleaseContract(),
-      readStableReleaseSources(),
-      { releaseTag: 'v0.6.0', candidateCommit: commit, originMainCommit: commit },
-    ).state,
-    'candidate-ready',
-  )
-  assert.match(
-    execFileSync(process.execPath, [
-      script,
-      '--check',
-      '--release-tag', 'v0.6.0',
-      '--candidate-commit', commit,
-      '--origin-main-commit', commit,
-    ], { encoding: 'utf8' }),
-    /0\.6\.0 \(candidate-ready\), 9\/10 gates/,
-  )
   assert.throws(
     () => validateStableReleaseContract(
       readStableReleaseContract(),
-      readStableReleaseSources(),
-      { releaseTag: 'v0.6.0', candidateCommit: commit, originMainCommit: 'b'.repeat(40) },
-    ),
-    /must equal origin main commit/,
-  )
-
-  const blocked = readStableReleaseContract()
-  blocked.state = 'in-progress'
-  blocked.stableReleaseReady = false
-  blocked.gates[8].state = 'pending'
-  blocked.gates[8].evidence = []
-  assert.throws(
-    () => validateStableReleaseContract(
-      blocked,
       readStableReleaseSources(),
       { releaseTag: 'v0.6.0', candidateCommit: commit, originMainCommit: commit },
     ),
     /not release-ready/,
   )
+  assert.throws(
+    () => execFileSync(process.execPath, [
+      script,
+      '--check',
+      '--release-tag', 'v0.6.0',
+      '--candidate-commit', commit,
+      '--origin-main-commit', commit,
+    ], { encoding: 'utf8', stdio: 'pipe' }),
+    /not release-ready/,
+  )
+})
+
+test('binds exact GitHub, artifact, npm, provenance, channel, and consumer evidence', () => {
+  for (const mutate of [
+    contract => { delete contract.publicationEvidence.npmShasum },
+    contract => { contract.publicationEvidence.unexpected = true },
+    contract => { contract.publicationEvidence.tagCommit = 'a'.repeat(40) },
+    contract => { contract.publicationEvidence.workflowRunId += 1 },
+    contract => { contract.publicationEvidence.githubReleaseId += 1 },
+    contract => { contract.publicationEvidence.githubPrerelease = true },
+    contract => { contract.publicationEvidence.githubAssetCount = 24 },
+    contract => { contract.publicationEvidence.githubAssetInventorySha256 = '0'.repeat(64) },
+    contract => { contract.publicationEvidence.npmLatest = '0.3.0' },
+    contract => { contract.publicationEvidence.npmNext = '0.6.0' },
+    contract => { contract.publicationEvidence.npmIntegrity = 'sha512-invalid' },
+    contract => { contract.publicationEvidence.npmProvenancePredicateType = 'missing' },
+    contract => { contract.publicationEvidence.anonymousInstall = 'not-run' },
+  ]) {
+    const contract = readStableReleaseContract()
+    mutate(contract)
+    assert.throws(
+      () => validateStableReleaseContract(contract, readStableReleaseSources()),
+      /stable release promotion:/,
+    )
+  }
 })
 
 test('rejects missing, extra, and prerelease-regressed release sources', () => {

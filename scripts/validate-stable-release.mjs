@@ -44,6 +44,32 @@ const expectedPreTagSurfaces = Object.freeze([
 const expectedPostTagSurfaces = Object.freeze(['tag-workflow-publication'])
 const initialVerifiedGates = new Set(expectedPreTagSurfaces.slice(0, 5))
 const canonicalCommit = /^[0-9a-f]{40}$/
+const expectedPublicationEvidence = Object.freeze({
+  tagCommit: '6786655d66ca65c5a06421c8ed70d84183722dce',
+  workflowRunId: 32130950531,
+  workflowAttempt: 1,
+  workflowConclusion: 'success',
+  workflowCompletedAt: '2026-08-18T11:23:31Z',
+  githubReleaseId: 372291445,
+  githubReleaseUrl: 'https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0',
+  githubPrerelease: false,
+  githubDraft: false,
+  githubPublishedAt: '2026-08-18T11:23:10Z',
+  githubAssetCount: 25,
+  githubAssetBytes: 16374807,
+  githubAssetInventorySha256: '65292d754cc559d064f776f0934d399333ba66e1dd2a3b34ec4aac395595dd9b',
+  assetsPerTarget: 5,
+  npmVersion: '0.6.0',
+  npmDistTag: 'latest',
+  npmLatest: '0.6.0',
+  npmNext: '0.6.0-rc.2',
+  npmFileCount: 7,
+  npmUnpackedSize: 47454,
+  npmIntegrity: 'sha512-qJp3h+wO7dM6bU96DJLbUyQ5jNsTCNh1J6TUoxb0wCljpUF+nSXoLW7x2geXznvqCWss1xwK2ISYmT+B/cNcuQ==',
+  npmShasum: '9bd280f31c5ca1a45a892b76edeb904cf855d461',
+  npmProvenancePredicateType: 'https://slsa.dev/provenance/v1',
+  anonymousInstall: 'verified-five-syntaxes',
+})
 
 function fail(message) {
   throw new Error(`stable release promotion: ${message}`)
@@ -86,6 +112,13 @@ function parseJson(source, label) {
     return JSON.parse(source)
   } catch (error) {
     fail(`${label} is not valid JSON: ${error.message}`)
+  }
+}
+
+function validatePublicationEvidence(evidence) {
+  exactKeys(evidence, Object.keys(expectedPublicationEvidence), 'publicationEvidence')
+  for (const [key, expected] of Object.entries(expectedPublicationEvidence)) {
+    expectEqual(evidence[key], expected, `publicationEvidence.${key}`)
   }
 }
 
@@ -224,6 +257,7 @@ function validateState(contract, gates) {
     if (!verifiedPreTag || !publicationVerified || contract.publicationEvidence === null) {
       fail('closed stable promotion lacks terminal evidence')
     }
+    validatePublicationEvidence(contract.publicationEvidence)
   }
 }
 
@@ -283,6 +317,13 @@ function validateSources(contract, gates, sources) {
   const unsupportedClaim = /world(?:'s|’s)[ -]fastest|\b\d+(?:\.\d+)?x faster\b/i
   for (const [label, source] of publicSources) {
     if (unsupportedClaim.test(source)) fail(`${label} contains an unverified comparative claim`)
+  }
+  if (contract.state === 'closed') {
+    requireText(sources.get('README.md'), 'npm `latest` serves `zigcss@0.6.0`', 'README stable publication')
+    requireText(sources.get('README.md'), 'npm install --save-dev zigcss', 'README stable install')
+    requireText(sources.get('docs/index.html'), 'ZIGCSS 0.6.0 · STABLE RELEASE', 'site stable publication')
+    requireText(sources.get('docs/src/app/components/GettingStarted.tsx'), 'ZigCSS 0.6.0 is published on npm latest', 'getting-started stable publication')
+    requireText(sources.get('docs/src/app/components/Home.tsx'), '0.6.0 · STABLE RELEASE · ZERO RUNTIME DEPENDENCIES', 'home stable publication')
   }
 
   const workflow = sources.get('.github/workflows/release.yml')

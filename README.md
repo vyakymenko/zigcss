@@ -18,7 +18,7 @@ The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus 
 
 [Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Stable package identity: 0.6.0.** Use the exact-version install below; promotion to npm `latest` is owned by one gated workflow. The immutable `0.6.0-rc.2` prerelease remains on `next` as historical release evidence.
+> **Stable package identity: 0.6.0 — published.** npm `latest` serves `zigcss@0.6.0`, and the matching non-prerelease [GitHub Release](https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0) carries 25 signed release assets. The immutable `0.6.0-rc.2` prerelease remains on `next` as historical release evidence.
 
 ## Native dependency-free migration
 
@@ -26,7 +26,7 @@ Publication of the provider-backed 0.5 candidate was cancelled before tagging. D
 
 The current native package contract has zero `dependencies` and zero `optionalDependencies`. The compiler itself starts no child process, performs no network access, and requires no runtime download. Five archive and offline-package jobs cover Linux x64/arm64, macOS x64/arm64, and Windows x64.
 
-The native implementation was proven on immutable `0.6.0-rc.2`: its historical machine contract records `nativeReleaseReady: true`, and all nine pre-tag evidence surfaces, five signed target archives, offline consumers, and provenance passed. GitHub prerelease and npm `next` publication are verified for that immutable RC. Stable `0.6.0` promotes the closed native surface through a separate fail-closed tag workflow; it does not rewrite the RC or loosen any gate.
+The native implementation was first proven on immutable `0.6.0-rc.2`: its historical machine contract records `nativeReleaseReady: true`, and all nine pre-tag evidence surfaces, five signed target archives, offline consumers, and provenance passed. GitHub prerelease and npm `next` publication are verified for that immutable RC. Stable `0.6.0` then passed its separate ten-gate terminal and was published from immutable tag `v0.6.0`; it does not rewrite the RC or loosen any gate.
 
 `NATIVE-008` closed the finite source-capability inventory. `NATIVE-009` graduated the four preprocessor machine rows together and closed the exact prerelease terminal with five native archives, 25 release assets, one GitHub prerelease, and npm `next`; executable plugin parity remains outside the contract. `REL-010` owns the separate stable tag, npm `latest`, Pages, and public readback.
 
@@ -45,10 +45,10 @@ Your CSS deserves a real compiler: bounded input, a recovery-disabled parser, ex
 
 ## Install
 
-Install the exact stable five-language version (the command fails closed until publication completes):
+Install the published stable five-language release:
 
 ```bash
-npm install --save-dev zigcss@0.6.0
+npm install --save-dev zigcss
 ```
 
 Compile CSS:
@@ -86,7 +86,7 @@ The stable package exposes explicit native CLI selection while keeping executabl
 | Less (`.less`) | Native Less parser/evaluator | `native-graduated` |
 | Stylus (`.styl`) | Native Stylus parser/evaluator | `native-graduated` |
 
-`native-graduated` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, five-target, documentation, release, and publication gates pass on the same immutable candidate. It does not grant executable provider or plugin extension points.
+`native-graduated` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, five-target, documentation, release, and publication gates passed for the immutable release line. It does not grant executable provider or plugin extension points.
 
 To build the stable five-language source snapshot locally:
 
@@ -285,7 +285,7 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 - Reference engines: retained only as exact development oracles and excluded from production bytes and runtime execution.
 - Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; `NATIVE-009` binds the immutable prerelease evidence and `REL-010` binds the stable identity.
 - Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
-- Stable publication: admitted only when the exact `v0.6.0` commit passes local, hosted, Pages, artifact, provenance, consumer, channel, and anonymous readback gates. The immutable RC remains separate.
+- Stable publication: verified on immutable tag `v0.6.0` at commit `6786655d66ca65c5a06421c8ed70d84183722dce`; GitHub Release, 25 signed assets, npm `latest`, SLSA provenance, preserved `next`, and anonymous five-syntax installation all passed exact readback. The immutable RC remains separate.
 
 The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.
 

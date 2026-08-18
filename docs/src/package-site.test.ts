@@ -73,6 +73,8 @@ describe('consumer package website', () => {
     expect(readme).toContain('**Native by design. Fast on purpose. Correct by contract.**')
     expect(readme).toContain('[Website](https://vyakymenko.github.io/zigcss/)')
     expect(readme).toContain('[npm](https://www.npmjs.com/package/zigcss)')
+    expect(readme).toMatch(/npm `latest` serves `zigcss@0\.6\.0`/i)
+    expect(readme).toContain('npm install --save-dev zigcss')
     expect(readme.indexOf('[Website]')).toBeLessThan(installHeading)
   })
 
