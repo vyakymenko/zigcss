@@ -1,9 +1,9 @@
 # ZigCSS Development Plan
 
-Status: Approved; stable product verified; `BENCH-007` blocked on a registered bare-metal runner and controlled archive
-Plan version: 1.8
+Status: Approved; stable product and current autonomous program verified; `BENCH-007` deferred as optional external evidence
+Plan version: 1.9
 Prepared: 2026-07-11  
-Amended: 2026-08-18 (made the final non-virtualized Linux x64 host requirement machine-verifiable)
+Amended: 2026-08-19 (closed the open-source program without project-funded benchmark infrastructure)
 Primary target: a trustworthy, standards-oriented CSS compiler, minifier, Zig library, and CLI  
 Core target release: `0.4.0`
 Preprocessor expansion target: `0.5.0`
@@ -11,7 +11,7 @@ Self-contained native target: `0.6.0`
 
 ## 1. Purpose
 
-This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.8 preserves the completed `0.4.x` CSS recovery, verified unpublished `0.5.x` canonical-preprocessor reference implementation, published `0.6.0-rc.2` native terminal, and verified stable `0.6.0` product terminal; retains the owner-approved self-contained native frontend program defined by ADR-013, the `gpt-5.6-sol` max autonomous runtime, ADR-014 finite convergence, and ADR-015 fail-closed stable promotion; closes the one-time stable publication authority after successful use; and hardens the remaining evidence-bound `BENCH-007` terminal so a self-hosted label alone cannot impersonate controlled bare metal.
+This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.9 preserves the completed `0.4.x` CSS recovery, verified unpublished `0.5.x` canonical-preprocessor reference implementation, published `0.6.0-rc.2` native terminal, and verified stable `0.6.0` product terminal; retains the owner-approved self-contained native frontend program defined by ADR-013, the `gpt-5.6-sol` max autonomous runtime, ADR-014 finite convergence, ADR-015 fail-closed stable promotion, and ADR-016 open-source completion boundary; closes the one-time stable publication authority after successful use; and retains the evidence-bound `BENCH-007` implementation as optional external work whose bare-metal gate cannot be impersonated by a self-hosted label.
 
 The program began from an ambitious but unsafe prototype whose byte parser, optimizer, web boundary, packaging, and claims could not support a production release. That diagnosis governs the dependency order preserved below; it is no longer the current product state. Milestones 0-7 replaced or contained those audited surfaces, Milestones 9-10 established the exact reference and native five-language terminals, and `REL-010` verified the stable public product. The remaining controlled-benchmark work may publish evidence from the already-verified compiler but may not reopen correctness or security gates without a concrete regression.
 
@@ -23,9 +23,9 @@ The program began from an ambitious but unsafe prototype whose byte parser, opti
 | Milestone 9 | `VERIFIED` | Exact canonical-provider reference implementation retained as unpublished development evidence |
 | Milestone 10 / `NATIVE-009` | `VERIFIED` | Native Zig CSS, SCSS, indented Sass, Less, and Stylus terminal published as immutable `v0.6.0-rc.2` evidence |
 | `REL-010` | `VERIFIED` | Stable `v0.6.0` on commit `6786655d66ca65c5a06421c8ed70d84183722dce`; successful Release run `32130950531`; non-prerelease GitHub Release `372291445`; npm `zigcss@0.6.0` on `latest`; verified Pages/SEO and anonymous five-syntax installation |
-| Milestone 8 / `BENCH-007` | `BLOCKED` | `BENCH-001` through `BENCH-006` are verified; report/archive schema v2 now requires live fail-closed bare-metal attestation, but no qualifying Linux x64 runner is registered and no retained controlled archive exists |
+| Milestone 8 / `BENCH-007` | `DEFERRED_EXTERNAL` | `BENCH-001` through `BENCH-006` and the `BENCH-007` implementation are verified; no qualifying archive exists, claims remain withdrawn, and ADR-016 makes physical-runner evidence an optional external contribution rather than active funded scope |
 
-Stable release authority is consumed and closed. The executor must never move, delete, recreate, republish, or overwrite `v0.6.0-rc.2`, `v0.6.0`, npm `0.6.0-rc.2`, or npm `0.6.0`. Any future release requires a new owner-approved SemVer identity and is outside the current terminal. Until `BENCH-007` is verified, every comparative timing, ranking, ratio, “fastest”, or equivalent superlative claim remains withdrawn.
+Stable release authority is consumed and closed. The executor must never move, delete, recreate, republish, or overwrite `v0.6.0-rc.2`, `v0.6.0`, npm `0.6.0-rc.2`, or npm `0.6.0`. Any future release requires a new owner-approved SemVer identity and is outside the current terminal. The current autonomous program is complete under ADR-016, while every comparative timing, ranking, ratio, “fastest”, or equivalent superlative claim remains withdrawn unless optional `BENCH-007` evidence is verified later.
 
 ## 2. Executive decisions
 
@@ -41,6 +41,7 @@ The following decisions are defaults for the autonomous program. Changing one re
 8. The public compile service remains disabled or strictly isolated until its security gates pass.
 9. A self-contained release may use Zig's standard library and the host operating-system ABI, but stylesheet compilation may not require a language runtime, production package dependency, non-system language library, external executable, child process, runtime download, or network service.
 10. Autonomous progress is measured by closing a finite inventory of release gaps, not by commit count or indefinitely extending a passing numeric boundary. Hosted validation throughput is a release gate and may preempt feature breadth without weakening coverage.
+11. The current open-source program does not purchase or provision external infrastructure solely for comparative benchmark evidence. A missing controlled runner leaves `BENCH-007` deferred and all performance claims withdrawn; it does not keep the verified product program artificially active.
 
 ## 3. Autonomous execution contract
 
@@ -91,6 +92,8 @@ On 2026-07-27 the owner granted one bounded publication authorization: after `NA
 On 2026-08-02 the owner approved ADR-014 and superseded the earlier every-pass `main` integration cadence. The supervisor must still non-force push every clean green checkpoint to the approved recovery branch. It integrates `main` after four green passes, and immediately for `COMPLETE`, a release-candidate gate, or an operator-directed integration. This preserves every checkpoint remotely while giving the bounded hosted Build queue enough time to finish. No publication authority is expanded.
 
 On 2026-08-18 the owner approved ADR-015 and explicitly authorized finishing the public product presentation plus one proper stable native release. After the finite `REL-010` stable-promotion contract passes on an exact green commit already integrated to `origin/main`, the executor may deploy the existing GitHub Pages site, create and push one unused immutable `v0.6.0` tag through the fail-closed release workflow, create its non-prerelease GitHub Release, and publish exact npm `0.6.0` with provenance on `latest`. The existing `v0.6.0-rc.2` tag and npm `next` evidence may not be moved, deleted, republished, or overwritten. Homebrew, editor-extension, container-registry, service, and unrelated infrastructure publication remain excluded. `BENCH-007` retains its controlled non-emulated Linux x64 requirement and independently gates every public timing, ranking, ratio, or superlative speed claim.
+
+On 2026-08-19 the owner approved ADR-016 and declined project-funded external infrastructure for the remaining controlled benchmark. The verified stable product and all repository-owned autonomous work are complete. `BENCH-007` remains `DEFERRED_EXTERNAL`: its implementation and strict bare-metal boundary stay intact, its generated public report stays withdrawn, and it may be reopened only by an explicit future opt-in with eligible contributed hardware and registration authority. This decision authorizes no spending, runner registration, new release, publication, or relaxed performance claim.
 
 ### 3.4 Work loop
 
@@ -634,6 +637,8 @@ Target: after correctness release gates are green
 - Public claims are generated from archived results rather than manually copied.
 - Performance regression gates use statistically meaningful thresholds.
 
+ADR-016 classifies the missing physical-runner archive as optional external evidence. The repository-owned benchmark pipeline satisfies the current program scope while `BENCH-007` remains `DEFERRED_EXTERNAL` and all comparative claims remain withdrawn. These exit criteria become fully published benchmark evidence only if a future qualifying archive completes section 19.
+
 ## Milestone 9: Canonical SCSS, Sass, Less, and Stylus integration
 
 Estimated effort: 25-45 engineer days
@@ -961,6 +966,7 @@ The following decisions are captured or queued under `docs/adr/` during implemen
 - `ADR-013-self-contained-native-frontends.md`
 - `ADR-014-autonomous-convergence-and-ci-throughput.md`
 - `ADR-015-stable-promotion-and-performance-claims.md`
+- `ADR-016-open-source-completion-and-optional-benchmarks.md`
 
 ## 13. Release roadmap
 
@@ -1086,7 +1092,7 @@ The autonomous recovery program is complete when:
 - The owner-expanded native program is complete only when Milestone 10 passes on one self-contained release commit: all five languages use native Zig paths, production package dependencies are zero, compile runtime child/network/provider boundaries are absent, and cross-platform direct/archive/package/API evidence is green.
 - The finite release-gap inventory is empty, no convergence review remains open, and the final hosted validation completes within the recorded CI runtime budget.
 
-As of 2026-08-18, every definition-of-done item above is verified except the final controlled benchmark publication terminal. `REL-010` and all product/release work are closed; the program remains `IN_PROGRESS` solely because `BENCH-007` has no qualifying schedule-produced archive. That external evidence gap does not reopen compiler, documentation, packaging, site, tag, GitHub Release, or npm publication work.
+As of 2026-08-19, every repository-owned definition-of-done item above is verified. `REL-010` and all product/release work are closed. Under ADR-016, the absent schedule-produced bare-metal archive is optional external evidence rather than required funded scope, so the current autonomous program is `COMPLETE` while `BENCH-007` remains honestly `DEFERRED_EXTERNAL`. That deferral neither marks Milestone 8 verified nor permits compiler, documentation, packaging, site, tag, GitHub Release, npm publication, or performance-claim work to reopen automatically.
 
 ## 15. First autonomous sequence
 
@@ -1157,13 +1163,13 @@ Milestone 10, its immutable `0.6.0-rc.2` publication, and `REL-010` are verified
 9. Re-read live GitHub tags/releases and npm versions/dist-tags. If and only if exact `v0.6.0` and npm `0.6.0` remain unused and every pre-tag gate is verified, create and push that immutable tag once. Do not dispatch, rerun, move, delete, or recreate it.
 10. Monitor the automatically triggered workflow through all five signed target assets, non-prerelease GitHub Release creation, npm `latest` provenance publication, and bounded registry readback. A failure remains immutable evidence and requires a new owner-approved identity.
 11. After successful publication, update only post-tag evidence and public availability wording, re-run the affected gates, deploy the exact ledger checkpoint, and verify GitHub, npm, Pages, `robots.txt`, `sitemap.xml`, canonical metadata, and package installation anonymously.
-12. Keep `BENCH-007` open until its controlled archive exists. Stable `0.6.0` may close without comparative numbers, but the autonomous program and any “fastest” claim remain incomplete until that independent evidence terminal closes.
+12. Keep `BENCH-007` publication withdrawn until its controlled archive exists. Stable `0.6.0` and the current autonomous program are complete under ADR-016 without comparative numbers; any “fastest” claim and Milestone 8 verification remain unavailable until that independent evidence terminal closes.
 
 Every stable-promotion package uses the common work loop and exactly one `stable-release-promotion` family. The terminal is finite: one version, one tag, one integrated commit, five target archives, five asset classes per target, one GitHub stable release, one npm `latest` version, one Pages deployment, and one post-publication readback. No ordinal release series, alternate channel, or manually copied benchmark number is eligible.
 
-## 19. Final controlled-benchmark autonomous sequence
+## 19. Optional controlled-benchmark reopening sequence
 
-`BENCH-001` through `BENCH-006` are verified. `BENCH-007` is implemented but may advance only from the first qualifying archive produced by the schedule-only workflow on a dedicated non-emulated Linux x64 runner carrying labels `[self-hosted, linux, x64, zigcss-benchmark-v1]`. A label is routing metadata, not hardware proof: report/archive schema v2 additionally requires live `verified-bare-metal` attestation from the fixed `/usr/bin/systemd-detect-virt` detector, absent VM/container results, an absent CPU hypervisor flag, absent sysfs/container/cgroup markers, and bounded public DMI identity. Any missing, ambiguous, virtualized, or containerized signal fails before measurements enter a controlled archive. A laptop run, GitHub-hosted substitute, virtualized or emulated target, manual workflow dispatch, synthetic archive, or copied timing value is not admissible.
+`BENCH-001` through `BENCH-006` are verified. `BENCH-007` is implemented and `DEFERRED_EXTERNAL` under ADR-016. It is not active autonomous work and does not justify project-funded infrastructure. If a future owner or community contributor explicitly supplies eligible hardware and registration authority, it may advance only from the first qualifying archive produced by the schedule-only workflow on a dedicated non-emulated Linux x64 runner carrying labels `[self-hosted, linux, x64, zigcss-benchmark-v1]`. A label is routing metadata, not hardware proof: report/archive schema v2 additionally requires live `verified-bare-metal` attestation from the fixed `/usr/bin/systemd-detect-virt` detector, absent VM/container results, an absent CPU hypervisor flag, absent sysfs/container/cgroup markers, and bounded public DMI identity. Any missing, ambiguous, virtualized, or containerized signal fails before measurements enter a controlled archive. A laptop run, GitHub-hosted substitute, virtualized or emulated target, manual workflow dispatch, synthetic archive, or copied timing value is not admissible.
 
 1. Keep `benchmarks/publication.json` at `status: withdrawn` and keep `BENCHMARK_REPORT.md` as the exact generated no-claims notice until a qualifying archive exists. Do not hand-edit a public benchmark result.
 2. Accept only a successful `schedule` event from `.github/workflows/benchmarks.yml` on the exact then-current `origin/main` commit. The run must retain one artifact containing exactly the generated report and archive manifest.
@@ -1172,6 +1178,6 @@ Every stable-promotion package uses the common work loop and exactly one `stable
 5. Commit the accepted archive under `benchmarks/publications/<verified-artifact-name>/`. Update `benchmarks/publication.json` to `status: published` with that exact archive directory and immutable GitHub artifact URL, then generate `BENCHMARK_REPORT.md` only through `scripts/publish-benchmark-report.mjs`.
 6. Run benchmark statistics, archive, publication, workflow-policy, documentation, website, formatting, and diff gates. Generated copy must stay within the machine contract: experimental evidence only, with no invented ranking, ratio, or “world's fastest” claim.
 7. Commit and non-force push one coherent green `BENCH-007` checkpoint. Integrate exact `origin/main`, require matching hosted validation, deploy the ordinary Pages workflow, and anonymously verify the generated report and bounded website copy.
-8. Mark `BENCH-007`, Milestone 8, and the autonomous program `VERIFIED` only after every retained archive and hosted/public readback requirement passes on one exact commit.
+8. Mark `BENCH-007` and Milestone 8 `VERIFIED` only after every retained archive and hosted/public readback requirement passes on one exact commit. The current ADR-016 autonomous program is already complete and must not be represented as waiting on this optional contribution.
 
-If no matching runner or retained archive exists, the stable blocker code is `controlled-benchmark-archive`. Record fresh read-only evidence, make no synthetic progress commit, preserve all withdrawn claims, and leave the autonomous supervisor paused instead of spending repeated model passes on unchanged external state. Registering or provisioning the dedicated runner is an external-infrastructure action requiring an eligible non-emulated Linux x64 host, operator access, and explicit approval for any paid capacity; the benchmark boundary may not be weakened to avoid that requirement.
+If no matching runner or retained archive exists, preserve the `DEFERRED_EXTERNAL` state and all withdrawn claims, make no synthetic progress commit, and stop the autonomous supervisor with `COMPLETE` instead of emitting `controlled-benchmark-archive`. Registering or provisioning the dedicated runner remains an external-infrastructure action requiring eligible non-emulated Linux x64 hardware, operator access, and a new explicit approval for any paid capacity; the benchmark boundary may not be weakened to avoid that requirement.

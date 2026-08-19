@@ -8,9 +8,9 @@ The short operator request is only an invocation. This file, `DEVELOPMENT_PLAN.m
 
 The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `max` reasoning, limits each pass to one dependency-eligible release gap, requires a clean committed checkpoint for progress, automatically pushes and reads back that exact checkpoint on the current `vale/*` recovery branch, and only then starts the next pass. It integrates `main` after four green passes and immediately for completion or release-candidate validation, so hosted CI can finish while every checkpoint remains remotely recoverable. No subagent, child-task, alternate-model, or concurrent-lane path exists.
 
-The closed `NATIVE-007` five-target hosted-validation terminal remains a historical status-designated integration handoff. The active stable release family is also integrated immediately: every `REL-010`/`stable-release-promotion` progress checkpoint must reach `origin/main` so its hosted and immutable-release evidence can bind the exact source commit. Reductions in every unrelated family retain the ordinary four-pass batch.
+The closed `NATIVE-007` five-target hosted-validation terminal and the `REL-010` stable release family remain historical status-designated integration handoffs. Their exact checkpoints reached `origin/main`, and their hosted, artifact, provenance, npm, GitHub Release, and Pages evidence is immutable. No active release family remains.
 
-Milestone 10 and `NATIVE-009` are verified. The active `REL-010` stable-promotion sequence follows section 18 of the development plan exactly: close the machine contract and SemVer-aware workflow policy; set the stable source identity and publish truthful docs, site, and SEO; complete local validation; integrate the exact commit and complete hosted validation; create one immutable tag; verify workflow publication; then close post-publication evidence. The external `BENCH-007` scheduled-runner evidence proceeds independently and must not block the dependency-eligible `REL-010` work because comparative and superlative claims remain withdrawn until controlled evidence exists.
+Milestone 10, `NATIVE-009`, and `REL-010` are verified. Under ADR-016 the current autonomous program is complete, and `BENCH-007` is deferred external with no project-funded infrastructure. Comparative and superlative claims remain withdrawn. A normally started supervisor should perform read-only orientation, emit `COMPLETE`, and stop; future work requires an explicit roadmap amendment or an explicit section 19 opt-in with eligible contributed hardware.
 
 Run the preflight and start the background supervisor from anywhere inside the worktree:
 
@@ -42,6 +42,7 @@ bash scripts/autodevelop/orient.sh
 - Keep exactly one continuation owner active without a token budget: either the interactive persistent goal or this Bash supervisor. Never advance the same worktree manually while the supervisor is running.
 - Model passes must not push ordinary branch checkpoints. Under the operator's 2026-08-02 superseding authorization, only the outer supervisor may automatically push every verified clean checkpoint to `origin` at the current `vale/*` recovery branch and integrate `main` in batches of four, or immediately for completion and release-candidate validation.
 - The owner's 2026-08-18 stable-promotion authorization applies only to exact tag `v0.6.0`, the resulting non-prerelease GitHub Release, npm `latest`, and the existing GitHub Pages site. The tag may be created and pushed exactly once only after every pre-tag `REL-010` gate passes, `release/stable-promotion.json` reports `stableReleaseReady: true`, the exact version and tag remain unused, and the candidate commit is already integrated to `origin/main`. The same or later pass may monitor `.github/workflows/release.yml`, Pages, and the public package endpoints and record their evidence. It may not move or recreate `v0.6.0-rc.2`, move or reuse another tag, publish another npm channel, bypass a failed gate or workflow, publish Homebrew/editor-extension/container/service channels, or restore comparative performance claims without controlled `BENCH-007` evidence. Every other deployment, pull request, publication, or external-system mutation still requires new explicit authorization.
+- The owner's 2026-08-19 ADR-016 decision closes the current open-source program with no project-funded infrastructure for optional benchmark evidence. `BENCH-007` remains deferred, its report remains withdrawn, and paid capacity or runner registration requires a new explicit authorization.
 - Do not weaken tests, suppress failures, lower safety gates, or re-enable an unsafe transform to make a package green.
 - Security, parser correctness, semantic preservation, deterministic behavior, and regression evidence take priority over performance or feature count.
 
@@ -69,6 +70,8 @@ Do not fetch, rebase, merge, or consult the user's main checkout as part of orie
 ## 4. Select the next package
 
 Use the dependency graph and milestone order in `DEVELOPMENT_PLAN.md`.
+
+The current plan v1.9 has no active package. Read-only orientation must end in `COMPLETE`. The selection rules below apply only after an explicit future roadmap amendment or controlled-benchmark opt-in.
 
 - Finish a dangling coherent package before starting another.
 - Choose the smallest dependency-eligible slice that advances an exit criterion.

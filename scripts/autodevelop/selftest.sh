@@ -88,16 +88,17 @@ assert_equal "$(autodevelop_classify_pass 0 "$TMP/complete")" COMPLETE 'complete
 PROMPT_OUTPUT="$TMP/run-pass-prompt"
 bash "$HERE/run-pass.sh" --print-prompt > "$PROMPT_OUTPUT"
 assert_equal "$(grep -Fc 'Milestone 10, NATIVE-009, and the REL-010 stable v0.6.0 publication terminal are verified and closed.' "$PROMPT_OUTPUT")" 1 'prompt closes the stable publication terminal'
-assert_equal "$(grep -Fc 'Only BENCH-007 remains' "$PROMPT_OUTPUT")" 1 'prompt selects the sole remaining benchmark terminal'
-assert_equal "$(grep -Fc 'stable code controlled-benchmark-archive' "$PROMPT_OUTPUT")" 1 'prompt binds the stable external blocker'
-assert_equal "$(grep -Fc 'follow DEVELOPMENT_PLAN.md section 19 exactly' "$PROMPT_OUTPUT")" 1 'prompt follows the controlled benchmark sequence'
-assert_equal "$(grep -Fc 'report/archive schema v2' "$PROMPT_OUTPUT")" 1 'prompt requires machine-verifiable bare-metal evidence'
+assert_equal "$(grep -Fc 'The current autonomous program is complete under ADR-016' "$PROMPT_OUTPUT")" 1 'prompt closes the current autonomous program'
+assert_equal "$(grep -Fc 'BENCH-007 is deferred external' "$PROMPT_OUTPUT")" 1 'prompt defers optional controlled benchmark evidence'
+assert_equal "$(grep -Fc 'Do not provision infrastructure or spend project funds' "$PROMPT_OUTPUT")" 1 'prompt preserves the no-funded-infrastructure decision'
+assert_equal "$(grep -Fc 'emit COMPLETE after read-only orientation' "$PROMPT_OUTPUT")" 1 'prompt selects terminal completion'
+assert_equal "$(if grep -Fq 'stable code controlled-benchmark-archive' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes the inactive benchmark blocker'
 assert_equal "$(grep -Fc 'Stable publication authority was successfully consumed and closed on 2026-08-18.' "$PROMPT_OUTPUT")" 1 'prompt closes stable publication authority'
 assert_equal "$(if grep -Fq 'REL-010 stable-promotion sequence is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale stable-promotion work'
 assert_equal "$(grep -Fc 'Never move, delete, recreate, or republish `v0.6.0-rc.2`, `v0.6.0`, npm `0.6.0-rc.2`, or npm `0.6.0`' "$PROMPT_OUTPUT")" 1 'prompt preserves immutable public releases'
 assert_equal "$(grep -Fc 'A sibling search is inspection, not an automatic work queue.' "$PROMPT_OUTPUT")" 1 'prompt forbids unbounded sibling queues'
 assert_equal "$(grep -Fc 'predeclared finite terminal bound' "$PROMPT_OUTPUT")" 1 'prompt requires finite numeric bounds'
-assert_equal "$(grep -Fc 'ZIGCSS-AUTODEVELOP-GAP:' "$PROMPT_OUTPUT")" 1 'prompt requires release-gap marker'
+assert_equal "$(grep -Fc 'ZIGCSS-AUTODEVELOP-GAP:' "$PROMPT_OUTPUT")" 1 'prompt retains release-gap protocol for future progress work'
 
 autodevelop_state_set convergence-required sass-callable-reexport-depth
 CONVERGENCE_PROMPT="$TMP/run-pass-convergence-prompt"
