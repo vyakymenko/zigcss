@@ -155,6 +155,22 @@ The source-built executable is written to `zig-out/bin/zigcss` and routes all fi
 
 The installed package exports a thin launcher. It forwards the closed CLI arguments to the packaged binary, preserves exit and signal behavior, and implements no parser, evaluator, provider host, or fallback. A public programmatic JavaScript preprocessor API is not claimed by this snapshot.
 
+## Tooling integration
+
+ZigCSS 0.6.0 ships a native CLI and a thin npm launcher. It does not currently ship a JavaScript bundler plugin, loader, or Nx executor. Calling the CLI from a build script is portable, but that alone is not evidence for a tool-specific integration.
+
+| Surface | What is actually verified |
+|---|---|
+| npm scripts, CI, and shell build steps | The installed launcher invokes the checksum-verified native binary and preserves its exit or signal result. |
+| Zig Build | `helpers.addCssCompile` passes fresh consumer builds in Debug and ReleaseSafe. |
+| Vite | The website itself builds with Vite. Its local development middleware can invoke the CLI, but it is not a shipped stylesheet plugin and does not prove general Vite integration. |
+| Webpack | No official loader or end-to-end consumer test yet. |
+| Rollup | No official plugin or end-to-end consumer test yet; Vite using Rollup internally does not count. |
+| esbuild | Used as a benchmark comparator and to bundle the VS Code extension, not as a tested ZigCSS plugin. |
+| Nx | No official executor, generator, or workspace consumer test yet. |
+
+The same unverified boundary currently applies to Rspack, Turbopack, Parcel, Next.js, Nuxt, Astro, Angular, and SvelteKit. Until a real adapter and CI consumer exist, these integrations are intentionally documented as unavailable rather than implied by generic CLI compatibility.
+
 ## Zig API
 
 The stable `zigcss.compile` example remains CSS-only. It returns one owned compile result; call `deinit` exactly once.
@@ -287,7 +303,7 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 - Controlled comparative benchmark: the machine-verifiable bare-metal gate is implemented; publication is waiting for the dedicated Linux x64 runner and its scheduled archive.
 - Stable publication: verified on immutable tag `v0.6.0` at commit `6786655d66ca65c5a06421c8ed70d84183722dce`; GitHub Release, 25 signed assets, npm `latest`, SLSA provenance, preserved `next`, and anonymous five-syntax installation all passed exact readback. The immutable RC remains separate.
 
-The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.
+The completed recovery plan and its verbose execution ledger were retired after stable publication. Git history preserves the audit trail; accepted [architecture decisions](docs/adr/README.md), machine-readable native and stable-release contracts, release metadata, and executable tests remain the maintained evidence.
 
 ## Contributing
 

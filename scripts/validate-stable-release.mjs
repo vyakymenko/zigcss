@@ -9,7 +9,6 @@ export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 export const stableReleaseSourcePaths = Object.freeze([
   '.github/workflows/release.yml',
   'BENCHMARK_REPORT.md',
-  'DEVELOPMENT_PLAN.md',
   'README.md',
   'VERSION',
   'benchmarks/publication.json',
@@ -266,11 +265,7 @@ function validateSources(contract, gates, sources) {
   const expectedPaths = [...stableReleaseSourcePaths].sort()
   if (!same(actualPaths, expectedPaths)) fail('stable release source inventory drifted')
 
-  const plan = sources.get('DEVELOPMENT_PLAN.md')
   const adr = sources.get('docs/adr/ADR-015-stable-promotion-and-performance-claims.md')
-  requireText(plan, 'Plan version: 1.9', 'development plan')
-  requireText(plan, '## 18. First stable-promotion and public-evidence sequence', 'development plan')
-  requireText(plan, 'one unused immutable `v0.6.0`', 'development plan')
   requireText(adr, '- Status: Accepted', 'ADR-015')
   requireText(adr, 'must not move, delete, or recreate `v0.6.0-rc.2`', 'ADR-015')
   requireText(adr, 'controlled non-emulated Linux x64', 'ADR-015')

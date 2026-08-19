@@ -1700,7 +1700,6 @@ function validateCapabilityGraduation(
   graduation,
   productionSources,
   cliTests,
-  plan,
   readme,
   websiteSources,
   formatExamples,
@@ -1720,8 +1719,6 @@ function validateCapabilityGraduation(
   if (!same(graduation, expectedCapabilityGraduation)) {
     fail('capability graduation contract drifted')
   }
-  requireText(plan, '`NATIVE-008` | Graduate native rows in machine metadata', 'NATIVE-008 plan package')
-
   const binaryCli = new Map(productionSources).get('src/main.zig') ?? ''
   const help = binaryCli.match(/fn printUsage\(\) !void \{[\s\S]*?\n\}/)?.[0]
   if (help === undefined) fail('native binary help implementation is missing')
@@ -2002,17 +1999,11 @@ function validateCapabilityGraduation(
   }
 }
 
-function validateReleaseGraduation(release, plan, buildWorkflow, releaseWorkflow) {
+function validateReleaseGraduation(release, buildWorkflow, releaseWorkflow) {
   if (!same(release, expectedReleaseGraduation)) {
     fail('release graduation contract drifted')
   }
 
-  requireText(
-    plan,
-    '`NATIVE-009` | Select one immutable native release candidate, pass every local/hosted/release/consumer gate',
-    'NATIVE-009 roadmap release contract',
-  )
-  requireText(plan, 'Candidate: `0.6.0-rc.2`', 'NATIVE-009 selected candidate')
   for (const target of nativeTargetContract) {
     requireText(buildWorkflow, `target: ${target.target}`, `Build native target ${target.target}`)
     requireText(releaseWorkflow, `target: ${target.target}`, `Release native target ${target.target}`)
@@ -2038,7 +2029,7 @@ function validateReleaseGraduation(release, plan, buildWorkflow, releaseWorkflow
   }
 }
 
-function validateAdapter(adapter, index, plan) {
+function validateAdapter(adapter, index) {
   const label = `adapters[${index}]`
   exactKeys(adapter, ['id', 'current', 'target', 'ownerPackages', 'nativeSources'], label)
   if (adapter.id !== expectedAdapterIds[index]) {
@@ -2057,7 +2048,6 @@ function validateAdapter(adapter, index, plan) {
     if (adapter.id !== 'css' && !nativeOwnerPrefixes.some(prefix => owner.startsWith(prefix))) {
       fail(`${label} owner is outside the native roadmap: ${owner}`)
     }
-    requireText(plan, `\`${owner}\``, 'DEVELOPMENT_PLAN.md')
   }
 
   for (const source of adapter.nativeSources) repositoryFile(source)
@@ -2080,7 +2070,7 @@ function validateAdapter(adapter, index, plan) {
   }
 }
 
-function validateFoundation(foundation, index, plan) {
+function validateFoundation(foundation, index) {
   const label = `foundations[${index}]`
   exactKeys(
     foundation,
@@ -2090,12 +2080,11 @@ function validateFoundation(foundation, index, plan) {
   if (!same(foundation, expectedFoundations[index])) {
     fail(`${label} inventory drifted`)
   }
-  requireText(plan, `\`${foundation.ownerPackage}\``, 'DEVELOPMENT_PLAN.md')
   for (const source of foundation.nativeSources) repositoryFile(source)
   for (const source of foundation.testSources) repositoryFile(source)
 }
 
-function validateImplementation(implementation, index, contract, plan) {
+function validateImplementation(implementation, index, contract) {
   const label = `implementations[${index}]`
   exactKeys(
     implementation,
@@ -2116,7 +2105,6 @@ function validateImplementation(implementation, index, contract, plan) {
   if (!same(implementation, expectedImplementations[index])) {
     fail(`${label} inventory drifted`)
   }
-  requireText(plan, `\`${implementation.ownerPackage}\``, 'DEVELOPMENT_PLAN.md')
   for (const adapterId of implementation.adapters) {
     const adapter = contract.adapters.find(candidate => candidate.id === adapterId)
     if (adapter === undefined) fail(`${label} references unknown adapter ${adapterId}`)
@@ -2130,7 +2118,6 @@ function validateImplementation(implementation, index, contract, plan) {
 
 function validateProductRouting(
   routing,
-  plan,
   compilerTests,
   zigApiTests,
   cliTests,
@@ -2141,11 +2128,6 @@ function validateProductRouting(
   stylusConformanceTests,
 ) {
   if (!same(routing, expectedProductRouting)) fail('product routing contract drifted')
-  requireText(
-    plan,
-    '`NATIVE-006` | Route individually graduated native syntaxes through the Zig API, binary CLI, JavaScript wrapper, files/stdin, batch, watch, parallel, diagnostics, dependencies, and source maps without a provider process',
-    'DEVELOPMENT_PLAN.md native product routing package',
-  )
   if (!same(
     routing.terminalContract.surfaces,
     routing.routes.map(route => route.id),
@@ -2223,7 +2205,6 @@ function validateProductRouting(
 
 function validatePackageMigration(
   migration,
-  plan,
   manifest,
   packageTests,
   nodeWrapperSource,
@@ -2237,11 +2218,6 @@ function validatePackageMigration(
   productionSources,
 ) {
   if (!same(migration, expectedPackageMigration)) fail('native package migration contract drifted')
-  requireText(
-    plan,
-    '`NATIVE-007` | Remove production providers/host/runtime closure; prove zero `dependencies` and `optionalDependencies`, closed archive/package inventories, no compile child process/network/runtime data, offline installation, five native targets, SBOM, provenance, and consumer behavior',
-    'DEVELOPMENT_PLAN.md native package migration package',
-  )
   if (!same(
     migration.terminalContract.surfaces,
     migration.gates.map(gate => gate.id),
@@ -2428,7 +2404,6 @@ function validatePackageMigration(
 function validateSassEvaluatorClosure(
   closure,
   contract,
-  plan,
   sassSelection,
   sassEvaluatorSource,
   sassEvaluatorTests,
@@ -2473,11 +2448,6 @@ function validateSassEvaluatorClosure(
     }
   }
   requireText(
-    plan,
-    '`NSASS-011` | Implement Sass evaluation, mixins/functions, control flow, lists/maps, calculations/colors, `@use`/`@forward`/legacy imports, built-in modules, diagnostics, dependencies, and maps',
-    'DEVELOPMENT_PLAN.md native Sass evaluator package',
-  )
-  requireText(
     sassEvaluatorSource,
     'pub const max_callable_argument_transport_edges: u8 = 1;',
     'native Sass evaluator terminal boundary',
@@ -2499,7 +2469,6 @@ function validateSassEvaluatorClosure(
 function validateSassConformance(
   conformance,
   contract,
-  plan,
   sassSelection,
   sassManifest,
   sassConformanceTests,
@@ -2541,17 +2510,11 @@ function validateSassConformance(
       conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
     fail('native Sass conformance case accounting drifted')
   }
-  requireText(
-    plan,
-    '`NSASS-012` | Pass the pinned Sass reference corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates',
-    'DEVELOPMENT_PLAN.md native Sass conformance package',
-  )
 }
 
 function validateLessConformance(
   conformance,
   contract,
-  plan,
   selection,
   conformanceTests,
 ) {
@@ -2585,14 +2548,9 @@ function validateLessConformance(
       conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
     fail('native Less conformance case accounting drifted')
   }
-  requireText(
-    plan,
-    '`NLESS-012` | Pass the pinned Less 4.6.7 corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates',
-    'DEVELOPMENT_PLAN.md native Less conformance package',
-  )
 }
 
-function validateLessParser(selection, tests, plan) {
+function validateLessParser(selection, tests) {
   if (selection.upstream?.packageVersion !== '4.6.7' || !Array.isArray(selection.cases) ||
       selection.cases.length !== 88) {
     fail('native Less parser selection drifted')
@@ -2612,14 +2570,9 @@ function validateLessParser(selection, tests, plan) {
   ]) {
     requireText(tests, `test "${evidenceTest}"`, 'native Less parser evidence')
   }
-  requireText(
-    plan,
-    '`NLESS-010` | Implement native Less parsing for variables, nesting, mixins, guards, detached rulesets, extends, interpolation, operations, and CSS-preserving syntax behind an unavailable experimental gate',
-    'DEVELOPMENT_PLAN.md native Less parser package',
-  )
 }
 
-function validateStylusParser(manifest, selection, source, tests, plan) {
+function validateStylusParser(manifest, selection, source, tests) {
   if (manifest.upstream?.packageVersion !== '0.64.0' ||
       manifest.officialCandidateCount !== 355 ||
       manifest.officialSuccessCount !== 326 ||
@@ -2669,14 +2622,9 @@ function validateStylusParser(manifest, selection, source, tests, plan) {
     'execute project plugins or',
     'native Stylus permanent execution boundary',
   )
-  requireText(
-    plan,
-    '`NSTYLUS-010` | Implement native Stylus lexical indentation and optional punctuation, variables, properties, selectors, expressions, and CSS-preserving syntax behind an unavailable experimental gate',
-    'DEVELOPMENT_PLAN.md native Stylus parser package',
-  )
 }
 
-function validateStylusEvaluator(selection, source, tests, plan) {
+function validateStylusEvaluator(selection, source, tests) {
   const useExclusion = selection.exclusions?.find(entry => entry.name === 'bifs.use')
   if (useExclusion?.category !== 'executable-extension') {
     fail('native Stylus evaluator use() exclusion drifted')
@@ -2710,17 +2658,11 @@ function validateStylusEvaluator(selection, source, tests, plan) {
     'tests/preprocessors/stylus/corpus/files/upstream/cases/bifs.use.styl',
     'native Stylus evaluator pinned plugin boundary',
   )
-  requireText(
-    plan,
-    '`NSTYLUS-011` | Implement Stylus mixins/functions, control flow, operators, imports/globs, built-ins, diagnostics, dependencies, and maps while permanently rejecting project plugins and evaluator hooks',
-    'DEVELOPMENT_PLAN.md native Stylus evaluator package',
-  )
 }
 
 function validateStylusConformance(
   conformance,
   contract,
-  plan,
   selection,
   manifest,
   conformanceTests,
@@ -2784,14 +2726,9 @@ function validateStylusConformance(
       'native Stylus conformance terminal evidence',
     )
   }
-  requireText(
-    plan,
-    '`NSTYLUS-012` | Pass the pinned Stylus 0.64.0 corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates',
-    'DEVELOPMENT_PLAN.md native Stylus conformance package',
-  )
 }
 
-function validateLessEvaluator(source, tests, plan) {
+function validateLessEvaluator(source, tests) {
   for (const evidenceTest of [
     'native Less transaction preserves the finite plain CSS foundation',
     'native Less lazily resolves the pinned variable foundation',
@@ -2838,11 +2775,6 @@ function validateLessEvaluator(source, tests, plan) {
   ]) {
     requireText(source, permanentBoundary, 'native Less permanent execution boundary')
   }
-  requireText(
-    plan,
-    '`NLESS-011` | Implement Less lazy evaluation, imports/options, functions/colors/units, URL behavior, diagnostics, dependencies, and maps while permanently rejecting JavaScript and plugins',
-    'DEVELOPMENT_PLAN.md native Less evaluator package',
-  )
 }
 
 function validateInternalReachability(implementations, buildFile, productionSources, nodeWrapperTests) {
@@ -3226,7 +3158,6 @@ export function validateContract(
   {
     manifest = loadJson('package.json'),
     stablePromotion = loadJson('release/stable-promotion.json'),
-    plan = fs.readFileSync(repositoryFile('DEVELOPMENT_PLAN.md'), 'utf8'),
     decision = fs.readFileSync(
       repositoryFile('docs/adr/ADR-013-self-contained-native-frontends.md'),
       'utf8',
@@ -3416,7 +3347,6 @@ export function validateContract(
   validateSassEvaluatorClosure(
     contract.sassEvaluatorClosure,
     contract,
-    plan,
     sassSelection,
     sassEvaluatorSource,
     sassEvaluatorTests,
@@ -3424,17 +3354,15 @@ export function validateContract(
   validateSassConformance(
     contract.sassConformance,
     contract,
-    plan,
     sassSelection,
     sassManifest,
     sassConformanceTests,
   )
-  validateLessParser(lessSelection, lessParserTests, plan)
-  validateLessEvaluator(lessEvaluatorSource, lessEvaluatorTests, plan)
+  validateLessParser(lessSelection, lessParserTests)
+  validateLessEvaluator(lessEvaluatorSource, lessEvaluatorTests)
   validateLessConformance(
     contract.lessConformance,
     contract,
-    plan,
     lessSelection,
     lessConformanceTests,
   )
@@ -3443,25 +3371,21 @@ export function validateContract(
     stylusSelection,
     stylusParserSource,
     stylusParserTests,
-    plan,
   )
   validateStylusEvaluator(
     stylusSelection,
     stylusEvaluatorSource,
     stylusEvaluatorTests,
-    plan,
   )
   validateStylusConformance(
     contract.stylusConformance,
     contract,
-    plan,
     stylusSelection,
     stylusManifest,
     stylusConformanceTests,
   )
   validateProductRouting(
     contract.productRouting,
-    plan,
     compilerTests,
     zigApiTests,
     cliTests,
@@ -3473,7 +3397,6 @@ export function validateContract(
   )
   validatePackageMigration(
     contract.packageMigration,
-    plan,
     manifest,
     packageTests,
     nodeWrapperSource,
@@ -3490,7 +3413,6 @@ export function validateContract(
     contract.capabilityGraduation,
     productionSources,
     cliTests,
-    plan,
     readme,
     websiteSources,
     formatExamples,
@@ -3509,7 +3431,6 @@ export function validateContract(
   )
   validateReleaseGraduation(
     contract.releaseGraduation,
-    plan,
     buildWorkflow,
     releaseWorkflow,
   )
@@ -3567,11 +3488,11 @@ export function validateContract(
   }
 
   for (const [index, foundation] of contract.foundations.entries()) {
-    validateFoundation(foundation, index, plan)
+    validateFoundation(foundation, index)
   }
-  for (const [index, adapter] of contract.adapters.entries()) validateAdapter(adapter, index, plan)
+  for (const [index, adapter] of contract.adapters.entries()) validateAdapter(adapter, index)
   for (const [index, implementation] of contract.implementations.entries()) {
-    validateImplementation(implementation, index, contract, plan)
+    validateImplementation(implementation, index, contract)
   }
   validateInternalReachability(
     contract.implementations,
@@ -3581,9 +3502,6 @@ export function validateContract(
   )
   validateNativeImportClosure(contract, productionSources)
 
-  requireText(plan, 'Plan version: 1.9', 'DEVELOPMENT_PLAN.md')
-  requireText(plan, '## Milestone 10: Self-contained native stylesheet frontends', 'DEVELOPMENT_PLAN.md')
-  requireText(plan, '## 17. First self-contained-native autonomous sequence', 'DEVELOPMENT_PLAN.md')
   requireText(decision, '- Status: Accepted', 'ADR-013')
   requireText(decision, 'zero `dependencies` and zero `optionalDependencies`', 'ADR-013')
   requireText(decision, 'All tag-triggered releases are fail-closed', 'ADR-013')

@@ -19,4 +19,4 @@ Architecture Decision Records capture choices that constrain more than one work 
 | [ADR-015](ADR-015-stable-promotion-and-performance-claims.md) | Accepted | Immutable stable promotion, npm latest, Pages SEO, and evidence-bound performance claims |
 | [ADR-016](ADR-016-open-source-completion-and-optional-benchmarks.md) | Accepted | Open-source program completion with controlled benchmarks retained as optional external evidence |
 
-The remaining ADR backlog is listed in `DEVELOPMENT_PLAN.md` and will be resolved when its owning milestone becomes dependency-eligible.
+All architecture decisions required for the published 0.6.0 program are recorded above. Future product expansion requires a new scoped ADR and executable evidence rather than reopening the retired roadmap.

@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No later stable identity is selected.
 
+### Changed
+
+- Retire the completed autonomous roadmap, verbose execution ledger, stopped runner, and obsolete prototype fixtures after stable publication; Git history retains the full audit trail while ADRs and machine-readable release contracts remain maintained.
+- Document the exact tooling boundary: the native CLI and Zig build helper are verified, the website's Vite usage is not a public ZigCSS plugin, and Webpack, Rollup, esbuild, Nx, and framework-specific adapters remain unimplemented and unclaimed.
+
 ## [0.6.0] - 2026-08-18
 
 Released as immutable tag `v0.6.0`, non-prerelease GitHub Release `372291445`, and `zigcss@0.6.0` on npm `latest` with provenance.

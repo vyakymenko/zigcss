@@ -69,8 +69,15 @@ function run(command, args, options, label) {
 }
 
 export function trackedMarkdownFiles(root = repositoryRoot) {
-  const result = run('git', ['ls-files', '-z', '--', '*.md'], { cwd: root }, 'tracked Markdown inventory')
-  return result.stdout.split('\0').filter(Boolean).sort()
+  const result = run(
+    'git',
+    ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.md'],
+    { cwd: root },
+    'Markdown inventory',
+  )
+  return [...new Set(result.stdout.split('\0').filter(relativePath => (
+    relativePath.length !== 0 && fs.existsSync(path.join(root, relativePath))
+  )))].sort()
 }
 
 export function extractFences(content, source = '<memory>') {

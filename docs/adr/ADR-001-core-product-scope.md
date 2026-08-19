@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-11
 - Owners: ZigCSS project owner and autonomous implementation agent
-- Roadmap: Milestones 0-8 in `DEVELOPMENT_PLAN.md`
+- Program: completed 0.4-0.6 recovery roadmap, preserved in Git history
 
 ## Context
 

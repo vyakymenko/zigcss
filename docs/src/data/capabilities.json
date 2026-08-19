@@ -439,11 +439,11 @@
     },
     {
       "id": "alternate-ecosystem-formats",
-      "surface": "Other ecosystem adapters",
+      "surface": "JavaScript build-tool adapters",
       "status": "Unavailable",
       "statusKind": "unavailable",
-      "behavior": "CSS-in-JS, PostCSS-like, Tailwind-like, arbitrary provider plugins, and trusted-project-code adapters remain outside the public compiler contract.",
-      "evidence": ["format-matrix", "cli-safety"]
+      "behavior": "No public Webpack loader, Rollup or Vite plugin, esbuild plugin, or Nx executor is shipped or end-to-end tested. The website's Vite development middleware is internal and does not establish bundler compatibility. CSS-in-JS, PostCSS-like, Tailwind-like, arbitrary provider plugins, and trusted-project-code adapters also remain outside the contract.",
+      "evidence": ["format-matrix", "cli-safety", "documentation"]
     },
     {
       "id": "lsp",

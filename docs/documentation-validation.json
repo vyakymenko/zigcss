@@ -8,12 +8,5 @@
   "cssModuleDocuments": [
     "docs/src/content/docs/guide/css-modules.md"
   ],
-  "nonExecutableFences": [
-    {
-      "path": "DEVELOPMENT_PLAN.md",
-      "language": "zig",
-      "sha256": "01fa1111b82bd5f26e62c3078584f1b919940fc231b462a90013a36ca71ec49b",
-      "reason": "The approved roadmap labels this as an evolving public API shape, not a copyable implementation example."
-    }
-  ]
+  "nonExecutableFences": []
 }

@@ -22,17 +22,6 @@ const binaryPath = path.join(
 )
 const runtime = Object.freeze({ binaryPath, runCore: runZigCssCore, runHost: runPreprocessorHost })
 
-test('root npm API entrypoint exposes only the supported compile contract', async () => {
-  const api = await import('../../../api.mjs')
-  assert.deepEqual(Object.keys(api).sort(), [
-    'SUPPORTED_SYNTAXES',
-    'ZigCssCompileError',
-    'compileFile',
-    'compileString',
-    'detectSyntax',
-  ])
-})
-
 test('npm API routes CSS directly through the native core', async () => {
   const result = await compileStringWithRuntime(
     '.card { color: red; }',

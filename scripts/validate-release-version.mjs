@@ -12,7 +12,6 @@ export const releaseSourcePaths = Object.freeze([
   '.github/workflows/build.yml',
   '.github/workflows/release.yml',
   'CHANGELOG.md',
-  'DEVELOPMENT_PLAN.md',
   'Dockerfile',
   'Dockerfile.docs',
   'Dockerfile.release',
@@ -126,13 +125,6 @@ export function validateReleaseSources(sources) {
   const version = parsed.value
   const vscodeVersion = parsed.base
 
-  const planTarget = singleCapture(
-    sources.get('DEVELOPMENT_PLAN.md'),
-    /## Milestone 10:[\s\S]*?\nCandidate: `([^`]+)`/g,
-    'Milestone 10 release candidate',
-  )
-  parseReleaseVersion(planTarget, 'Milestone 10 candidate')
-
   const rootManifest = parseJson(sources, 'package.json')
   const rootLock = parseJson(sources, 'package-lock.json')
   const docsManifest = parseJson(sources, 'docs/package.json')
@@ -141,6 +133,8 @@ export function validateReleaseSources(sources) {
   const vscodeLock = parseJson(sources, 'vscode-extension/package-lock.json')
   const nativeContract = parseJson(sources, 'tests/preprocessors/native/contract.json')
   const stablePromotion = parseJson(sources, 'release/stable-promotion.json')
+  const historicalCandidate = nativeContract.releaseGraduation?.candidateVersion
+  parseReleaseVersion(historicalCandidate, 'native historical candidate')
 
   expectEqual(rootManifest.name, 'zigcss', 'root npm package name')
   expectEqual(rootManifest.version, version, 'root npm package version')
@@ -153,9 +147,8 @@ export function validateReleaseSources(sources) {
   expectEqual(vscodeLock.version, vscodeVersion, 'VS Code lock version')
   expectEqual(vscodeLock.packages?.['']?.version, vscodeVersion, 'VS Code lock package version')
   expectEqual(nativeContract.referenceCandidate, '0.5.0-rc.1', 'native reference candidate')
-  expectEqual(stablePromotion.previousPrerelease?.version, planTarget, 'Milestone 10 candidate')
-  expectEqual(nativeContract.releaseGraduation?.candidateVersion, planTarget, 'native historical candidate version')
-  expectEqual(nativeContract.releaseGraduation?.candidateTag, `v${planTarget}`, 'native historical candidate tag')
+  expectEqual(stablePromotion.previousPrerelease?.version, historicalCandidate, 'native historical candidate version')
+  expectEqual(nativeContract.releaseGraduation?.candidateTag, `v${historicalCandidate}`, 'native historical candidate tag')
   expectEqual(
     nativeContract.releaseGraduation?.gates?.find(gate => gate.id === 'immutable-candidate')?.state,
     'verified',
@@ -168,13 +161,13 @@ export function validateReleaseSources(sources) {
   )
   expectEqual(nativeContract.state, 'native-graduated', 'native migration state')
   expectEqual(nativeContract.nativeReleaseReady, true, 'native release interlock')
-  expectEqual(nativeContract.nativeReleaseVersion, planTarget, 'graduated native release version')
+  expectEqual(nativeContract.nativeReleaseVersion, historicalCandidate, 'graduated native release version')
   expectEqual(nativeContract.releaseGraduation?.state, 'closed', 'native release candidate state')
   expectEqual(nativeContract.releaseGraduation?.packageState, 'verified', 'native publication state')
   expectEqual(stablePromotion.candidateVersion, parsed.base, 'stable promotion candidate version')
   expectEqual(stablePromotion.candidateTag, `v${parsed.base}`, 'stable promotion candidate tag')
   if (parsed.prerelease !== null) {
-    expectEqual(version, planTarget, 'prerelease VERSION')
+    expectEqual(version, historicalCandidate, 'prerelease VERSION')
     expectEqual(stablePromotion.previousPrerelease?.version, version, 'stable promotion previous prerelease')
   } else {
     expectEqual(stablePromotion.candidateVersion, version, 'active stable promotion version')
@@ -264,7 +257,7 @@ export function validateReleaseSources(sources) {
   expectContains(capabilityById.get('zig-package')?.behavior ?? '', `Package \`zigcss\` ${version}`, 'Zig package capability')
   const vscodeBehavior = capabilityById.get('vscode')?.behavior ?? ''
   expectContains(vscodeBehavior, `Marketplace version ${vscodeVersion}`, 'VS Code capability')
-  expectContains(vscodeBehavior, `core ${planTarget}`, 'VS Code capability')
+  expectContains(vscodeBehavior, `core ${historicalCandidate}`, 'VS Code capability')
   expectContains(vscodeBehavior, 'pre-release marker', 'VS Code capability')
   expectEqual(capabilityMetadata.gates?.['release-version']?.command, 'npm run check:version', 'release-version evidence gate')
 

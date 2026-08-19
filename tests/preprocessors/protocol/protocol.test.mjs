@@ -71,7 +71,7 @@ test('host core has no outbound network, shell, eval, or ambient module-loading 
   assert.doesNotMatch(runner, /exec(?:File|Sync)?\s*\(|spawnSync\s*\(/)
 })
 
-test('protocol documentation publishes the wire, limit, lifecycle, and graduated availability boundaries', () => {
+test('protocol documentation publishes the wire, limit, lifecycle, and reference-only availability boundaries', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'one-request-per-process protocol',
@@ -81,7 +81,9 @@ test('protocol documentation publishes the wire, limit, lifecycle, and graduated
     '20 MiB UTF-8',
     '`shell: false`',
     'strips `PATH`, `HOME`, `NODE_OPTIONS`, and `NODE_PATH`',
-    '`PRE-008` graduates all four canonical rows',
+    'development-only reference oracle',
+    'Stable 0.6 compilation uses the self-contained native Zig frontends',
+    'excluded from package files and runtime compilation',
     'never command arguments or shell text',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))

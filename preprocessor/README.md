@@ -1,6 +1,6 @@
-# ZigCSS canonical preprocessor host
+# ZigCSS canonical preprocessor reference host
 
-Status: `PRE-002` through `PRE-006`, `SASS-010` through `SASS-012`, `LESS-010` through `LESS-012`, and `STYLUS-010` through `STYLUS-012` are verified. SCSS, indented Sass, Less, and Stylus have passed exact-provider, confined-import, pinned-corpus, negative, limit, determinism, generated-CSS, CLI/API, batch/watch, package, platform, and consumer gates. `PRE-008` graduates all four canonical rows in the 0.5 development snapshot; those package bytes remain unpublished until the separately authorized release step.
+Status: development-only reference oracle. `PRE-002` through `PRE-006`, `SASS-010` through `SASS-012`, `LESS-010` through `LESS-012`, and `STYLUS-010` through `STYLUS-012` were verified for the unpublished 0.5 snapshot. Stable 0.6 compilation uses the self-contained native Zig frontends; this Node host, its providers, and its former JavaScript API/CLI are excluded from package files and runtime compilation.
 
 ## Wire contract
 

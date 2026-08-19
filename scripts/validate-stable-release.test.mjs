@@ -58,7 +58,7 @@ test('rejects stable identity, history, channel, target, and gate drift', () => 
   }
 })
 
-test('binds native prerelease, zero-dependency, benchmark, plan, and workflow evidence', () => {
+test('binds native prerelease, zero-dependency, benchmark, policy, and workflow evidence', () => {
   assert.throws(
     () => validateStableReleaseContract(
       readStableReleaseContract(),

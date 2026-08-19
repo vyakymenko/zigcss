@@ -28,7 +28,7 @@ describe('Features', () => {
     expect(screen.getByText('Indented Sass input')).toBeInTheDocument()
     expect(screen.getByText('Less input')).toBeInTheDocument()
     expect(screen.getByText('Stylus input')).toBeInTheDocument()
-    expect(screen.getByText('Other ecosystem adapters')).toBeInTheDocument()
+    expect(screen.getByText('JavaScript build-tool adapters')).toBeInTheDocument()
     expect(screen.getAllByText(/experimental/i).length).toBeGreaterThan(1)
   })
 

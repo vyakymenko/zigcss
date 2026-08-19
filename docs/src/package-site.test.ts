@@ -122,4 +122,23 @@ describe('consumer package website', () => {
     expect(showcase).toMatch(/recorded compiler output/i)
     expect(showcase).toMatch(/format-examples\.json/)
   })
+
+  test('does not imply untested JavaScript build-tool integrations', () => {
+    const manifest = JSON.parse(read('package.json'))
+    const readme = read('README.md')
+    const status = read('docs/src/content/docs/guide/status.md')
+
+    expect(manifest.exports).toEqual({
+      '.': './index.js',
+      './package.json': './package.json',
+    })
+    expect(fs.existsSync(path.join(repoRoot, 'api.mjs'))).toBe(false)
+    for (const tool of ['Webpack', 'Rollup', 'Vite', 'esbuild', 'Nx']) {
+      expect(readme).toContain(tool)
+      expect(status).toContain(tool)
+    }
+    expect(readme).toMatch(/No official loader or end-to-end consumer test yet/i)
+    expect(readme).toMatch(/Vite using Rollup internally does not count/i)
+    expect(status).toMatch(/no official or end-to-end-tested Webpack loader/i)
+  })
 })

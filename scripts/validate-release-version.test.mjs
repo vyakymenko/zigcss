@@ -28,7 +28,7 @@ test('all release, package, runtime, editor, container, formula, and documentati
   assert.deepEqual(validateReleaseVersion(), {
     version: '0.6.0',
     vscodeVersion: '0.6.0',
-    surfaces: 35,
+    surfaces: 34,
   })
 })
 
@@ -46,9 +46,6 @@ test('canonical versions and release tags fail closed', () => {
   assert.equal(validateReleaseTag('0.6.0', 'v0.6.0'), true)
   assert.throws(() => validateReleaseTag('0.6.0', 'v0.6.0-rc.2'), /release tag must be v0\.6\.0/)
 
-  const plan = cloneSources()
-  replace(plan, 'DEVELOPMENT_PLAN.md', 'Candidate: `0.6.0-rc.2`', 'Candidate: `0.6.0-rc.3`')
-  assert.throws(() => validateReleaseSources(plan), /Milestone 10 candidate/)
 })
 
 test('manifest, lockfile, Zig, CLI, and Marketplace mapping drift fails closed', () => {
@@ -179,7 +176,7 @@ test('release source inventory normalizes checkout CRLF and rejects bare carriag
     assert.deepEqual(validateReleaseVersion(temporary), {
       version: '0.6.0',
       vscodeVersion: '0.6.0',
-      surfaces: 35,
+      surfaces: 34,
     })
 
     fs.writeFileSync(path.join(temporary, 'VERSION'), '0.6.0\r')

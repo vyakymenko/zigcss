@@ -16,7 +16,7 @@ npm run check:stable-release
 npm run test:npm-publication
 ```
 
-Release run `32130950531` completed successfully on attempt 1. Exact `0.6.0`, `dist-tags.latest`, retained `dist-tags.next`, provenance, the 25-asset GitHub inventory, and anonymous five-syntax installation are recorded in `release/stable-promotion.json` and `DEVELOPMENT_STATUS.md`.
+Release run `32130950531` completed successfully on attempt 1. Exact `0.6.0`, `dist-tags.latest`, retained `dist-tags.next`, provenance, the 25-asset GitHub inventory, and anonymous five-syntax installation are recorded in the maintained `release/stable-promotion.json` machine contract.
 
 ## Published release-candidate evidence
 

@@ -4,7 +4,7 @@
 - Date: 2026-07-11
 - Amended: 2026-08-08
 - Owners: ZigCSS project owner
-- Roadmap: Autonomous execution of `DEVELOPMENT_PLAN.md`
+- Program: completed autonomous recovery roadmap, preserved in Git history
 
 ## Context
 
@@ -18,12 +18,14 @@ Repository scripts can preserve the work loop and reconstruct evidence, but they
 - Use one implementation agent for code, tests, decisions, ledger updates, and checkpoints.
 - No fallback model, subagent, delegated child task, or parallel implementation lane may continue the approved goal.
 - The active agent verifies the runtime model before modifying code at autonomous start and after any runtime/session change that makes model identity uncertain.
-- `DEVELOPMENT_STATUS.md` records the verified execution model and worktree.
-- `scripts/autodevelop/orient.sh` reports the model recorded in the ledger but explicitly states that the active Codex runtime must verify actual selection.
+- During the active program, the durable execution ledger recorded the verified execution model and isolated worktree.
+- The repository-owned orientation script reported that recorded model while requiring the active Codex runtime to verify actual selection.
 - If the approved model is unavailable or cannot be verified, stop before further code changes, preserve the worktree, update the ledger with the condition, and request restoration of the approved runtime.
-- The persistent goal has no token budget and continues until the roadmap is complete or a true blocker satisfies the Codex goal-blocking rules.
+- The persistent goal had no token budget and continued until ADR-016 closed the repository-owned roadmap.
 
 This requirement governs autonomous implementation, not deterministic local tools. Compilers, tests, formatters, documentation builds, artifact inspectors, and read-only scripts may run normally.
+
+ADR-016 closed the autonomous program. Its verbose ledger and stopped supervisor were retired after stable publication; Git history preserves their exact implementation and evidence. This ADR remains the historical authority for any future owner-approved autonomous program.
 
 ## Consequences
 

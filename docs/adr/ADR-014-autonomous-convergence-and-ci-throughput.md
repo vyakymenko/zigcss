@@ -16,7 +16,7 @@ Green local commits and rising test counts are valuable evidence, but they are n
 
 ZigCSS autonomous development is release-gap directed.
 
-1. `DEVELOPMENT_STATUS.md` owns a finite release-gap inventory. Each item maps a stable family code to a milestone exit criterion, dependencies, required evidence, and a closure condition.
+1. During the active program, the durable execution ledger owned a finite release-gap inventory. Each item mapped a stable family code to a milestone exit criterion, dependencies, required evidence, and a closure condition.
 2. Every `PROGRESS` result identifies one work package, one stable lowercase-kebab family, and whether the pass `REDUCED` or `CLOSED` it.
 3. A family may receive at most four consecutive `REDUCED` passes. The next pass is a convergence review and must close the same family by declaring and testing a finite terminal contract, consolidating equivalent evidence, or proving the exit criterion already satisfies it. Renaming the same underlying family does not reset the threshold.
 4. Numeric or ordinal `N+1` work requires a terminal bound derived before implementation from a specification, pinned provider, closed data set, or explicit resource policy. Representative lower/terminal/over-limit tests and generated parameterization are preferred to one cloned fixture per intermediate number.
@@ -37,6 +37,8 @@ ZIGCSS-AUTODEVELOP-GAP: <work-package> <stable-family> <REDUCED|CLOSED>
 Malformed or missing progress metadata is a runner error. The supervisor stores family identity and count outside Git under confined `.autodevelop/state`. At the threshold it injects a convergence-review contract into the next model prompt; another reduction or a different family cannot be accepted as progress until the required family closes.
 
 The workflow validator rejects missing Build concurrency, a duplicate focused native invocation in the aggregate job, loss of the single complete root test command, or removal of any native runner from the root Zig test graph. The autonomous selftest exercises marker validation, threshold state, forced closure, recovery-only push, and batched-main contracts without a model call or production remote.
+
+ADR-016 closed the autonomous program. The ledger, local supervisor, and its selftest were retired after stable publication; their exact bytes remain in Git history. The CI throughput and single-root-test-graph requirements remain active repository policy.
 
 ## Consequences
 
