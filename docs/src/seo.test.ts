@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { generateSeoPages, routeMetadata } from '../scripts/generate-seo-pages.mjs'
+import { generateSeoPages, routeAliases, routeMetadata } from '../scripts/generate-seo-pages.mjs'
 
 const docsRoot = path.resolve(import.meta.dirname, '..')
 const temporaryRoots: string[] = []
@@ -38,6 +38,14 @@ describe('search discovery contract', () => {
       '/docs/guide/recovery-cli/',
     ])
     expect(new Set(routeMetadata.map(route => route.canonicalPath)).size).toBe(routeMetadata.length)
+    expect(routeAliases).toEqual([
+      {
+        outputPath: '/docs/',
+        canonicalPath: '/docs/guide/status/',
+        title: 'ZigCSS documentation',
+        description: 'Open the evidence-backed ZigCSS documentation and current capability status.',
+      },
+    ])
   })
 
   test('base HTML exposes stable software metadata without an invented rating or speed claim', () => {
@@ -64,7 +72,7 @@ describe('search discovery contract', () => {
     const root = temporaryBuildRoot()
     const result = generateSeoPages(root)
 
-    expect(result).toEqual({ pages: 9, sitemapUrls: 9 })
+    expect(result).toEqual({ pages: 10, sitemapUrls: 9 })
     for (const route of routeMetadata) {
       const output = route.canonicalPath === '/'
         ? path.join(root, 'dist', 'index.html')
@@ -83,6 +91,12 @@ describe('search discovery contract', () => {
       expect(sitemap).toContain(`<loc>https://vyakymenko.github.io/zigcss${route.canonicalPath}</loc>`)
     }
     expect(sitemap).not.toMatch(/<priority>|<changefreq>/)
+
+    const docsAlias = fs.readFileSync(path.join(root, 'dist', 'docs', 'index.html'), 'utf8')
+    expect(docsAlias).toContain('<title>ZigCSS documentation</title>')
+    expect(docsAlias).toContain('<link rel="canonical" href="https://vyakymenko.github.io/zigcss/docs/guide/status/" />')
+    expect(docsAlias).toContain('<meta name="robots" content="noindex,follow" />')
+    expect(sitemap).not.toContain('<loc>https://vyakymenko.github.io/zigcss/docs/</loc>')
   })
 
   test('fails closed on duplicate metadata instead of emitting conflicting canonicals', () => {

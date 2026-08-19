@@ -256,7 +256,7 @@ function Deploy() {
         </div>
 
         <nav className="mt-12 grid border-y border-[#b7f34a]/15 sm:grid-cols-2 lg:grid-cols-6" aria-label="Project destinations">
-          <Link className="deploy-link" to="/docs">Docs</Link>
+          <Link className="deploy-link" to="/docs/guide/status">Docs</Link>
           <Link className="deploy-link" to="/getting-started">Get started</Link>
           <a className="deploy-link" href="https://github.com/vyakymenko/zigcss" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a className="deploy-link" href="https://www.npmjs.com/package/zigcss" target="_blank" rel="noopener noreferrer">npm</a>

@@ -54,6 +54,15 @@ export const routeMetadata = Object.freeze([
   },
 ])
 
+export const routeAliases = Object.freeze([
+  {
+    outputPath: '/docs/',
+    canonicalPath: '/docs/guide/status/',
+    title: 'ZigCSS documentation',
+    description: 'Open the evidence-backed ZigCSS documentation and current capability status.',
+  },
+])
+
 function fail(message) {
   throw new Error(`SEO page generation: ${message}`)
 }
@@ -89,7 +98,7 @@ function readBoundedIndex(distRoot) {
   return source
 }
 
-function renderRoute(baseHtml, route) {
+function renderRoute(baseHtml, route, robots = 'index,follow,max-image-preview:large') {
   const canonical = `${siteOrigin}${route.canonicalPath}`
   const title = escapeHtml(route.title)
   const description = escapeHtml(route.description)
@@ -112,6 +121,7 @@ function renderRoute(baseHtml, route) {
   html = replaceOnce(html, /<meta property="og:url" content="[^"]*"\s*\/?>/, `<meta property="og:url" content="${canonical}" />`, 'Open Graph URL')
   html = replaceOnce(html, /<meta name="twitter:title" content="[^"]*"\s*\/?>/, `<meta name="twitter:title" content="${title}" />`, 'Twitter title')
   html = replaceOnce(html, /<meta name="twitter:description" content="[^"]*"\s*\/?>/, `<meta name="twitter:description" content="${description}" />`, 'Twitter description')
+  html = replaceOnce(html, /<meta\s+name="robots"\s+content="[^"]*"\s*\/?>/, `<meta name="robots" content="${robots}" />`, 'robots policy')
   return html
 }
 
@@ -134,6 +144,11 @@ export function generateSeoPages(docsRoot = defaultDocsRoot) {
     writeAtomically(output, renderRoute(baseHtml, route))
   }
 
+  for (const alias of routeAliases) {
+    const output = path.join(distRoot, alias.outputPath.slice(1), 'index.html')
+    writeAtomically(output, renderRoute(baseHtml, alias, 'noindex,follow'))
+  }
+
   const sitemap = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -146,7 +161,7 @@ export function generateSeoPages(docsRoot = defaultDocsRoot) {
     '',
   ].join('\n')
   writeAtomically(path.join(distRoot, 'sitemap.xml'), sitemap)
-  return { pages: routeMetadata.length, sitemapUrls: routeMetadata.length }
+  return { pages: routeMetadata.length + routeAliases.length, sitemapUrls: routeMetadata.length }
 }
 
 function main() {

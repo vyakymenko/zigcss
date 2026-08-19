@@ -16,7 +16,7 @@ ZigCSS is a self-contained native Zig compiler for CSS, SCSS, indented Sass, Les
 
 The current source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. All five machine rows are `native-graduated`; executable plugin parity remains outside the contract.
 
-[Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
+[Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started/) · [Documentation](https://vyakymenko.github.io/zigcss/docs/guide/status/) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
 > **Stable package identity: 0.6.0 — published.** npm `latest` serves `zigcss@0.6.0`, and the matching non-prerelease [GitHub Release](https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0) carries 25 signed release assets. The immutable `0.6.0-rc.2` prerelease remains on `next` as historical release evidence.
 

@@ -6,7 +6,7 @@ const navigation = [
   { label: "Convergence", path: "/#convergence" },
   { label: "Manifesto", path: "/#manifesto" },
   { label: "Lab", path: "/#formats" },
-  { label: "Docs", path: "/docs" },
+  { label: "Docs", path: "/docs/guide/status", activePrefix: "/docs" },
   { label: "Install", path: "/getting-started" },
 ] as const;
 
@@ -84,9 +84,10 @@ export function Root() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [mobileNavOpen]);
 
-  const isActive = (path: string) => {
+  const isActive = (path: string, activePrefix?: string) => {
     const [pathname, hash = ""] = path.split("#");
     if (hash) return location.pathname === pathname && location.hash === `#${hash}`;
+    if (activePrefix) return location.pathname.startsWith(activePrefix);
     return path === "/" ? location.pathname === "/" && !location.hash : location.pathname.startsWith(path);
   };
 
@@ -112,10 +113,10 @@ export function Root() {
               <Link
                 key={item.path}
                 to={item.path}
-                aria-current={isActive(item.path) ? "page" : undefined}
+                aria-current={isActive(item.path, "activePrefix" in item ? item.activePrefix : undefined) ? "page" : undefined}
                 onClick={() => handleNavigationClick(item.path)}
                 className={`whitespace-nowrap px-3 py-2 text-[10px] uppercase tracking-[0.1em] transition sm:px-4 sm:text-xs ${
-                  isActive(item.path)
+                  isActive(item.path, "activePrefix" in item ? item.activePrefix : undefined)
                     ? "text-[#b7f34a]"
                     : "text-[#748272] hover:text-[#eef5ec]"
                 }`}
@@ -157,10 +158,10 @@ export function Root() {
               <Link
                 key={item.path}
                 to={item.path}
-                aria-current={isActive(item.path) ? "page" : undefined}
+                aria-current={isActive(item.path, "activePrefix" in item ? item.activePrefix : undefined) ? "page" : undefined}
                 onClick={() => handleNavigationClick(item.path)}
                 className={`group flex min-h-12 items-center justify-between border-b border-[#b7f34a]/12 px-2 text-xs uppercase tracking-[0.13em] transition ${
-                  isActive(item.path)
+                  isActive(item.path, "activePrefix" in item ? item.activePrefix : undefined)
                     ? "text-[#b7f34a]"
                     : "text-[#9aa697] hover:border-[#b7f34a]/45 hover:text-[#eef5ec]"
                 }`}

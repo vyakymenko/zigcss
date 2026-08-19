@@ -15,7 +15,7 @@ No later stable identity is selected.
 
 - Retire the completed autonomous roadmap, verbose execution ledger, stopped runner, and obsolete prototype fixtures after stable publication; Git history retains the full audit trail while ADRs and machine-readable release contracts remain maintained.
 - Document the exact tooling boundary: the native CLI and Zig build helper are verified, the website's Vite usage is not a public ZigCSS plugin, and Webpack, Rollup, esbuild, Nx, and framework-specific adapters remain unimplemented and unclaimed.
-- Replace the overflowing small-screen header links with an accessible mobile navigation panel, restore canonical and reload-safe hash links plus sticky-header scrolling, keep every primary destination keyboard reachable, and render a branded fallback instead of a blank first-load frame.
+- Replace the overflowing small-screen header links with an accessible mobile navigation panel, restore canonical and reload-safe hash links plus sticky-header scrolling, keep every primary destination keyboard reachable, serve the legacy `/docs` entry point without an HTTP 404, and render a branded fallback instead of a blank first-load frame.
 
 ## [0.6.0] - 2026-08-18
 

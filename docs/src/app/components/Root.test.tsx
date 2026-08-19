@@ -14,7 +14,7 @@ describe('Root chrome', () => {
     expect(screen.getByRole('link', { name: 'Convergence' })).toHaveAttribute('href', '/#convergence')
     expect(screen.getByRole('link', { name: 'Manifesto' })).toHaveAttribute('href', '/#manifesto')
     expect(screen.getByRole('link', { name: 'Lab' })).toHaveAttribute('href', '/#formats')
-    expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs')
+    expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs/guide/status')
     expect(screen.getByRole('link', { name: 'Install' })).toHaveAttribute('href', '/getting-started')
   })
 
@@ -25,6 +25,12 @@ describe('Root chrome', () => {
     expect(screen.getByRole('link', { name: 'Convergence' })).toHaveAttribute('href', '/zigcss/#convergence')
     expect(screen.getByRole('link', { name: 'Manifesto' })).toHaveAttribute('href', '/zigcss/#manifesto')
     expect(screen.getByRole('link', { name: 'Lab' })).toHaveAttribute('href', '/zigcss/#formats')
+  })
+
+  it('keeps Docs active throughout the nested documentation routes', () => {
+    render(<MemoryRouter initialEntries={['/docs/guide/css-compatibility']}><Root /></MemoryRouter>)
+
+    expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('closes with the canonical honesty line and experimental status', () => {
@@ -50,7 +56,7 @@ describe('Root chrome', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(menu).not.toHaveAttribute('hidden')
     expect(within(menu as HTMLElement).getByRole('link', { name: 'Lab' })).toHaveAttribute('href', '/#formats')
-    expect(within(menu as HTMLElement).getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs')
+    expect(within(menu as HTMLElement).getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs/guide/status')
     expect(within(menu as HTMLElement).getByRole('link', { name: 'Install' })).toHaveAttribute('href', '/getting-started')
     expect(within(menu as HTMLElement).getByRole('link', { name: /GitHub/i })).toHaveAttribute('href', 'https://github.com/vyakymenko/zigcss')
 
