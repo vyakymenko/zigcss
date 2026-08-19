@@ -122,7 +122,7 @@ export function Convergence() {
   }, []);
 
   return (
-    <section ref={sectionRef} id="convergence" className="convergence-section gate-section relative overflow-hidden bg-[#0b110d] text-[#eef5ec]" aria-labelledby="convergence-title">
+    <section ref={sectionRef} id="convergence" className="convergence-section gate-section relative scroll-mt-20 overflow-hidden bg-[#0b110d] text-[#eef5ec]" aria-labelledby="convergence-title">
       <div className="mx-auto max-w-[96rem] px-5 py-28 sm:px-8 md:py-40 lg:px-12">
         <p className="gate-label">── GATE 01 · THE CONVERGENCE ──</p>
         <h2 id="convergence-title" className="display-type mt-7 max-w-6xl text-[clamp(3.3rem,8vw,8.5rem)] leading-[0.82] tracking-[-0.075em]">

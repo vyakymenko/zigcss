@@ -32,7 +32,7 @@ export function FormatShowcase() {
   };
 
   return (
-    <section id="formats" className="lab-section gate-section site-grid bg-[#0b110d] text-[#eef5ec]" aria-labelledby="format-lab-title">
+    <section id="formats" className="lab-section gate-section site-grid scroll-mt-20 bg-[#0b110d] text-[#eef5ec]" aria-labelledby="format-lab-title">
       <div className="mx-auto max-w-[96rem] px-5 py-28 sm:px-8 md:py-40 lg:px-12">
         <p className="gate-label">── GATE 06 · RECORDED COMPILER LAB ──</p>
         <div className="mt-7 grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-end">

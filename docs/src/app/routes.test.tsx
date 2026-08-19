@@ -1,14 +1,23 @@
+import { render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
-import { router } from './routes'
+import { RouteFallback, router } from './routes'
 
 describe('router', () => {
   it('uses the GitHub Pages project basename', () => {
-    expect(router.basename).toBe('/zigcss')
+    expect(router.basename).toBe('/zigcss/')
   })
 
   it('has root route with path /', () => {
     const root = router.routes[0]
     expect(root.path).toBe('/')
+  })
+
+  it('renders a branded initial-route fallback instead of a blank frame', () => {
+    const root = router.routes[0]
+
+    expect(root.hydrateFallbackElement).toBeDefined()
+    render(<RouteFallback />)
+    expect(screen.getByRole('status', { name: 'Loading ZigCSS' })).toHaveTextContent('Loading route')
   })
 
   it('has index route', () => {

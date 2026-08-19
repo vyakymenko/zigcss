@@ -64,7 +64,7 @@ function Manifesto() {
   const digest = deterministicDigest(deterministicFixture);
 
   return (
-    <section id="manifesto" className="manifesto bg-[#0b110d] text-[#eef5ec]" aria-label="Compiler manifesto">
+    <section id="manifesto" className="manifesto scroll-mt-20 bg-[#0b110d] text-[#eef5ec]" aria-label="Compiler manifesto">
       <article className="manifesto-panel gate-section">
         <div className="manifesto-inner">
           <p className="gate-label">── GATE 02 · FAIL-CLOSED SECURITY ──</p>
