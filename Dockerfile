@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 ARG ZIGCSS_VERSION=0.6.0
 LABEL org.opencontainers.image.title="ZigCSS" \
