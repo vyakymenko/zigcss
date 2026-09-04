@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import {
+  createLiveWorkspace,
   expectedDevelopmentCompilerVersion,
   finishSmoke,
   hasObservedRootInputRebuild,
@@ -11,6 +12,18 @@ import {
   validateContainerInspection,
   writableMounts,
 } from './smoke-development-container.mjs'
+
+test('development container smoke workspace is traversable by the non-root container user', {
+  skip: process.platform === 'win32',
+}, () => {
+  const workspace = createLiveWorkspace()
+  try {
+    assert.equal(fs.statSync(workspace).mode & 0o777, 0o755)
+    assert.equal(fs.statSync(path.join(workspace, 'src')).isDirectory(), true)
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true })
+  }
+})
 
 test('development container expects the active canonical compiler version', () => {
   const version = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()

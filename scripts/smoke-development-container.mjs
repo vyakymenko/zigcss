@@ -77,9 +77,15 @@ function sleep(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
 }
 
-function createLiveWorkspace() {
+export function createLiveWorkspace() {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-dev-smoke-workspace-'))
   try {
+    // mkdtemp creates the directory with mode 0700. Linux bind mounts preserve
+    // that mode, so the container's non-root node user cannot traverse the
+    // workspace unless we explicitly grant read/execute access. The bind mount
+    // itself remains read-only and the temporary workspace contains only the
+    // finite public source inventory copied below.
+    fs.chmodSync(workspace, 0o755)
     for (const relative of liveDirectories) {
       fs.cpSync(path.join(repositoryRoot, relative), path.join(workspace, relative), {
         recursive: true,

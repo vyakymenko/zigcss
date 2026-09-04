@@ -950,6 +950,12 @@ const route_cases = [_]RouteCase{
     .{ .syntax = .stylus, .filename = "input.styl", .source = ".a\n  color red\n", .expected = ".a{color:#f00}" },
 };
 
+const test_absolute_root = if (builtin.os.tag == .windows) "C:\\workspace" else "/workspace";
+const test_absolute_source = if (builtin.os.tag == .windows)
+    "C:\\workspace\\input.css"
+else
+    "/workspace/input.css";
+
 fn testRequest(
     syntax: Syntax,
     source_path: []const u8,
@@ -975,7 +981,7 @@ fn testRequest(
 
 test "node protocol response serialization is bounded before ownership transfer" {
     const allocator = std.testing.allocator;
-    const request = testRequest(.css, "/workspace/input.css", &.{"/workspace"}, ".a{}");
+    const request = testRequest(.css, test_absolute_source, &.{test_absolute_root}, ".a{}");
 
     var bounded = BoundedResponseWriter.init(allocator, 96);
     defer bounded.deinit();
@@ -1333,7 +1339,7 @@ test "node protocol frame schema paths options and queries fail closed" {
     extra[extra.len - 1] = 0;
     try std.testing.expectError(error.FrameExtraBytes, processFrame(allocator, extra));
 
-    const base = testRequest(.css, "/workspace/input.css", &.{"/workspace"}, ".a{}");
+    const base = testRequest(.css, test_absolute_source, &.{test_absolute_root}, ".a{}");
     try expectRequestError(allocator, error.InvalidRequest, .{
         .protocol = base.protocol,
         .requestId = base.requestId,
@@ -1357,7 +1363,10 @@ test "node protocol frame schema paths options and queries fail closed" {
     relative_source.sourcePath = "input.css";
     try expectRequestError(allocator, error.InvalidSourcePath, relative_source);
     var controlled_source = base;
-    controlled_source.sourcePath = "/workspace/input\n.css";
+    controlled_source.sourcePath = if (builtin.os.tag == .windows)
+        "C:\\workspace\\input\n.css"
+    else
+        "/workspace/input\n.css";
     try expectRequestError(allocator, error.InvalidSourcePath, controlled_source);
     var empty_roots = base;
     empty_roots.rootPaths = &.{};
@@ -1376,7 +1385,7 @@ test "node protocol frame schema paths options and queries fail closed" {
     duplicate_query.options.browsers = "ie >= 11, ie >= 12";
     try expectRequestFailure(allocator, duplicate_query, "NODE_OPTIONS");
 
-    const seventeen = [_][]const u8{"/workspace"} ** 17;
+    const seventeen = [_][]const u8{test_absolute_root} ** 17;
     var too_many_roots = base;
     too_many_roots.rootPaths = &seventeen;
     try expectRequestError(allocator, error.InvalidRoots, too_many_roots);
@@ -1438,7 +1447,7 @@ fn exerciseProcessFrameAllocationFailures(allocator: std.mem.Allocator, frame: [
 
 test "node protocol releases every allocation on success and injected failure" {
     const allocator = std.testing.allocator;
-    const request = testRequest(.css, "/workspace/input.css", &.{"/workspace"}, ".a{color:red}");
+    const request = testRequest(.css, test_absolute_source, &.{test_absolute_root}, ".a{color:red}");
     const frame = try testFrame(allocator, request);
     defer allocator.free(frame);
     try std.testing.checkAllAllocationFailures(
@@ -1449,8 +1458,8 @@ test "node protocol releases every allocation on success and injected failure" {
 
     const diagnostic_request = testRequest(
         .css,
-        "/workspace/diagnostic.css",
-        &.{"/workspace"},
+        if (builtin.os.tag == .windows) "C:\\workspace\\diagnostic.css" else "/workspace/diagnostic.css",
+        &.{test_absolute_root},
         ".a{content:\"🙂\";/*xx*/broken;color:red}",
     );
     const diagnostic_frame = try testFrame(allocator, diagnostic_request);

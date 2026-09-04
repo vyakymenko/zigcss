@@ -315,6 +315,21 @@ fn outputFileMode(
     path: []const u8,
 ) !std.fs.File.Mode {
     for (0..windows_atomic_operation_attempt_limit) |attempt| {
+        if (builtin.os.tag == .windows) {
+            // statFile opens entries as files on Windows and reports
+            // AccessDenied for directories. A directory destination should be
+            // carried through preparation so the atomic rename reports the
+            // stable write failure and still cleans up its temporary file.
+            if (cwd.openDir(path, .{})) |opened| {
+                var directory = opened;
+                directory.close();
+                return std.fs.File.default_mode;
+            } else |err| switch (err) {
+                error.FileNotFound => return std.fs.File.default_mode,
+                error.NotDir, error.AccessDenied => {},
+                else => return err,
+            }
+        }
         const stat = cwd.statFile(path) catch |err| {
             if (err == error.FileNotFound) return std.fs.File.default_mode;
             if (shouldRetryWindowsAtomicAccess(builtin.os.tag, err, attempt)) {
@@ -356,9 +371,14 @@ const PreparedOutputDestination = struct {
         // the commit into a different directory.
         var dir = if (parent) |parent_path|
             try std.fs.cwd().makeOpenPath(parent_path, .{})
+        else if (builtin.os.tag == .windows)
+            // std.fs.cwd() uses a process-relative sentinel on Windows rather
+            // than an owned directory handle. Retain a real handle so identity
+            // queries and the final rename use the same directory capability.
+            try std.fs.cwd().openDir(".", .{})
         else
             std.fs.cwd();
-        const close_dir = parent != null;
+        const close_dir = parent != null or builtin.os.tag == .windows;
         errdefer if (close_dir) dir.close();
         const canonical_parent = if (close_dir)
             try dir.realpathAlloc(allocator, ".")
@@ -2480,6 +2500,20 @@ fn objectIdentityAtPath(raw_path: []const u8) !?FileObjectIdentity {
 
 fn objectIdentityAtDestination(destination: *const PreparedOutputDestination) !?FileObjectIdentity {
     if (builtin.os.tag == .windows) {
+        // Windows openFile reports AccessDenied for a directory. Try the
+        // directory shape first so an existing directory is still tracked as
+        // the prepared object and the later atomic rename fails consistently,
+        // instead of rejecting an otherwise valid parent capability early.
+        if (destination.dir.openDir(destination.basename(), .{})) |opened| {
+            var directory = opened;
+            defer directory.close();
+            return objectIdentityFromFile(std.fs.File{ .handle = directory.fd });
+        } else |dir_err| switch (dir_err) {
+            error.FileNotFound => return null,
+            error.NotDir, error.AccessDenied => {},
+            else => return dir_err,
+        }
+
         var file = destination.dir.openFile(destination.basename(), .{}) catch |err| switch (err) {
             error.FileNotFound, error.NotDir, error.IsDir => return null,
             else => return err,

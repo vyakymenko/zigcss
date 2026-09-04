@@ -1580,7 +1580,10 @@ test "binary CLI batch gives non-ASCII case and normalization variants unique po
 test "binary CLI can commit a direct working-directory output without directory read permission" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
-    var tmp = std.testing.tmpDir(.{});
+    // Dir.chmod requires a directory descriptor opened for iteration. Some
+    // non-Linux hosts tolerate an O_PATH-style descriptor here, while Linux
+    // correctly rejects it with EBADF.
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
     try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".safe { color: red; }" });
     const cwd = try tmp.dir.realpathAlloc(allocator, ".");
