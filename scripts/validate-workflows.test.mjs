@@ -764,10 +764,17 @@ test('documentation deployment requires one successful same-repository main Buil
 
   const missingDocsAudit = cloneSources()
   missingDocsAudit.set('docs.yml', missingDocsAudit.get('docs.yml').replace(
-    'npm audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high',
-    'npm audit --omit=dev --package-lock-only --audit-level=high',
+    'npm run audit:documentation',
+    'npm run audit:production',
   ))
   assert.throws(() => validateWorkflowSources(missingDocsAudit), /complete documentation build graph/)
+
+  const scopedDocsAudit = cloneSources()
+  scopedDocsAudit.set('docs.yml', scopedDocsAudit.get('docs.yml').replace(
+    '      - name: Audit complete documentation build graph\n        run: npm run audit:documentation\n',
+    '      - name: Audit complete documentation build graph\n        run: npm run audit:documentation\n        working-directory: docs\n',
+  ))
+  assert.throws(() => validateWorkflowSources(scopedDocsAudit), /complete documentation build graph/)
 
   const missingBuildAudit = cloneSources()
   missingBuildAudit.set('build.yml', missingBuildAudit.get('build.yml').replace(

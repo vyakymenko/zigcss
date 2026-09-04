@@ -37,6 +37,31 @@ export const developmentDependencySurface = Object.freeze({
   directory: '.',
 })
 
+const developmentAuditScriptPolicy = Object.freeze([
+  Object.freeze({ script: 'audit:development', selector: '.' }),
+  Object.freeze({ script: 'audit:documentation', selector: 'docs' }),
+  Object.freeze({ script: 'audit:turbopack-example', selector: 'examples/next-turbopack' }),
+  Object.freeze({ script: 'audit:sveltekit-example', selector: 'examples/sveltekit' }),
+  Object.freeze({ script: 'audit:astro-example', selector: 'examples/astro' }),
+  Object.freeze({ script: 'audit:nuxt-example', selector: 'examples/nuxt' }),
+  Object.freeze({ script: 'audit:vscode', selector: 'vscode-extension' }),
+])
+
+export const developmentAuditModes = Object.freeze(developmentAuditScriptPolicy.map(mode => Object.freeze({
+  ...mode,
+  surface: mode.selector === '.'
+    ? developmentDependencySurface
+    : dependencySurfaces.find(surface => surface.directory === mode.selector),
+})))
+
+export const auditExecutionPolicy = Object.freeze({
+  maximumAttempts: 2,
+  timeoutMilliseconds: 180_000,
+})
+
+const retryableAuditStatusCodes = new Set([408, 425, 429, 500, 502, 503, 504])
+const auditEndpointPath = '/-/npm/v1/security/advisories/bulk'
+
 export const locklessLocalManifestSurfaces = Object.freeze([
   Object.freeze({
     label: 'root-lock-bound Parcel example',
@@ -74,6 +99,21 @@ const ignoredDirectories = new Set([
 
 function fail(message) {
   throw new Error(`dependency integrity: ${message}`)
+}
+
+export function validateDevelopmentAuditModes() {
+  const expectedSelectors = dependencySurfaces.map(surface => surface.directory).sort()
+  const actualSelectors = developmentAuditModes.map(mode => mode.selector).sort()
+  if (JSON.stringify(actualSelectors) !== JSON.stringify(expectedSelectors)) {
+    fail(`full-graph audit inventory changed: expected ${JSON.stringify(expectedSelectors)}, received ${JSON.stringify(actualSelectors)}`)
+  }
+  if (
+    new Set(developmentAuditModes.map(mode => mode.script)).size !== developmentAuditModes.length
+    || developmentAuditModes.some(mode => mode.surface?.directory !== mode.selector)
+  ) {
+    fail('full-graph audit modes must map unique scripts to their exact allowlisted dependency surfaces')
+  }
+  return true
 }
 
 function readJson(file) {
@@ -276,32 +316,19 @@ export function validateUpdatePolicy(root = repositoryRoot) {
   validateReviewedDevelopmentOracleOverrides(manifest, lock)
   validateExtensionProductionSecurityPatches(extensionLock)
   validateBuildGraphSecurityPatches(docsLock, extensionLock)
+  validateDevelopmentAuditModes()
   if (manifest.scripts?.['test:dependencies'] !== 'node --test scripts/audit-production-dependencies.test.mjs') {
     fail('package.json is missing the exact dependency policy test script')
   }
   if (manifest.scripts?.['audit:production'] !== 'node scripts/audit-production-dependencies.mjs --audit') {
     fail('package.json is missing the exact production audit script')
   }
-  if (manifest.scripts?.['audit:development'] !== 'node scripts/audit-production-dependencies.mjs --audit-development') {
-    fail('package.json is missing the exact full development audit script')
-  }
-  if (manifest.scripts?.['audit:documentation'] !== 'npm --prefix docs audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high') {
-    fail('package.json is missing the exact full documentation build-graph audit script')
-  }
-  if (manifest.scripts?.['audit:vscode'] !== 'npm --prefix vscode-extension audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high') {
-    fail('package.json is missing the exact full VS Code build-graph audit script')
-  }
-  if (manifest.scripts?.['audit:turbopack-example'] !== 'npm --prefix examples/next-turbopack audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high') {
-    fail('package.json is missing the exact full Next.js Turbopack example audit script')
-  }
-  if (manifest.scripts?.['audit:sveltekit-example'] !== 'npm --prefix examples/sveltekit audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high') {
-    fail('package.json is missing the exact full SvelteKit example audit script')
-  }
-  if (manifest.scripts?.['audit:astro-example'] !== 'npm --prefix examples/astro audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high') {
-    fail('package.json is missing the exact full Astro example audit script')
-  }
-  if (manifest.scripts?.['audit:nuxt-example'] !== 'npm --prefix examples/nuxt audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high') {
-    fail('package.json is missing the exact full Nuxt example audit script')
+  for (const mode of developmentAuditModes) {
+    const selector = mode.selector === '.' ? '' : ` ${mode.selector}`
+    const expected = `node scripts/audit-production-dependencies.mjs --audit-development${selector}`
+    if (manifest.scripts?.[mode.script] !== expected) {
+      fail(`package.json is missing the exact bounded ${mode.surface.label} full-graph audit script`)
+    }
   }
 
   const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'build.yml'), 'utf8')
@@ -357,25 +384,90 @@ export function auditEnvironment(environment = process.env) {
   return { ...sanitized, NO_COLOR: '1' }
 }
 
-function runAudit(surface, root, { omitDevelopment = true } = {}) {
-  const args = auditArguments(surface, { omitDevelopment })
-  const result = spawnSync('npm', args, {
-    cwd: root,
-    encoding: 'utf8',
-    env: auditEnvironment(process.env),
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: 60_000,
-  })
-  if (result.error) fail(`${surface.label} audit failed to run: ${result.error.message}`)
-  let report
+function isAuditEndpoint(uri) {
+  if (typeof uri !== 'string') return false
   try {
-    report = JSON.parse(result.stdout)
-  } catch (error) {
-    fail(`${surface.label} audit returned invalid JSON (exit ${result.status}): ${error.message}; ${result.stderr.trim()}`)
+    const parsed = new URL(uri)
+    return ['http:', 'https:'].includes(parsed.protocol) && parsed.pathname.endsWith(auditEndpointPath)
+  } catch {
+    return false
   }
-  const counts = parseAuditReport(report, surface.label)
-  if (result.status !== 0) fail(`${surface.label} audit exited ${result.status} without a high/critical finding`)
-  return counts
+}
+
+function isRetryableAuditEndpointFailure(result, report) {
+  if (
+    result.error !== undefined
+    || result.status === 0
+    || report === null
+    || typeof report !== 'object'
+    || Array.isArray(report)
+    || report.method !== 'POST'
+    || !isAuditEndpoint(report.uri)
+  ) return false
+
+  if (retryableAuditStatusCodes.has(report.statusCode)) return true
+  if (typeof report.message !== 'string') return false
+  if (/^network timeout at:/i.test(report.message)) return true
+  return /^request to .* failed, reason:/i.test(report.message)
+    && /\b(?:EAI_AGAIN|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENETDOWN|UND_ERR_CONNECT_TIMEOUT|network timeout|socket timeout)\b/i.test(report.message)
+}
+
+export function resolveAuditInvocation(arguments_) {
+  if (!Array.isArray(arguments_) || arguments_.some(argument => typeof argument !== 'string')) {
+    throw new Error('audit invocation arguments must be strings')
+  }
+  if (arguments_.length === 1 && arguments_[0] === '--check') return Object.freeze({ kind: 'check' })
+  if (arguments_.length === 1 && arguments_[0] === '--audit') return Object.freeze({ kind: 'production' })
+  if (arguments_[0] === '--audit-development' && arguments_.length >= 1 && arguments_.length <= 2) {
+    const selector = arguments_[1] ?? '.'
+    const mode = developmentAuditModes.find(candidate => candidate.selector === selector)
+    if (mode !== undefined) return Object.freeze({ kind: 'development', mode })
+  }
+  throw new Error('usage: node scripts/audit-production-dependencies.mjs --check|--audit|--audit-development [directory]')
+}
+
+export function runAudit(surface, root, { omitDevelopment = true, spawn = spawnSync } = {}) {
+  const args = auditArguments(surface, { omitDevelopment })
+  for (let attempt = 1; attempt <= auditExecutionPolicy.maximumAttempts; attempt += 1) {
+    const result = spawn('npm', args, {
+      cwd: root,
+      encoding: 'utf8',
+      env: auditEnvironment(process.env),
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: auditExecutionPolicy.timeoutMilliseconds,
+    })
+
+    let report
+    let reportParsingError
+    try {
+      report = JSON.parse(result.stdout)
+    } catch (error) {
+      reportParsingError = error
+    }
+
+    if (report?.auditReportVersion === 2) {
+      const counts = parseAuditReport(report, surface.label)
+      if (result.error === undefined && result.status === 0) return counts
+      if (result.error === undefined) {
+        fail(`${surface.label} audit exited ${result.status} without a high/critical finding`)
+      }
+    }
+
+    const retryable = result.error?.code === 'ETIMEDOUT'
+      || isRetryableAuditEndpointFailure(result, report)
+    if (retryable && attempt < auditExecutionPolicy.maximumAttempts) continue
+    if (retryable) {
+      fail(`${surface.label} audit could not reach the npm audit endpoint after ${attempt} bounded attempts`)
+    }
+    if (result.error) {
+      fail(`${surface.label} audit failed to run after ${attempt} attempt${attempt === 1 ? '' : 's'}: ${result.error.message}`)
+    }
+    if (reportParsingError !== undefined) {
+      fail(`${surface.label} audit returned invalid JSON (exit ${result.status}): ${reportParsingError.message}; ${String(result.stderr ?? '').trim()}`)
+    }
+    parseAuditReport(report, surface.label)
+  }
+  fail(`${surface.label} audit exhausted its bounded execution policy`)
 }
 
 export function auditProductionDependencies(root = repositoryRoot) {
@@ -394,21 +486,19 @@ export function auditDevelopmentDependencies(root = repositoryRoot) {
 }
 
 function main() {
-  if (process.argv.length !== 3 || !['--check', '--audit', '--audit-development'].includes(process.argv[2])) {
-    throw new Error('usage: node scripts/audit-production-dependencies.mjs --check|--audit|--audit-development')
-  }
+  const invocation = resolveAuditInvocation(process.argv.slice(2))
   const inventory = validateManifestLocks(repositoryRoot)
   validateUpdatePolicy(repositoryRoot)
-  if (process.argv[2] === '--check') {
+  if (invocation.kind === 'check') {
     process.stdout.write(`Dependency policy verified: ${inventory.locked} exact npm manifest/lockfile pairs, ${inventory.locklessLocal} exact root-lock-bound local manifest, and bounded npm, GitHub Actions, and Docker update scopes.\n`)
     return
   }
-  if (process.argv[2] === '--audit-development') {
-    const counts = runAudit(developmentDependencySurface, repositoryRoot, {
+  if (invocation.kind === 'development') {
+    const counts = runAudit(invocation.mode.surface, repositoryRoot, {
       omitDevelopment: false,
     })
     process.stdout.write(
-      `Development dependency audit verified: ${counts.total} total (${counts.high} high, ${counts.critical} critical).\n`,
+      `${invocation.mode.surface.label} full dependency audit verified: ${counts.total} total (${counts.high} high, ${counts.critical} critical).\n`,
     )
     return
   }

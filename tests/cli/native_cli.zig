@@ -1108,7 +1108,12 @@ test "binary CLI emits deterministic depfiles for all five syntaxes and only rea
         const depfile = try tmp.dir.readFileAlloc(allocator, "sorted.css.d", 1024 * 1024);
         defer allocator.free(depfile);
         try std.testing.expectEqualStrings(expected, depfile);
-        try std.testing.expectEqual(@as(usize, 1), countOccurrences(depfile, second_dependency));
+        const escaped_second_dependency = try escapeDepfilePathAlloc(second_dependency);
+        defer allocator.free(escaped_second_dependency);
+        try std.testing.expectEqual(
+            @as(usize, 1),
+            countOccurrences(depfile, escaped_second_dependency),
+        );
     }
 }
 

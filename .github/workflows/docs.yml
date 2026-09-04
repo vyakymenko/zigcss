@@ -22,6 +22,7 @@ on:
       - 'LICENSE'
       - 'package.json'
       - 'package-lock.json'
+      - 'scripts/audit-production-dependencies.mjs'
       - '.github/workflows/docs.yml'
   pull_request:
     branches: [main, development]
@@ -44,6 +45,7 @@ on:
       - 'LICENSE'
       - 'package.json'
       - 'package-lock.json'
+      - 'scripts/audit-production-dependencies.mjs'
       - '.github/workflows/docs.yml'
   workflow_run:
     workflows: [Build]
@@ -92,8 +94,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Audit complete documentation build graph
-        working-directory: docs
-        run: npm audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high
+        run: npm run audit:documentation
 
       - name: Test documentation
         working-directory: docs

@@ -61,11 +61,17 @@ describe('documentation workflow', () => {
 
   test('audits the complete documentation build graph before tests and build', () => {
     const install = workflow.indexOf('npm ci --ignore-scripts')
-    const audit = workflow.indexOf('npm audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high')
+    const audit = workflow.indexOf('npm run audit:documentation')
     const tests = workflow.indexOf('npm run test:run')
     const build = workflow.indexOf('npm run build')
 
     expect(install).toBeGreaterThan(-1)
+    expect(workflow).toContain([
+      '      - name: Audit complete documentation build graph',
+      '        run: npm run audit:documentation',
+      '',
+      '      - name: Test documentation',
+    ].join('\n'))
     expect(audit).toBeGreaterThan(install)
     expect(tests).toBeGreaterThan(audit)
     expect(build).toBeGreaterThan(tests)
@@ -88,6 +94,7 @@ describe('documentation workflow', () => {
       'LICENSE',
       'package.json',
       'package-lock.json',
+      'scripts/audit-production-dependencies.mjs',
       '.github/workflows/docs.yml',
     ]) {
       expect(workflow.match(new RegExp(`^      - '${input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'$`, 'gm'))).toHaveLength(2)

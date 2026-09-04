@@ -5,23 +5,55 @@ import path from 'node:path'
 import test from 'node:test'
 import {
   auditArguments,
+  auditExecutionPolicy,
   auditEnvironment,
   dependencySurfaces,
+  developmentAuditModes,
   developmentDependencySurface,
   discoverNpmSurfaces,
   locklessLocalManifestSurfaces,
   parseAuditReport,
   renderDependabotConfig,
   repositoryRoot,
+  resolveAuditInvocation,
+  runAudit,
   validateLocklessLocalManifests,
   validateManifestLocks,
   validateBuildGraphSecurityPatches,
+  validateDevelopmentAuditModes,
   validateExtensionProductionSecurityPatches,
   validateReviewedDevelopmentOracleOverrides,
   validateUpdatePolicy,
 } from './audit-production-dependencies.mjs'
 
+const cleanAuditReport = Object.freeze({
+  auditReportVersion: 2,
+  metadata: Object.freeze({
+    vulnerabilities: Object.freeze({ info: 0, low: 1, moderate: 2, high: 0, critical: 0, total: 3 }),
+  }),
+})
+
+const auditEndpoint = 'https://registry.example.test/-/npm/v1/security/advisories/bulk'
+const transientAuditReport = Object.freeze({
+  message: `network timeout at: ${auditEndpoint}`,
+  method: 'POST',
+  uri: auditEndpoint,
+})
+
 test('production and development audits have distinct fail-closed scopes', () => {
+  assert.equal(validateDevelopmentAuditModes(), true)
+  assert.deepEqual(
+    developmentAuditModes.map(mode => [mode.script, mode.selector, mode.surface.directory]),
+    [
+      ['audit:development', '.', '.'],
+      ['audit:documentation', 'docs', 'docs'],
+      ['audit:turbopack-example', 'examples/next-turbopack', 'examples/next-turbopack'],
+      ['audit:sveltekit-example', 'examples/sveltekit', 'examples/sveltekit'],
+      ['audit:astro-example', 'examples/astro', 'examples/astro'],
+      ['audit:nuxt-example', 'examples/nuxt', 'examples/nuxt'],
+      ['audit:vscode', 'vscode-extension', 'vscode-extension'],
+    ],
+  )
   assert.deepEqual(auditArguments(dependencySurfaces[0]), [
     'audit',
     '--omit=dev',
@@ -47,19 +79,41 @@ test('production and development audits have distinct fail-closed scopes', () =>
   )
 
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
-  for (const [name, directory] of [
-    ['audit:documentation', 'docs'],
-    ['audit:vscode', 'vscode-extension'],
-    ['audit:turbopack-example', 'examples/next-turbopack'],
-    ['audit:sveltekit-example', 'examples/sveltekit'],
-    ['audit:astro-example', 'examples/astro'],
-    ['audit:nuxt-example', 'examples/nuxt'],
-  ]) {
+  for (const mode of developmentAuditModes) {
+    const suffix = mode.selector === '.' ? '' : ` ${mode.selector}`
     assert.equal(
-      manifest.scripts[name],
-      `npm --prefix ${directory} audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high`,
+      manifest.scripts[mode.script],
+      `node scripts/audit-production-dependencies.mjs --audit-development${suffix}`,
     )
+    const invocation = resolveAuditInvocation([
+      '--audit-development',
+      ...(mode.selector === '.' ? [] : [mode.selector]),
+    ])
+    assert.equal(invocation.kind, 'development')
+    assert.equal(invocation.mode, mode)
+    const args = auditArguments(mode.surface, { omitDevelopment: false })
+    assert.ok(args.includes('--include=dev'))
+    assert.ok(!args.includes('--omit=dev'))
   }
+})
+
+test('audit CLI accepts only exact modes and allowlisted full-graph directories', () => {
+  assert.deepEqual(resolveAuditInvocation(['--check']), { kind: 'check' })
+  assert.deepEqual(resolveAuditInvocation(['--audit']), { kind: 'production' })
+  assert.equal(resolveAuditInvocation(['--audit-development']).mode.selector, '.')
+  assert.equal(resolveAuditInvocation(['--audit-development', 'docs']).mode.selector, 'docs')
+
+  for (const invalid of [
+    [],
+    ['--check', 'extra'],
+    ['--audit', 'extra'],
+    ['--audit-development', '../docs'],
+    ['--audit-development', 'docs', 'extra'],
+    ['--unknown'],
+  ]) {
+    assert.throws(() => resolveAuditInvocation(invalid), /usage:/)
+  }
+  assert.throws(() => resolveAuditInvocation([42]), /arguments must be strings/)
 })
 
 test('documentation and VS Code build graphs lock the reviewed advisory fixes', () => {
@@ -192,10 +246,7 @@ test('root-lock-bound Parcel manifest stays dependency-free and script-free', t 
 })
 
 test('production audit parsing requires a consistent v2 report with no high or critical findings', () => {
-  const clean = {
-    auditReportVersion: 2,
-    metadata: { vulnerabilities: { info: 0, low: 1, moderate: 2, high: 0, critical: 0, total: 3 } },
-  }
+  const clean = structuredClone(cleanAuditReport)
   assert.deepEqual(parseAuditReport(clean, 'fixture'), clean.metadata.vulnerabilities)
 
   const high = structuredClone(clean)
@@ -207,6 +258,149 @@ test('production audit parsing requires a consistent v2 report with no high or c
   inconsistent.metadata.vulnerabilities.total = 4
   assert.throws(() => parseAuditReport(inconsistent, 'fixture'), /total is inconsistent/)
   assert.throws(() => parseAuditReport({ error: 'offline' }, 'fixture'), /report version 2/)
+})
+
+test('audit execution retries one bounded timeout and then validates the report', () => {
+  assert.deepEqual(auditExecutionPolicy, {
+    maximumAttempts: 2,
+    timeoutMilliseconds: 180_000,
+  })
+  const invocations = []
+  const counts = runAudit(dependencySurfaces[1], '/fixture/repository', {
+    spawn(command, args, options) {
+      invocations.push({ command, args, options })
+      if (invocations.length === 1) {
+        return { error: Object.assign(new Error('operation timed out'), { code: 'ETIMEDOUT' }) }
+      }
+      return { error: undefined, status: 0, stdout: JSON.stringify(cleanAuditReport), stderr: '' }
+    },
+  })
+
+  assert.deepEqual(counts, cleanAuditReport.metadata.vulnerabilities)
+  assert.equal(invocations.length, auditExecutionPolicy.maximumAttempts)
+  for (const invocation of invocations) {
+    assert.equal(invocation.command, 'npm')
+    assert.deepEqual(invocation.args, auditArguments(dependencySurfaces[1]))
+    assert.equal(invocation.options.cwd, '/fixture/repository')
+    assert.equal(invocation.options.timeout, auditExecutionPolicy.timeoutMilliseconds)
+    assert.equal(invocation.options.maxBuffer, 16 * 1024 * 1024)
+  }
+})
+
+test('audit execution stays fail-closed after its bounded timeout retry', () => {
+  let invocations = 0
+  assert.throws(
+    () => runAudit(dependencySurfaces[1], '/fixture/repository', {
+      spawn() {
+        invocations += 1
+        return { error: Object.assign(new Error('operation timed out'), { code: 'ETIMEDOUT' }) }
+      },
+    }),
+    /documentation site audit could not reach the npm audit endpoint after 2 bounded attempts/,
+  )
+  assert.equal(invocations, auditExecutionPolicy.maximumAttempts)
+})
+
+test('audit execution retries only structured transient npm endpoint failures', () => {
+  let networkAttempts = 0
+  const counts = runAudit(dependencySurfaces[1], '/fixture/repository', {
+    omitDevelopment: false,
+    spawn(_command, args) {
+      networkAttempts += 1
+      assert.ok(args.includes('--include=dev'))
+      if (networkAttempts === 1) {
+        return { error: undefined, status: 1, stdout: JSON.stringify(transientAuditReport), stderr: '' }
+      }
+      return { error: undefined, status: 0, stdout: JSON.stringify(cleanAuditReport), stderr: '' }
+    },
+  })
+  assert.deepEqual(counts, cleanAuditReport.metadata.vulnerabilities)
+  assert.equal(networkAttempts, 2)
+
+  let unavailableAttempts = 0
+  const unavailable = { ...transientAuditReport, message: 'service unavailable', statusCode: 503 }
+  assert.throws(
+    () => runAudit(dependencySurfaces[1], '/fixture/repository', {
+      spawn() {
+        unavailableAttempts += 1
+        return { error: undefined, status: 1, stdout: JSON.stringify(unavailable), stderr: '' }
+      },
+    }),
+    /could not reach the npm audit endpoint after 2 bounded attempts/,
+  )
+  assert.equal(unavailableAttempts, 2)
+
+  for (const terminal of [
+    { ...transientAuditReport, message: 'authentication required', statusCode: 401 },
+    { ...transientAuditReport, uri: 'https://registry.example.test/not-the-audit-endpoint', statusCode: 503 },
+  ]) {
+    let attempts = 0
+    assert.throws(
+      () => runAudit(dependencySurfaces[1], '/fixture/repository', {
+        spawn() {
+          attempts += 1
+          return { error: undefined, status: 1, stdout: JSON.stringify(terminal), stderr: '' }
+        },
+      }),
+      /did not return npm audit report version 2/,
+    )
+    assert.equal(attempts, 1)
+  }
+})
+
+test('audit execution never retries non-timeout failures or invalid reports', () => {
+  let executionFailures = 0
+  assert.throws(
+    () => runAudit(dependencySurfaces[0], '/fixture/repository', {
+      spawn() {
+        executionFailures += 1
+        return { error: Object.assign(new Error('npm is unavailable'), { code: 'ENOENT' }) }
+      },
+    }),
+    /root npm package audit failed to run after 1 attempt: npm is unavailable/,
+  )
+  assert.equal(executionFailures, 1)
+
+  let invalidReports = 0
+  assert.throws(
+    () => runAudit(dependencySurfaces[0], '/fixture/repository', {
+      spawn() {
+        invalidReports += 1
+        return { error: undefined, status: 1, stdout: '{', stderr: `network timeout at: ${auditEndpoint}` }
+      },
+    }),
+    /audit returned invalid JSON/,
+  )
+  assert.equal(invalidReports, 1)
+
+  let vulnerableReports = 0
+  const high = structuredClone(cleanAuditReport)
+  high.metadata.vulnerabilities.high = 1
+  high.metadata.vulnerabilities.total += 1
+  Object.assign(high, transientAuditReport, { statusCode: 503 })
+  assert.throws(
+    () => runAudit(dependencySurfaces[0], '/fixture/repository', {
+      spawn() {
+        vulnerableReports += 1
+        return { error: undefined, status: 1, stdout: JSON.stringify(high), stderr: `network timeout at: ${auditEndpoint}` }
+      },
+    }),
+    /has 1 high and 0 critical audited vulnerabilities/,
+  )
+  assert.equal(vulnerableReports, 1)
+
+  let unexplainedFailures = 0
+  const cleanWithTransientNoise = { ...cleanAuditReport, ...transientAuditReport, statusCode: 503 }
+  assert.throws(
+    () => runAudit(dependencySurfaces[0], '/fixture/repository', {
+      spawn() {
+        unexplainedFailures += 1
+        return { error: undefined, status: 1, stdout: JSON.stringify(cleanWithTransientNoise), stderr: '' }
+      },
+    }),
+    /audit exited 1 without a high\/critical finding/,
+  )
+  assert.equal(unexplainedFailures, 1)
 })
 
 test('development oracle override is exact and locks the reviewed minimatch security patch', () => {

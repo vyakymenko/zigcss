@@ -338,6 +338,7 @@ export const documentationContainerCiPolicy = Object.freeze({
     'LICENSE',
     'package.json',
     'package-lock.json',
+    'scripts/audit-production-dependencies.mjs',
     '.github/workflows/docs.yml',
   ]),
   dockerfile: 'Dockerfile.docs',
@@ -716,12 +717,19 @@ export function validateDocumentationWorkflowContract(docsWorkflow, buildWorkflo
     fail('docs.yml must prevent failed Build completions from cancelling a green deployment')
   }
 
-  const auditCommand = 'npm audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high'
+  const auditCommand = 'npm run audit:documentation'
+  const auditStep = [
+    '      - name: Audit complete documentation build graph',
+    `        run: ${auditCommand}`,
+    '',
+    '      - name: Test documentation',
+  ].join('\n')
   const install = docsWorkflow.indexOf('        run: npm ci --ignore-scripts')
   const audit = docsWorkflow.indexOf(`        run: ${auditCommand}`)
   const tests = docsWorkflow.indexOf('        run: npm run test:run')
   const build = docsWorkflow.indexOf('        run: npm run build')
   if (
+    docsWorkflow.split(auditStep).length !== 2 ||
     docsWorkflow.split(`        run: ${auditCommand}`).length !== 2 ||
     install === -1 || audit <= install || tests <= audit || build <= tests
   ) {
