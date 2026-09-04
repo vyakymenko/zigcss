@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 
-import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
+import { readStableRegularFile } from './bounded-filesystem.mjs'
+
+const scriptPath = fileURLToPath(import.meta.url)
+const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
+const maximumArtifactBytes = 256 * 1024 * 1024
 
 const ELF_ARCH = new Map([
   [62, 'x86_64'],
@@ -91,6 +95,27 @@ export function assertArtifactMatchesTarget(binary, target) {
   return actual
 }
 
+export function resolveArtifactTargetInvocation(artifactPath, target) {
+  let expectedArtifact
+  switch (target) {
+    case 'x86_64-linux':
+    case 'aarch64-linux':
+    case 'x86_64-macos':
+    case 'aarch64-macos':
+      expectedArtifact = 'zig-out/bin/zigcss'
+      break
+    case 'x86_64-windows':
+      expectedArtifact = 'zig-out/bin/zigcss.exe'
+      break
+    default:
+      throw new Error(`unsupported release target ${target}`)
+  }
+  if (artifactPath !== expectedArtifact) {
+    throw new Error(`artifact path for ${target} must be ${expectedArtifact}`)
+  }
+  return { artifactPath: path.join(repositoryRoot, ...expectedArtifact.split('/')), target }
+}
+
 function main() {
   const [artifactPath, target] = process.argv.slice(2)
   if (!artifactPath || !target || process.argv.length !== 4) {
@@ -99,7 +124,12 @@ function main() {
   }
 
   try {
-    const actual = assertArtifactMatchesTarget(fs.readFileSync(artifactPath), target)
+    const invocation = resolveArtifactTargetInvocation(artifactPath, target)
+    const binary = readStableRegularFile(invocation.artifactPath, {
+      label: 'release artifact',
+      maximumBytes: maximumArtifactBytes,
+    })
+    const actual = assertArtifactMatchesTarget(binary, invocation.target)
     console.log(`verified ${artifactPath}: ${actual.format}/${actual.arch} matches ${target}`)
   } catch (error) {
     console.error(`artifact verification failed: ${error.message}`)
@@ -107,6 +137,5 @@ function main() {
   }
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null
-if (invokedPath === import.meta.url)
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === scriptPath)
   main()

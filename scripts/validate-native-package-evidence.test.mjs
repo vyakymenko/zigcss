@@ -162,6 +162,26 @@ test('native smoke validates one closed commit-bound receipt set across every re
   }
 })
 
+test('native package evidence create-only output never follows an existing symlink', {
+  skip: process.platform === 'win32',
+}, () => {
+  const fixture = makeFixture()
+  try {
+    const evidence = validateNativePackageEvidence(fixture.options)
+    const outside = path.join(fixture.root, 'outside.json')
+    const output = path.join(fixture.root, 'native-package-evidence.json')
+    fs.writeFileSync(outside, 'do not replace\n')
+    fs.symlinkSync(outside, output)
+    assert.throws(
+      () => writeNativePackageEvidence(fixture.root, 'native-package-evidence.json', evidence),
+      /already exists/,
+    )
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'do not replace\n')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test('native package evidence rejects lower, over-limit, drifted, and substituted target sets', () => {
   for (const mutate of [
     fixture => fs.rmSync(path.join(

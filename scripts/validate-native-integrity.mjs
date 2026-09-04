@@ -300,23 +300,23 @@ export function parseNativeIntegrityArguments(args) {
     fail('expected --check, --print-source-date-epoch with --version, or exactly --archive, --target, and --version')
   }
   const allowed = new Set(['--archive', '--target', '--version'])
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const option = args[index]
     const value = args[index + 1]
     if (!allowed.has(option)) fail(`unsupported option ${JSON.stringify(option)}`)
-    if (Object.hasOwn(values, option)) fail(`duplicate option ${option}`)
+    if (values.has(option)) fail(`duplicate option ${option}`)
     if (typeof value !== 'string' || value.length === 0 || value.startsWith('--')) {
       fail(`${option} requires one value`)
     }
-    values[option] = value
+    values.set(option, value)
   }
-  if (!same(Object.keys(values).sort(), [...allowed].sort())) fail('required archive verification options are missing')
+  if (!same([...values.keys()].sort(), [...allowed].sort())) fail('required archive verification options are missing')
   return Object.freeze({
     mode: 'verify-archive',
-    archive: values['--archive'],
-    target: values['--target'],
-    version: values['--version'],
+    archive: values.get('--archive'),
+    target: values.get('--target'),
+    version: values.get('--version'),
   })
 }
 

@@ -2966,10 +2966,19 @@ test('owns the finite native zero-dependency package migration contract', () => 
     /native package migration admitted native child trace.*missing/,
   )
 
-  for (const [kind, primitive] of [
-    ['process', 'std.process.Child'],
-    ['network', 'std.net'],
-    ['foreign runtime', 'std.DynLib'],
+  for (const [primitive, expectedFailure] of [
+    [
+      'std.process.Child',
+      /^Error: native contract: native package migration runtime closure contains forbidden process primitive std\.process\.Child in src\/preprocessor\/compiler\.zig$/,
+    ],
+    [
+      'std.net',
+      /^Error: native contract: native package migration runtime closure contains forbidden network primitive std\.net in src\/preprocessor\/compiler\.zig$/,
+    ],
+    [
+      'std.DynLib',
+      /^Error: native contract: native package migration runtime closure contains forbidden foreign runtime primitive std\.DynLib in src\/preprocessor\/compiler\.zig$/,
+    ],
   ]) {
     assert.throws(
       () => validateContract(loadContract(), {
@@ -2980,7 +2989,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
             : source,
         ]),
       }),
-      new RegExp(`native package migration runtime closure contains forbidden ${kind} primitive ${primitive.replaceAll('.', '\\.')}`),
+      expectedFailure,
     )
   }
 
@@ -3148,6 +3157,15 @@ test('requires the future candidate admission interlock before npm publication p
       'printf %s "$GITHUB_SHA"',
     ) }),
     /release workflow candidate commit lookup/,
+  )
+  const codeScanningGate = 'node scripts/verify-code-scanning-gate.mjs \\'
+  const candidateAdmissionGate = 'node scripts/validate-release-admission.mjs --check \\'
+  assert.throws(
+    () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow
+      .replace(codeScanningGate, '__CODEQL_GATE__')
+      .replace(candidateAdmissionGate, codeScanningGate)
+      .replace('__CODEQL_GATE__', candidateAdmissionGate) }),
+    /Build and CodeQL evidence gates must run in order/,
   )
   assert.throws(
     () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(

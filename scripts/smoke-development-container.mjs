@@ -234,7 +234,7 @@ export async function smokeDevelopmentContainer() {
       'run', '--rm', '--network', 'none', '--entrypoint', '/bin/sh', imageId, '-ec',
       [
         'test "$(id -u)" = 1000',
-        'test "$(node --version)" = v22.22.0',
+        'test "$(node --version)" = v24.20.0',
         'test "$(zig version)" = 0.15.2',
         'test -f /app/tests/preprocessors/stylus/corpus/files/upstream/cases/import.lookup/node_modules/lookup-b/package.json',
         'test ! -e /app/vscode-extension/.vscode',
@@ -255,7 +255,7 @@ export async function smokeDevelopmentContainer() {
       'exec', '--no-TTY', 'dev', '/bin/sh', '-ec',
       [
         'test "$(id -u)" = 1000',
-        'test "$(node --version)" = v22.22.0',
+        'test "$(node --version)" = v24.20.0',
         'test "$(zig version)" = 0.15.2',
         'test -f /app/bin/.zigcss-dev-ready',
         'test -x /app/bin/zigcss',

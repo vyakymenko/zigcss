@@ -13,12 +13,18 @@ export const publicDeliveryPolicy = Object.freeze({
   registry: 'https://registry.npmjs.org/',
   packageName: 'zigcss',
   installTimeoutMs: 5 * 60 * 1000,
+  auditTimeoutMs: 2 * 60 * 1000,
   commandTimeoutMs: 45 * 1000,
   totalTimeoutMs: 10 * 60 * 1000,
   installOutputBytes: 2 * 1024 * 1024,
+  auditOutputBytes: 2 * 1024 * 1024,
   commandOutputBytes: 512 * 1024,
+  lockfileBytes: 512 * 1024,
+  attestationPayloadBytes: 512 * 1024,
   installedEntries: 4096,
   installedBytes: 384 * 1024 * 1024,
+  publishPredicate: 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1',
+  provenancePredicate: 'https://slsa.dev/provenance/v1',
 })
 
 export const publicDeliveryStylesheets = Object.freeze([
@@ -117,6 +123,48 @@ function boundedRegularFile(root, relativePath, label, maximumBytes) {
   return { candidate, stat }
 }
 
+function sameIdentity(left, right) {
+  return left.ctimeNs === right.ctimeNs && left.dev === right.dev && left.ino === right.ino &&
+    left.mode === right.mode && left.mtimeNs === right.mtimeNs && left.nlink === right.nlink &&
+    left.size === right.size
+}
+
+function readBoundedRegularFile(root, relativePath, label, maximumBytes, requireSingleLink = false) {
+  const candidate = confinedPath(root, path.join(root, relativePath), label)
+  let descriptor
+  try {
+    descriptor = fs.openSync(
+      candidate,
+      fs.constants.O_RDONLY | (fs.constants.O_CLOEXEC ?? 0) |
+        (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+    )
+  } catch {
+    fail(`${label} could not be opened safely`)
+  }
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const bound = fs.lstatSync(candidate, { bigint: true })
+    if (
+      !opened.isFile() || !bound.isFile() || bound.isSymbolicLink() || opened.size === 0n ||
+      opened.size > BigInt(maximumBytes) || !sameIdentity(opened, bound) ||
+      (requireSingleLink && opened.nlink !== 1n) || fs.realpathSync(candidate) !== candidate
+    ) fail(`${label} must be one bounded stable regular non-symlink file`)
+    const size = Number(opened.size)
+    const bytes = Buffer.alloc(size)
+    let offset = 0
+    while (offset < size) {
+      const count = fs.readSync(descriptor, bytes, offset, size - offset, offset)
+      if (count === 0) fail(`${label} ended before its declared size`)
+      offset += count
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true })
+    if (!sameIdentity(opened, after)) fail(`${label} changed while it was read`)
+    return Object.freeze({ bytes, candidate, stat: opened })
+  } finally {
+    fs.closeSync(descriptor)
+  }
+}
+
 export function parsePublicDeliveryArguments(args) {
   if (!Array.isArray(args) || args.length !== 2 || args[0] !== '--version') {
     fail('usage: node scripts/smoke-public-delivery.mjs --version X.Y.Z[-prerelease]')
@@ -158,9 +206,7 @@ export function assertAnonymousEnvironment(environment) {
   return true
 }
 
-export function npmInstallArguments(versionInput, paths) {
-  const version = parseReleaseVersion(versionInput, 'public delivery version')
-  if (version.build !== null) fail('published package version must not contain build metadata')
+function validateIsolationPaths(paths) {
   if (paths === null || typeof paths !== 'object' || Array.isArray(paths)) {
     fail('npm isolation paths are unavailable')
   }
@@ -182,10 +228,16 @@ export function npmInstallArguments(versionInput, paths) {
   if (new Set([userConfig, globalConfig, cache]).size !== 3) {
     fail('npm user config, global config, and cache paths must be distinct')
   }
+  return Object.freeze({ cache, globalConfig, userConfig, workspace })
+}
+
+export function npmInstallArguments(versionInput, paths) {
+  const version = parseReleaseVersion(versionInput, 'public delivery version')
+  if (version.build !== null) fail('published package version must not contain build metadata')
+  const { cache, globalConfig, userConfig } = validateIsolationPaths(paths)
   return Object.freeze([
     'install',
-    '--no-save',
-    '--package-lock=false',
+    '--package-lock=true',
     '--omit=dev',
     '--omit=optional',
     '--ignore-scripts=false',
@@ -197,7 +249,22 @@ export function npmInstallArguments(versionInput, paths) {
     `--userconfig=${userConfig}`,
     `--globalconfig=${globalConfig}`,
     `--cache=${cache}`,
-    `${publicDeliveryPolicy.packageName}@${version.value}`,
+  ])
+}
+
+export function npmAuditSignatureArguments(paths) {
+  const { cache, globalConfig, userConfig } = validateIsolationPaths(paths)
+  return Object.freeze([
+    'audit',
+    'signatures',
+    '--json',
+    '--include-attestations',
+    '--omit=dev',
+    '--omit=optional',
+    `--registry=${publicDeliveryPolicy.registry}`,
+    `--userconfig=${userConfig}`,
+    `--globalconfig=${globalConfig}`,
+    `--cache=${cache}`,
   ])
 }
 
@@ -290,7 +357,8 @@ export function runBoundedCommand(command, args, options) {
     fail(`${options.label} failed to start: ${result.error.message}`)
   }
   if (result.signal !== null || result.status !== 0) {
-    fail(`${options.label} failed with ${result.signal ?? `exit ${result.status}`}${failureTail(result)}`)
+    const details = options.includeFailureOutput === false ? '' : failureTail(result)
+    fail(`${options.label} failed with ${result.signal ?? `exit ${result.status}`}${details}`)
   }
   if (
     Buffer.byteLength(result.stdout) > options.maximumOutputBytes
@@ -333,12 +401,266 @@ export function measureInstalledPackage(root, limits = publicDeliveryPolicy) {
 }
 
 function readJsonFile(root, relativePath, label, maximumBytes) {
-  const { candidate } = boundedRegularFile(root, relativePath, label, maximumBytes)
+  const { bytes } = readBoundedRegularFile(root, relativePath, label, maximumBytes)
   try {
-    return JSON.parse(fs.readFileSync(candidate, 'utf8'))
-  } catch (error) {
-    fail(`${label} is not valid JSON: ${error.message}`)
+    return JSON.parse(bytes.toString('utf8'))
+  } catch {
+    fail(`${label} is not valid JSON`)
   }
+}
+
+function plainObject(value, label) {
+  if (
+    value === null || typeof value !== 'object' || Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) fail(`${label} must be one JSON object`)
+  return value
+}
+
+function exactObjectKeys(value, expected, label) {
+  const keys = Reflect.ownKeys(value)
+  if (keys.some(key => typeof key !== 'string')) {
+    fail(`${label} contains an unexpected or missing field`)
+  }
+  keys.sort()
+  const sortedExpected = [...expected].sort()
+  if (
+    keys.length !== sortedExpected.length ||
+    keys.some((key, index) => typeof key !== 'string' || key !== sortedExpected[index])
+  ) fail(`${label} contains an unexpected or missing field`)
+}
+
+function canonicalSha512Integrity(value, label) {
+  if (typeof value !== 'string' || !value.startsWith('sha512-')) {
+    fail(`${label} must use canonical SHA-512 SRI`)
+  }
+  const encoded = value.slice('sha512-'.length)
+  if (encoded.length === 0 || encoded.length > 128 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    fail(`${label} must use canonical SHA-512 SRI`)
+  }
+  const digest = Buffer.from(encoded, 'base64')
+  if (digest.length !== 64 || digest.toString('base64') !== encoded) {
+    fail(`${label} must use canonical SHA-512 SRI`)
+  }
+  return Object.freeze({ integrity: value, sha512: digest.toString('hex') })
+}
+
+export function validatePublicDeliveryLockfile(workspace, versionInput) {
+  const parsed = parseReleaseVersion(versionInput, 'public delivery version')
+  if (parsed.build !== null) fail('published package version must not contain build metadata')
+  const version = parsed.value
+  const { bytes, candidate, stat } = readBoundedRegularFile(
+    workspace,
+    'package-lock.json',
+    'public delivery package lock',
+    publicDeliveryPolicy.lockfileBytes,
+    true,
+  )
+  let lock
+  const lockSource = bytes.toString('utf8')
+  if (lockSource.includes('\uFFFD')) fail('public delivery package lock is not valid UTF-8 JSON')
+  try {
+    lock = JSON.parse(lockSource)
+  } catch {
+    fail('public delivery package lock is not valid JSON')
+  }
+  plainObject(lock, 'public delivery package lock')
+  if (
+    lock.name !== 'zigcss-public-delivery-smoke' || lock.version !== '0.0.0' ||
+    lock.lockfileVersion !== 3 || lock.requires !== true
+  ) fail('public delivery package lock root identity changed')
+  const packages = plainObject(lock.packages, 'public delivery package lock inventory')
+  exactObjectKeys(packages, ['', 'node_modules/zigcss'], 'public delivery package lock inventory')
+  const root = plainObject(packages[''], 'public delivery package lock root package')
+  const rootDependencies = plainObject(root.dependencies, 'public delivery package lock root dependencies')
+  exactObjectKeys(rootDependencies, ['zigcss'], 'public delivery package lock root dependencies')
+  if (
+    root.name !== 'zigcss-public-delivery-smoke' || root.version !== '0.0.0' ||
+    rootDependencies.zigcss !== version
+  ) fail('public delivery package lock does not request the exact package version')
+
+  const installed = plainObject(packages['node_modules/zigcss'], 'public delivery package lock package')
+  const expectedResolved = `${publicDeliveryPolicy.registry}zigcss/-/zigcss-${version}.tgz`
+  if (
+    installed.version !== version || installed.resolved !== expectedResolved ||
+    installed.hasInstallScript !== true
+  ) fail('public delivery package lock resolved identity changed')
+  const bin = plainObject(installed.bin, 'public delivery package lock binary')
+  exactObjectKeys(bin, ['zigcss', 'zigcss-install'], 'public delivery package lock binary')
+  if (bin.zigcss !== 'index.js' || bin['zigcss-install'] !== 'install.js') {
+    fail('public delivery package lock binary identity changed')
+  }
+  const digest = canonicalSha512Integrity(installed.integrity, 'public delivery package lock integrity')
+  return Object.freeze({
+    bytes: Number(stat.size),
+    filename: candidate,
+    integrity: digest.integrity,
+    resolved: expectedResolved,
+    sha512: digest.sha512,
+  })
+}
+
+function decodeAttestationPayload(source, label) {
+  if (
+    typeof source !== 'string' || source.length === 0 ||
+    source.length > Math.ceil(publicDeliveryPolicy.attestationPayloadBytes * 4 / 3) + 4 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(source)
+  ) fail(`${label} must be one bounded canonical base64 payload`)
+  const bytes = Buffer.from(source, 'base64')
+  if (
+    bytes.length === 0 || bytes.length > publicDeliveryPolicy.attestationPayloadBytes ||
+    bytes.toString('base64') !== source
+  ) fail(`${label} must be one bounded canonical base64 payload`)
+  let statement
+  try {
+    statement = JSON.parse(bytes.toString('utf8'))
+  } catch {
+    fail(`${label} must contain one JSON statement`)
+  }
+  return plainObject(statement, `${label} statement`)
+}
+
+function validateAttestationBundle(source, predicateType, version, sha512) {
+  const entry = plainObject(source, 'npm attestation bundle entry')
+  exactObjectKeys(
+    entry,
+    ['bundle', 'predicateType', 'signedAccessSignatureUrl'],
+    'npm attestation bundle entry',
+  )
+  if (entry.predicateType !== predicateType) fail('npm attestation bundle predicate changed')
+  if (
+    typeof entry.signedAccessSignatureUrl !== 'string' ||
+    entry.signedAccessSignatureUrl.length > 8 * 1024 ||
+    (entry.signedAccessSignatureUrl !== '' &&
+      !entry.signedAccessSignatureUrl.startsWith(publicDeliveryPolicy.registry))
+  ) fail('npm attestation bundle access URL is not canonical')
+  const bundle = plainObject(entry.bundle, 'npm Sigstore bundle')
+  exactObjectKeys(
+    bundle,
+    ['dsseEnvelope', 'mediaType', 'verificationMaterial'],
+    'npm Sigstore bundle',
+  )
+  if (![
+    'application/vnd.dev.sigstore.bundle+json;version=0.2',
+    'application/vnd.dev.sigstore.bundle.v0.3+json',
+  ].includes(bundle.mediaType)) fail('npm Sigstore bundle media type is unsupported')
+  plainObject(bundle.verificationMaterial, 'npm Sigstore verification material')
+  const envelope = plainObject(bundle.dsseEnvelope, 'npm Sigstore DSSE envelope')
+  exactObjectKeys(envelope, ['payload', 'payloadType', 'signatures'], 'npm Sigstore DSSE envelope')
+  if (envelope.payloadType !== 'application/vnd.in-toto+json') {
+    fail('npm Sigstore DSSE payload type changed')
+  }
+  if (!Array.isArray(envelope.signatures) || envelope.signatures.length !== 1) {
+    fail('npm Sigstore DSSE envelope must contain exactly one verified signature')
+  }
+  const signature = plainObject(envelope.signatures[0], 'npm Sigstore DSSE signature')
+  exactObjectKeys(signature, ['keyid', 'sig'], 'npm Sigstore DSSE signature')
+  if (
+    typeof signature.sig !== 'string' || signature.sig.length === 0 || signature.sig.length > 16 * 1024 ||
+    typeof signature.keyid !== 'string' || signature.keyid.length > 1024
+  ) fail('npm Sigstore DSSE signature is malformed')
+
+  const statement = decodeAttestationPayload(envelope.payload, 'npm Sigstore DSSE payload')
+  exactObjectKeys(
+    statement,
+    ['_type', 'predicate', 'predicateType', 'subject'],
+    'npm attestation statement',
+  )
+  const expectedStatementType = predicateType === publicDeliveryPolicy.publishPredicate
+    ? 'https://in-toto.io/Statement/v0.1'
+    : 'https://in-toto.io/Statement/v1'
+  if (statement._type !== expectedStatementType || statement.predicateType !== predicateType) {
+    fail('npm attestation statement type or predicate changed')
+  }
+  plainObject(statement.predicate, 'npm attestation statement predicate')
+  if (!Array.isArray(statement.subject) || statement.subject.length !== 1) {
+    fail('npm attestation statement must contain exactly one subject')
+  }
+  const subject = plainObject(statement.subject[0], 'npm attestation subject')
+  exactObjectKeys(subject, ['digest', 'name'], 'npm attestation subject')
+  const digest = plainObject(subject.digest, 'npm attestation subject digest')
+  exactObjectKeys(digest, ['sha512'], 'npm attestation subject digest')
+  if (subject.name !== `pkg:npm/zigcss@${version}` || digest.sha512 !== sha512) {
+    fail('npm attestation subject does not match the exact locked package integrity')
+  }
+}
+
+export function parseNpmAuditSignatures(source, versionInput, lockfile) {
+  const parsed = parseReleaseVersion(versionInput, 'public delivery version')
+  if (parsed.build !== null) fail('published package version must not contain build metadata')
+  const version = parsed.value
+  if (
+    typeof source !== 'string' || source.length === 0 || source.includes('\uFFFD') ||
+    Buffer.byteLength(source) > publicDeliveryPolicy.auditOutputBytes
+  ) fail('npm signature audit output must be one bounded UTF-8 JSON document')
+  const lock = plainObject(lockfile, 'validated public delivery package lock evidence')
+  if (
+    typeof lock.integrity !== 'string' || typeof lock.resolved !== 'string' ||
+    typeof lock.sha512 !== 'string' || !/^[0-9a-f]{128}$/.test(lock.sha512)
+  ) fail('validated public delivery package lock evidence is malformed')
+  const canonicalIntegrity = canonicalSha512Integrity(lock.integrity, 'validated lock integrity')
+  if (
+    canonicalIntegrity.sha512 !== lock.sha512 ||
+    lock.resolved !== `${publicDeliveryPolicy.registry}zigcss/-/zigcss-${version}.tgz`
+  ) fail('validated public delivery package lock evidence does not match the exact version')
+
+  let report
+  try {
+    report = JSON.parse(source)
+  } catch {
+    fail('npm signature audit output is not valid JSON')
+  }
+  plainObject(report, 'npm signature audit report')
+  exactObjectKeys(report, ['invalid', 'missing', 'verified'], 'npm signature audit report')
+  if (!Array.isArray(report.invalid) || report.invalid.length !== 0) {
+    fail('npm signature audit reported invalid evidence')
+  }
+  if (!Array.isArray(report.missing) || report.missing.length !== 0) {
+    fail('npm signature audit reported missing evidence')
+  }
+  if (!Array.isArray(report.verified) || report.verified.length !== 1) {
+    fail('npm signature audit must verify exactly one package')
+  }
+
+  const verified = plainObject(report.verified[0], 'npm signature audit verified package')
+  exactObjectKeys(
+    verified,
+    ['attestationBundles', 'attestations', 'location', 'name', 'registry', 'version'],
+    'npm signature audit verified package',
+  )
+  if (
+    verified.name !== publicDeliveryPolicy.packageName || verified.version !== version ||
+    verified.location !== 'node_modules/zigcss' || verified.registry !== publicDeliveryPolicy.registry
+  ) fail('npm signature audit verified package identity or registry changed')
+  const attestations = plainObject(verified.attestations, 'npm signature audit attestation metadata')
+  exactObjectKeys(attestations, ['provenance', 'url'], 'npm signature audit attestation metadata')
+  if (attestations.url !== `${publicDeliveryPolicy.registry}-/npm/v1/attestations/zigcss@${version}`) {
+    fail('npm signature audit attestation URL is not canonical')
+  }
+  const provenance = plainObject(attestations.provenance, 'npm provenance metadata')
+  exactObjectKeys(provenance, ['predicateType'], 'npm provenance metadata')
+  if (provenance.predicateType !== publicDeliveryPolicy.provenancePredicate) {
+    fail('npm provenance metadata must require SLSA provenance v1')
+  }
+  if (!Array.isArray(verified.attestationBundles) || verified.attestationBundles.length !== 2) {
+    fail('npm signature audit must return exactly publish and SLSA attestation bundles')
+  }
+  const predicates = verified.attestationBundles.map(entry => plainObject(entry, 'npm attestation bundle entry').predicateType).sort()
+  const expectedPredicates = [
+    publicDeliveryPolicy.publishPredicate,
+    publicDeliveryPolicy.provenancePredicate,
+  ].sort()
+  if (predicates.some((predicate, index) => predicate !== expectedPredicates[index])) {
+    fail('npm signature audit attestation predicates are missing or ambiguous')
+  }
+  for (const entry of verified.attestationBundles) {
+    validateAttestationBundle(entry, entry.predicateType, version, lock.sha512)
+  }
+  return Object.freeze({
+    attestationPredicates: Object.freeze([...predicates]),
+    provenanceVerified: true,
+    registrySignature: true,
+  })
 }
 
 export function validateInstalledPublicPackage(workspace, version) {
@@ -449,13 +771,23 @@ function nodeApiProgram(moduleKind) {
 }
 
 function defaultInstall(context) {
-  const npmCli = resolveNpmCli()
-  return runBoundedCommand(process.execPath, [npmCli, ...context.arguments], {
+  return runBoundedCommand(process.execPath, [context.npmCli, ...context.arguments], {
     cwd: context.workspace,
     env: context.environment,
     timeoutMs: remainingTimeout(context.deadline, publicDeliveryPolicy.installTimeoutMs, 'anonymous npm install'),
     maximumOutputBytes: publicDeliveryPolicy.installOutputBytes,
     label: 'anonymous npm install',
+  })
+}
+
+function defaultAudit(context) {
+  return runBoundedCommand(process.execPath, [context.npmCli, ...context.arguments], {
+    cwd: context.workspace,
+    env: context.environment,
+    timeoutMs: remainingTimeout(context.deadline, publicDeliveryPolicy.auditTimeoutMs, 'npm signature audit'),
+    maximumOutputBytes: publicDeliveryPolicy.auditOutputBytes,
+    label: 'npm signature audit',
+    includeFailureOutput: false,
   })
 }
 
@@ -474,8 +806,18 @@ export function smokePublicDelivery(versionInput, options = {}) {
       name: 'zigcss-public-delivery-smoke',
       version: '0.0.0',
       private: true,
+      dependencies: {
+        zigcss: version,
+      },
     }, null, 2)}\n`
     fs.writeFileSync(path.join(temporary, 'package.json'), manifestText, { flag: 'wx', mode: 0o600 })
+    const manifestBefore = readBoundedRegularFile(
+      temporary,
+      'package.json',
+      'bounded consumer manifest',
+      256 * 1024,
+      true,
+    )
     const isolation = {
       workspace: temporary,
       userConfig: path.join(temporary, 'empty-user.npmrc'),
@@ -485,6 +827,7 @@ export function smokePublicDelivery(versionInput, options = {}) {
     fs.writeFileSync(isolation.userConfig, '', { flag: 'wx', mode: 0o600 })
     fs.writeFileSync(isolation.globalConfig, '', { flag: 'wx', mode: 0o600 })
     fs.mkdirSync(isolation.cache, { mode: 0o700 })
+    const npmCli = resolveNpmCli()
     const installArguments = npmInstallArguments(version, isolation)
     const isolatedEnvironment = childEnvironment(environment, isolation)
     const install = options.install ?? defaultInstall
@@ -495,15 +838,46 @@ export function smokePublicDelivery(versionInput, options = {}) {
       arguments: installArguments,
       environment: isolatedEnvironment,
       deadline,
+      npmCli,
     }))
-    if (fs.readFileSync(path.join(temporary, 'package.json'), 'utf8') !== manifestText) {
+    const manifestAfter = readBoundedRegularFile(
+      temporary,
+      'package.json',
+      'bounded consumer manifest',
+      256 * 1024,
+      true,
+    )
+    if (
+      !manifestAfter.bytes.equals(manifestBefore.bytes) ||
+      !sameIdentity(manifestAfter.stat, manifestBefore.stat) ||
+      manifestAfter.bytes.toString('utf8') !== manifestText
+    ) {
       fail('anonymous npm install mutated the bounded consumer manifest')
     }
-    if (fs.existsSync(path.join(temporary, 'package-lock.json'))) {
-      fail('anonymous npm install created an unexpected lockfile')
-    }
-
+    const lockfile = validatePublicDeliveryLockfile(temporary, version)
     const installed = validateInstalledPublicPackage(temporary, version)
+    const audit = options.audit ?? defaultAudit
+    const auditResult = audit(Object.freeze({
+      version,
+      workspace: temporary,
+      isolation: Object.freeze({ ...isolation }),
+      arguments: npmAuditSignatureArguments(isolation),
+      environment: isolatedEnvironment,
+      deadline,
+      npmCli,
+      lockfile,
+    }))
+    if (
+      auditResult === null || typeof auditResult !== 'object' || Array.isArray(auditResult) ||
+      typeof auditResult.stdout !== 'string' || typeof auditResult.stderr !== 'string'
+    ) fail('npm signature audit returned an invalid result')
+    if (
+      Buffer.byteLength(auditResult.stdout) > publicDeliveryPolicy.auditOutputBytes ||
+      Buffer.byteLength(auditResult.stderr) > publicDeliveryPolicy.auditOutputBytes
+    ) fail('npm signature audit exceeded its output limit')
+    if (auditResult.stderr !== '') fail('npm signature audit wrote unexpected diagnostic output')
+    const signature = parseNpmAuditSignatures(auditResult.stdout, version, lockfile)
+
     const versionResult = runBoundedCommand(process.execPath, [installed.wrapper, '--version'], {
       cwd: temporary,
       env: isolatedEnvironment,
@@ -555,6 +929,9 @@ export function smokePublicDelivery(versionInput, options = {}) {
       cliCompilations: publicDeliveryStylesheets.length,
       nodeApiModules: Object.freeze(['cjs', 'esm']),
       nodeApiCompilations: publicDeliveryStylesheets.length * 4,
+      attestationPredicates: signature.attestationPredicates,
+      provenanceVerified: signature.provenanceVerified,
+      registrySignature: signature.registrySignature,
     })
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -565,7 +942,7 @@ function main() {
   const { version } = parsePublicDeliveryArguments(process.argv.slice(2))
   const result = smokePublicDelivery(version)
   process.stdout.write(
-    `Anonymous public delivery verified for zigcss@${result.version}: ${result.cliCompilations} CLI languages and ${result.nodeApiCompilations} CJS/ESM API compilations from ${result.registry}.\n`,
+    `Anonymous public delivery verified for zigcss@${result.version}: registry signature, SLSA provenance, ${result.cliCompilations} CLI languages, and ${result.nodeApiCompilations} CJS/ESM API compilations from ${result.registry}.\n`,
   )
 }
 

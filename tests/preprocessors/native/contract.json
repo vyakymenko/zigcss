@@ -744,6 +744,7 @@
       "githubReleaseId": 369856953,
       "githubPrerelease": true,
       "githubDraft": false,
+      "githubImmutable": false,
       "githubPublishedAt": "2026-08-13T11:13:25Z",
       "githubAssetCount": 25,
       "assetsPerTarget": 5,
@@ -786,14 +787,14 @@
         "evidenceRequirements": [
           "finite local hosted release artifact provenance consumer and publication surfaces are machine-bound",
           "five native syntax and target inventories are resource-derived",
-          "candidate version and tag were bound to the release-ready interlock before immutable publication"
+          "candidate version and tag were bound to the release-ready interlock before the closed publication"
         ]
       },
       {
         "id": "immutable-candidate",
         "state": "verified",
         "evidenceRequirements": [
-          "one unused 0.6.x native version and matching immutable v tag are selected",
+          "one unused 0.6.x native version and matching protected historical v tag are selected",
           "the provider-backed 0.5.0-rc.1 reference candidate remains ineligible"
         ]
       },
@@ -850,7 +851,7 @@
         "id": "tag-workflow-publication",
         "state": "verified",
         "evidenceRequirements": [
-          "one immutable tag produces one GitHub prerelease with five native archives and 25 release assets",
+          "one protected historical tag produced one verified GitHub prerelease with five native archives and 25 release assets whose API now reads immutable=false",
           "npm 0.6.0-rc.2 is published on next with provenance while latest remains stable"
         ]
       }

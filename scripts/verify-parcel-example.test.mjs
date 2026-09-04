@@ -199,7 +199,7 @@ test('Parcel integration stays a relative local plugin because public plugin nam
   assert.equal(manifest.devDependencies['@parcel/source-map'], '2.1.1')
   assert.deepEqual(manifest.dependencies, {})
   assert.match(readme, /Parcel 2\.16\.4/)
-  assert.match(readme, /Zig 0\.15\.2 and Node 22\.22\.0/)
+  assert.match(readme, /Zig 0\.15\.2 and Node 24\.20\.0 LTS/)
   assert.match(readme, /manifest stays\s+dependency-free and script-free/)
   assert.match(readme, /zig build -Doptimize=ReleaseFast/)
   assert.match(readme, /npm ci --ignore-scripts/)

@@ -11,7 +11,7 @@ published `zigcss@0.6.0` binary predates the current `zigcss-node-v1` protocol,
 so this example is not a stable-release consumer yet.
 
 From the repository root, the supported checkout proof builds ZigCSS with Zig
-0.15.2, installs the exact root lock with Node 22.22.0, and runs both isolated real-host
+0.15.2, installs the exact root lock with Node 24.20.0 LTS, and runs both isolated real-host
 gates:
 
 ```bash

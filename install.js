@@ -371,29 +371,22 @@ function parseNativeIntegrityManifest(text, descriptor) {
 
 function readNativeIntegrityManifest(filename = path.join(__dirname, 'native-integrity.json')) {
   const label = 'npm package native integrity manifest'
-  let before
-  try {
-    before = fs.lstatSync(filename, { bigint: true })
-  } catch (error) {
-    throw new Error(`${label} is unavailable: ${error.message}`)
-  }
-  if (!before.isFile() || before.isSymbolicLink()) throw new Error(`${label} must be a regular non-symlink file`)
-  if (before.size <= 0n || before.size > BigInt(installLimits.maximumManifestBytes)) {
-    throw new Error(`${label} must contain 1 through ${installLimits.maximumManifestBytes} bytes`)
-  }
-
   const noFollow = fs.constants.O_NOFOLLOW ?? 0
+  const nonBlock = fs.constants.O_NONBLOCK ?? 0
+  const closeOnExec = fs.constants.O_CLOEXEC ?? 0
   let file
   try {
-    file = fs.openSync(filename, fs.constants.O_RDONLY | noFollow)
+    file = fs.openSync(filename, fs.constants.O_RDONLY | noFollow | nonBlock | closeOnExec)
   } catch (error) {
-    throw new Error(`${label} could not be opened safely: ${error.message}`)
+    throw new Error(`${label} must be an available regular non-symlink file: ${error.message}`)
   }
   try {
     const opened = fs.fstatSync(file, { bigint: true })
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
-      throw new Error(`${label} changed before it could be read`)
-    }
+    const openedPath = fs.lstatSync(filename, { bigint: true })
+    if (
+      !opened.isFile() || !openedPath.isFile() || openedPath.isSymbolicLink() ||
+      opened.dev !== openedPath.dev || opened.ino !== openedPath.ino
+    ) throw new Error(`${label} must be a regular non-symlink file with a stable identity`)
     if (opened.size <= 0n || opened.size > BigInt(installLimits.maximumManifestBytes)) {
       throw new Error(`${label} must contain 1 through ${installLimits.maximumManifestBytes} bytes`)
     }
@@ -405,6 +398,7 @@ function readNativeIntegrityManifest(filename = path.join(__dirname, 'native-int
       offset += length
     }
     const after = fs.fstatSync(file, { bigint: true })
+    const finalPath = fs.lstatSync(filename, { bigint: true })
     if (
       offset !== bytes.length
       || after.dev !== opened.dev
@@ -412,6 +406,13 @@ function readNativeIntegrityManifest(filename = path.join(__dirname, 'native-int
       || after.size !== opened.size
       || after.mtimeNs !== opened.mtimeNs
       || after.ctimeNs !== opened.ctimeNs
+      || !finalPath.isFile()
+      || finalPath.isSymbolicLink()
+      || finalPath.dev !== after.dev
+      || finalPath.ino !== after.ino
+      || finalPath.size !== after.size
+      || finalPath.mtimeNs !== after.mtimeNs
+      || finalPath.ctimeNs !== after.ctimeNs
     ) {
       throw new Error(`${label} changed while it was being read`)
     }
@@ -477,12 +478,12 @@ function trustedPosixArchiveExecutable(platform, fileSystem = fs) {
     try {
       const resolved = fileSystem.realpathSync(candidate)
       if (!path.posix.isAbsolute(resolved) || !policy.resolved.includes(resolved)) continue
-      const before = fileSystem.lstatSync(resolved)
-      if (!trustedPosixExecutableStat(before)) continue
-      fileSystem.accessSync(resolved, fs.constants.X_OK)
       descriptor = fileSystem.openSync(
         resolved,
-        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+        fs.constants.O_RDONLY |
+          (fs.constants.O_NOFOLLOW ?? 0) |
+          (fs.constants.O_NONBLOCK ?? 0) |
+          (fs.constants.O_CLOEXEC ?? 0),
       )
       const opened = fileSystem.fstatSync(descriptor)
       const after = fileSystem.lstatSync(resolved)
@@ -491,7 +492,6 @@ function trustedPosixArchiveExecutable(platform, fileSystem = fs) {
         resolvedAfter !== resolved
         || !trustedPosixExecutableStat(opened)
         || !trustedPosixExecutableStat(after)
-        || !samePosixExecutableIdentity(before, opened)
         || !samePosixExecutableIdentity(opened, after)
       ) {
         continue
@@ -542,6 +542,48 @@ function sameWindowsPath(left, right) {
   return leftKey !== null && leftKey === normalizedWindowsPathKey(right)
 }
 
+function admittedWindowsSystemRoot(systemRoot) {
+  if (
+    typeof systemRoot !== 'string' || systemRoot.length === 0 || systemRoot.length > 32_767 ||
+    /[\0-\x1f"]/.test(systemRoot) || !/^[A-Za-z]:[\\/]/.test(systemRoot) ||
+    !path.win32.isAbsolute(systemRoot) || systemRoot.slice(2).includes(':')
+  ) {
+    throw new Error('Windows system root must be an absolute local drive path')
+  }
+  const normalized = path.win32.normalize(systemRoot).replace(/[\\/]$/, '').toLowerCase()
+  // Resolve the environment value to a literal root before it can reach any
+  // filesystem or process API. All drive letters remain supported.
+  switch (normalized) {
+    case 'a:\\windows': return 'A:\\Windows'
+    case 'b:\\windows': return 'B:\\Windows'
+    case 'c:\\windows': return 'C:\\Windows'
+    case 'd:\\windows': return 'D:\\Windows'
+    case 'e:\\windows': return 'E:\\Windows'
+    case 'f:\\windows': return 'F:\\Windows'
+    case 'g:\\windows': return 'G:\\Windows'
+    case 'h:\\windows': return 'H:\\Windows'
+    case 'i:\\windows': return 'I:\\Windows'
+    case 'j:\\windows': return 'J:\\Windows'
+    case 'k:\\windows': return 'K:\\Windows'
+    case 'l:\\windows': return 'L:\\Windows'
+    case 'm:\\windows': return 'M:\\Windows'
+    case 'n:\\windows': return 'N:\\Windows'
+    case 'o:\\windows': return 'O:\\Windows'
+    case 'p:\\windows': return 'P:\\Windows'
+    case 'q:\\windows': return 'Q:\\Windows'
+    case 'r:\\windows': return 'R:\\Windows'
+    case 's:\\windows': return 'S:\\Windows'
+    case 't:\\windows': return 'T:\\Windows'
+    case 'u:\\windows': return 'U:\\Windows'
+    case 'v:\\windows': return 'V:\\Windows'
+    case 'w:\\windows': return 'W:\\Windows'
+    case 'x:\\windows': return 'X:\\Windows'
+    case 'y:\\windows': return 'Y:\\Windows'
+    case 'z:\\windows': return 'Z:\\Windows'
+    default: throw new Error('Windows system root must identify a drive-root Windows directory')
+  }
+}
+
 function canonicalWindowsPath(fileSystem, candidate) {
   const nativeRealpath = fileSystem.realpathSync?.native
   const resolver = typeof nativeRealpath === 'function' ? nativeRealpath : fileSystem.realpathSync
@@ -588,14 +630,7 @@ function sameWindowsExecutableIdentity(left, right) {
 }
 
 function trustedWindowsSystemExecutable(systemRoot, executableName, fileSystem = fs) {
-  if (
-    typeof systemRoot !== 'string' || systemRoot.length === 0 || systemRoot.length > 32_767 ||
-    /[\0-\x1f"]/.test(systemRoot) || !/^[A-Za-z]:[\\/]/.test(systemRoot) ||
-    !path.win32.isAbsolute(systemRoot) || systemRoot.slice(2).includes(':')
-  ) {
-    throw new Error('Windows system root must be an absolute local drive path')
-  }
-  const normalizedRoot = path.win32.normalize(systemRoot)
+  const normalizedRoot = admittedWindowsSystemRoot(systemRoot)
   const driveRoot = path.win32.parse(normalizedRoot).root
   if (
     sameWindowsPath(normalizedRoot, driveRoot) ||
@@ -627,12 +662,12 @@ function trustedWindowsSystemExecutable(systemRoot, executableName, fileSystem =
       !sameWindowsPath(resolvedExecutable, executableCandidate) ||
       !sameWindowsPath(path.win32.dirname(resolvedExecutable), resolvedSystem32)
     ) throw new Error(`${executableName} is redirected or is not a direct System32 child`)
-    const before = fileSystem.lstatSync(resolvedExecutable, { bigint: true })
-    if (!trustedWindowsExecutableStat(before)) throw new Error(`${executableName} is not a bounded regular file`)
-    fileSystem.accessSync(resolvedExecutable, fs.constants.R_OK)
     descriptor = fileSystem.openSync(
       resolvedExecutable,
-      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
     )
     const opened = fileSystem.fstatSync(descriptor, { bigint: true })
     const after = fileSystem.lstatSync(resolvedExecutable, { bigint: true })
@@ -640,7 +675,6 @@ function trustedWindowsSystemExecutable(systemRoot, executableName, fileSystem =
     const rootAfter = fileSystem.lstatSync(resolvedRoot, { bigint: true })
     if (
       !trustedWindowsExecutableStat(opened) || !trustedWindowsExecutableStat(after) ||
-      !sameWindowsExecutableIdentity(before, opened) ||
       !sameWindowsExecutableIdentity(opened, after) ||
       !trustedWindowsDirectoryStat(system32After) ||
       !sameWindowsDirectoryIdentity(system32Before, system32After) ||
@@ -1042,11 +1076,18 @@ async function install(options = {}) {
   }
 }
 
+function formatInstallFailure(error) {
+  return JSON.stringify(String(error?.message ?? 'unknown failure').slice(0, 4096))
+}
+
 async function main() {
   try {
     await install()
   } catch (error) {
-    console.error(`zigcss installation failed: ${error.message}`)
+    // JSON string encoding keeps remote diagnostics on one terminal line and
+    // neutralizes control characters such as newlines and ANSI escapes.
+    const diagnostic = formatInstallFailure(error)
+    console.error(`zigcss installation failed: ${diagnostic}`)
     console.error('No unverified binary was installed. This release may not have an asset for the current platform yet.')
     console.error('Build from source with the tested Zig 0.15.2 toolchain:')
     console.error('  git clone https://github.com/vyakymenko/zigcss.git')
@@ -1063,6 +1104,7 @@ module.exports = {
   archiveExecutable,
   assertBinaryMatchesTarget,
   boundedDownload,
+  formatInstallFailure,
   install,
   installLimits,
   parseChecksumManifest,

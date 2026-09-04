@@ -62,6 +62,7 @@ const packageScripts = {
   'check:benchmark-statistics': 'node scripts/report-benchmark-statistics.mjs --check',
   'test:benchmark-statistics': 'node --test scripts/report-benchmark-statistics.test.mjs',
 }
+const maximumBenchmarkExecutableBytes = 512 * 1024 * 1024
 
 function fail(message) {
   throw new Error(`benchmark statistics: ${message}`)
@@ -309,18 +310,38 @@ export function validateBenchmarkReport(report, options = {}) {
 }
 
 function confinedExecutable(root, file, label) {
-  if (!path.isAbsolute(file)) fail(`${label} path must be absolute`)
-  requireRegularFile(file, label)
+  if (!path.isAbsolute(file) || file.includes('\0')) fail(`${label} path must be absolute`)
   const realRoot = fs.realpathSync(root)
   const realFile = fs.realpathSync(file)
   const relative = path.relative(realRoot, realFile)
   if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
     fail(`${label} must remain inside the repository`)
   }
-  if (process.platform !== 'win32' && (fs.statSync(realFile).mode & 0o111) === 0) {
-    fail(`${label} must be executable`)
+  let descriptor
+  try {
+    descriptor = fs.openSync(
+      realFile,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(realFile, { bigint: true })
+    if (
+      !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      opened.dev !== pathStat.dev || opened.ino !== pathStat.ino ||
+      opened.size !== pathStat.size || opened.mtimeNs !== pathStat.mtimeNs ||
+      opened.ctimeNs !== pathStat.ctimeNs || opened.size <= 0n ||
+      opened.size > BigInt(maximumBenchmarkExecutableBytes)
+    ) fail(`${label} must be a bounded stable regular file`)
+    if (process.platform !== 'win32' && (opened.mode & 0o111n) === 0n) {
+      fail(`${label} must be executable`)
+    }
+    return realFile
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
   }
-  return realFile
 }
 
 function rawRunnerEnvironment() {
@@ -333,11 +354,17 @@ function rawRunnerEnvironment() {
   return environment
 }
 
-function runRawBenchmarkRunner(root, runnerArgument) {
+export function benchmarkRunnerPath(root = repositoryRoot, runnerArgument) {
   const defaultName = process.platform === 'win32' ? 'zigcss-bench.exe' : 'zigcss-bench'
+  const expected = path.join(root, 'zig-out', 'bin', defaultName)
+  if (runnerArgument === undefined || runnerArgument === expected) return expected
+  fail('in-process benchmark runner must be the repository ReleaseFast binary')
+}
+
+function runRawBenchmarkRunner(root, runnerArgument) {
   const runner = confinedExecutable(
     root,
-    runnerArgument ?? path.join(root, 'zig-out', 'bin', defaultName),
+    benchmarkRunnerPath(root, runnerArgument),
     'in-process benchmark runner',
   )
   const result = spawnSync(runner, ['--raw-report'], {
@@ -544,8 +571,53 @@ function parseArguments(argumentsList) {
   return options
 }
 
+export function benchmarkReportOutputPath(root = repositoryRoot, requested) {
+  if (typeof requested !== 'string' || !path.isAbsolute(requested) || requested.includes('\0')) {
+    fail('report output path must be absolute')
+  }
+  const workflowOutput = path.resolve(
+    root,
+    '..',
+    '..',
+    '_temp',
+    'zigcss-benchmark-archive',
+    'benchmark-report.json',
+  )
+  const localOutput = path.join(
+    os.tmpdir(),
+    'zigcss-benchmark-archive',
+    'benchmark-report.json',
+  )
+  if (requested === workflowOutput) return workflowOutput
+  if (requested === localOutput) return localOutput
+  fail('report output must be the dedicated benchmark archive path')
+}
+
 function writeNewReport(file, report) {
-  fs.writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  const bytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`)
+  let descriptor
+  try {
+    descriptor = fs.openSync(
+      file,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+      0o600,
+    )
+    let offset = 0
+    while (offset < bytes.length) {
+      const written = fs.writeSync(descriptor, bytes, offset, bytes.length - offset, null)
+      if (written === 0) fail('report write made no progress')
+      offset += written
+    }
+    fs.fsyncSync(descriptor)
+    const stat = fs.fstatSync(descriptor, { bigint: true })
+    if (!stat.isFile() || stat.size !== BigInt(bytes.length)) fail('report write was incomplete')
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+  }
 }
 
 function main() {
@@ -567,8 +639,9 @@ function main() {
     return
   }
   const report = createBenchmarkReport(repositoryRoot, options)
-  writeNewReport(options.output, report)
-  process.stdout.write(`Benchmark report written to ${options.output}\n`)
+  const output = benchmarkReportOutputPath(repositoryRoot, options.output)
+  writeNewReport(output, report)
+  process.stdout.write(`Benchmark report written to ${output}\n`)
 }
 
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === scriptPath) main()

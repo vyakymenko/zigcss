@@ -7,7 +7,7 @@ import {
 import { sanitizeRuntimeEnvironment } from '../../../preprocessor/environment.mjs'
 
 const mode = process.argv[2]
-sanitizeRuntimeEnvironment()
+process.env = sanitizeRuntimeEnvironment()
 
 if (mode === 'hang') {
   process.stdin.resume()

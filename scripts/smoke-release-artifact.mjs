@@ -116,12 +116,12 @@ function trustedPosixArchiveExecutable(platform, fileSystem = fs) {
     try {
       const resolved = fileSystem.realpathSync(candidate)
       if (!path.posix.isAbsolute(resolved) || !policy.resolved.includes(resolved)) continue
-      const before = fileSystem.lstatSync(resolved)
-      if (!trustedPosixExecutableStat(before)) continue
-      fileSystem.accessSync(resolved, fs.constants.X_OK)
       descriptor = fileSystem.openSync(
         resolved,
-        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+        fs.constants.O_RDONLY |
+          (fs.constants.O_NOFOLLOW ?? 0) |
+          (fs.constants.O_NONBLOCK ?? 0) |
+          (fs.constants.O_CLOEXEC ?? 0),
       )
       const opened = fileSystem.fstatSync(descriptor)
       const after = fileSystem.lstatSync(resolved)
@@ -130,7 +130,6 @@ function trustedPosixArchiveExecutable(platform, fileSystem = fs) {
         resolvedAfter !== resolved
         || !trustedPosixExecutableStat(opened)
         || !trustedPosixExecutableStat(after)
-        || !samePosixExecutableIdentity(before, opened)
         || !samePosixExecutableIdentity(opened, after)
       ) {
         continue
@@ -232,14 +231,36 @@ function validatedWindowsSystemRoot(systemRoot) {
     /[\0-\x1f"]/.test(systemRoot) || !/^[A-Za-z]:[\\/]/.test(systemRoot) ||
     !path.win32.isAbsolute(systemRoot) || systemRoot.slice(2).includes(':')
   ) fail('Windows system root must be an absolute local drive path')
-  const normalized = path.win32.normalize(systemRoot)
-  const driveRoot = path.win32.parse(normalized).root
-  if (
-    sameWindowsPath(normalized, driveRoot) ||
-    !sameWindowsPath(path.win32.dirname(normalized), driveRoot) ||
-    path.win32.basename(normalized).toLowerCase() !== 'windows'
-  ) fail('Windows system root must identify the Windows directory')
-  return normalized
+  const normalized = path.win32.normalize(systemRoot).replace(/[\\/]$/, '').toLowerCase()
+  switch (normalized) {
+    case 'a:\\windows': return 'A:\\Windows'
+    case 'b:\\windows': return 'B:\\Windows'
+    case 'c:\\windows': return 'C:\\Windows'
+    case 'd:\\windows': return 'D:\\Windows'
+    case 'e:\\windows': return 'E:\\Windows'
+    case 'f:\\windows': return 'F:\\Windows'
+    case 'g:\\windows': return 'G:\\Windows'
+    case 'h:\\windows': return 'H:\\Windows'
+    case 'i:\\windows': return 'I:\\Windows'
+    case 'j:\\windows': return 'J:\\Windows'
+    case 'k:\\windows': return 'K:\\Windows'
+    case 'l:\\windows': return 'L:\\Windows'
+    case 'm:\\windows': return 'M:\\Windows'
+    case 'n:\\windows': return 'N:\\Windows'
+    case 'o:\\windows': return 'O:\\Windows'
+    case 'p:\\windows': return 'P:\\Windows'
+    case 'q:\\windows': return 'Q:\\Windows'
+    case 'r:\\windows': return 'R:\\Windows'
+    case 's:\\windows': return 'S:\\Windows'
+    case 't:\\windows': return 'T:\\Windows'
+    case 'u:\\windows': return 'U:\\Windows'
+    case 'v:\\windows': return 'V:\\Windows'
+    case 'w:\\windows': return 'W:\\Windows'
+    case 'x:\\windows': return 'X:\\Windows'
+    case 'y:\\windows': return 'Y:\\Windows'
+    case 'z:\\windows': return 'Z:\\Windows'
+    default: fail('Windows system root must identify the Windows directory')
+  }
 }
 
 function trustedWindowsSystemExecutable(systemRoot, executableName, fileSystem = fs) {
@@ -266,12 +287,12 @@ function trustedWindowsSystemExecutable(systemRoot, executableName, fileSystem =
       !sameWindowsPath(resolvedExecutable, executableCandidate) ||
       !sameWindowsPath(path.win32.dirname(resolvedExecutable), resolvedSystem32)
     ) throw new Error(`${executableName} is redirected or is not a direct System32 child`)
-    const before = fileSystem.lstatSync(resolvedExecutable, { bigint: true })
-    if (!trustedWindowsExecutableStat(before)) throw new Error(`${executableName} is not a bounded regular file`)
-    fileSystem.accessSync(resolvedExecutable, fs.constants.R_OK)
     descriptor = fileSystem.openSync(
       resolvedExecutable,
-      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
     )
     const opened = fileSystem.fstatSync(descriptor, { bigint: true })
     const after = fileSystem.lstatSync(resolvedExecutable, { bigint: true })
@@ -279,7 +300,6 @@ function trustedWindowsSystemExecutable(systemRoot, executableName, fileSystem =
     const rootAfter = fileSystem.lstatSync(resolvedRoot, { bigint: true })
     if (
       !trustedWindowsExecutableStat(opened) || !trustedWindowsExecutableStat(after) ||
-      !sameWindowsExecutableIdentity(before, opened) ||
       !sameWindowsExecutableIdentity(opened, after) ||
       !trustedWindowsDirectoryStat(system32After) ||
       !sameWindowsDirectoryIdentity(system32Before, system32After) ||
@@ -320,20 +340,20 @@ export function lifecycleShellExecutable(
     let descriptor
     try {
       const resolved = fileSystem.realpathSync(candidate)
-      const before = fileSystem.lstatSync(resolved)
-      if (!path.posix.isAbsolute(resolved) || !trustedPosixExecutableStat(before)) {
+      if (!path.posix.isAbsolute(resolved)) {
         fail('trusted lifecycle shell is unavailable')
       }
-      fileSystem.accessSync(resolved, fs.constants.X_OK)
       descriptor = fileSystem.openSync(
         resolved,
-        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+        fs.constants.O_RDONLY |
+          (fs.constants.O_NOFOLLOW ?? 0) |
+          (fs.constants.O_NONBLOCK ?? 0) |
+          (fs.constants.O_CLOEXEC ?? 0),
       )
       const opened = fileSystem.fstatSync(descriptor)
       const after = fileSystem.lstatSync(resolved)
       if (
         !trustedPosixExecutableStat(opened) || !trustedPosixExecutableStat(after) ||
-        !samePosixExecutableIdentity(before, opened) ||
         !samePosixExecutableIdentity(opened, after) ||
         fileSystem.realpathSync(candidate) !== resolved
       ) fail('trusted lifecycle shell changed identity')
@@ -529,54 +549,59 @@ export function parseSmokeArguments(args) {
   }
   const required = ['--archive', '--binary', '--target', '--version']
   const allowed = new Set([...required, '--npm-package', '--commit', '--evidence'])
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
     if (!allowed.has(name)) fail(`unknown smoke argument ${JSON.stringify(name)}`)
-    if (Object.hasOwn(values, name)) fail(`duplicate smoke argument ${name}`)
+    if (values.has(name)) fail(`duplicate smoke argument ${name}`)
     if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) fail(`${name} has an invalid value`)
-    values[name] = value
+    values.set(name, value)
   }
-  for (const name of required) if (!Object.hasOwn(values, name)) fail(`missing smoke argument ${name}`)
+  for (const name of required) if (!values.has(name)) fail(`missing smoke argument ${name}`)
+  const version = values.get('--version')
+  const target = values.get('--target')
   try {
-    parseReleaseVersion(values['--version'], 'release smoke version')
+    parseReleaseVersion(version, 'release smoke version')
   } catch (error) {
     fail(error.message)
   }
-  if (!nativeSmokeTargets.some(item => item.target === values['--target'])) {
-    fail(`unsupported release smoke target ${JSON.stringify(values['--target'])}`)
+  if (!nativeSmokeTargets.some(item => item.target === target)) {
+    fail(`unsupported release smoke target ${JSON.stringify(target)}`)
   }
-  const hasNpmPackage = Object.hasOwn(values, '--npm-package')
+  const hasNpmPackage = values.has('--npm-package')
+  const npmPackage = values.get('--npm-package')
   if (
     hasNpmPackage
     && (
-      !path.isAbsolute(values['--npm-package'])
-      || path.basename(values['--npm-package']) !== `zigcss-${values['--version']}.tgz`
+      !path.isAbsolute(npmPackage)
+      || path.basename(npmPackage) !== `zigcss-${version}.tgz`
     )
   ) {
     fail('npm package smoke input must be the absolute versioned zigcss archive path')
   }
-  const hasCommit = Object.hasOwn(values, '--commit')
-  const hasEvidence = Object.hasOwn(values, '--evidence')
+  const hasCommit = values.has('--commit')
+  const hasEvidence = values.has('--evidence')
+  const commit = values.get('--commit')
+  const evidence = values.get('--evidence')
   if (hasCommit !== hasEvidence) fail('commit and evidence arguments must be supplied together')
-  if (hasCommit && !/^[0-9a-f]{40}$/.test(values['--commit'])) {
+  if (hasCommit && !/^[0-9a-f]{40}$/.test(commit)) {
     fail('native target evidence commit must be a lowercase 40-character object ID')
   }
-  const expectedEvidence = `${nativeTargetEvidenceDirectory}/${values['--target']}.json`
-  if (hasEvidence && values['--evidence'] !== expectedEvidence) {
+  const expectedEvidence = `${nativeTargetEvidenceDirectory}/${target}.json`
+  if (hasEvidence && evidence !== expectedEvidence) {
     fail(`native target evidence path must be ${expectedEvidence}`)
   }
   const options = {
-    archive: values['--archive'],
-    binary: values['--binary'],
-    target: values['--target'],
-    version: values['--version'],
+    archive: values.get('--archive'),
+    binary: values.get('--binary'),
+    target,
+    version,
   }
-  if (hasNpmPackage) options.npmPackage = values['--npm-package']
+  if (hasNpmPackage) options.npmPackage = npmPackage
   if (hasCommit) {
-    options.commit = values['--commit']
-    options.evidence = values['--evidence']
+    options.commit = commit
+    options.evidence = evidence
   }
   return options
 }
@@ -708,7 +733,6 @@ function child(command, args, options = {}) {
 function npmCliPath() {
   const executableDirectory = path.dirname(process.execPath)
   const candidates = [
-    process.env.npm_execpath,
     path.resolve(executableDirectory, '../lib/node_modules/npm/bin/npm-cli.js'),
     path.resolve(executableDirectory, '../node_modules/npm/bin/npm-cli.js'),
     path.resolve(executableDirectory, 'node_modules/npm/bin/npm-cli.js'),
@@ -1261,24 +1285,63 @@ export function writeNativeTargetEvidence(rootInput, relativePath, evidenceInput
   }
 
   const filename = path.join(root, ...relativePath.split('/'))
-  try {
-    fs.lstatSync(filename)
-    fail('native target evidence already exists')
-  } catch (error) {
-    if (error.message.startsWith('release smoke integrity:')) throw error
-    if (error.code !== 'ENOENT') fail(`native target evidence output is unavailable: ${error.message}`)
-  }
   const bytes = `${JSON.stringify(evidence, null, 2)}\n`
   if (Buffer.byteLength(bytes) > 64 * 1024) fail('native target evidence exceeds its byte limit')
+  const expectedBytes = Buffer.from(bytes)
+  let descriptor
   try {
-    fs.writeFileSync(filename, bytes, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_RDWR |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+      0o600,
+    )
+    let offset = 0
+    while (offset < expectedBytes.length) {
+      const written = fs.writeSync(
+        descriptor,
+        expectedBytes,
+        offset,
+        expectedBytes.length - offset,
+        offset,
+      )
+      if (written === 0) fail('native target evidence write made no progress')
+      offset += written
+    }
+    fs.fsyncSync(descriptor)
+    const writtenStat = fs.fstatSync(descriptor, { bigint: true })
+    const actualBytes = Buffer.alloc(expectedBytes.length)
+    let readOffset = 0
+    while (readOffset < actualBytes.length) {
+      const read = fs.readSync(
+        descriptor,
+        actualBytes,
+        readOffset,
+        actualBytes.length - readOffset,
+        readOffset,
+      )
+      if (read === 0) break
+      readOffset += read
+    }
+    const finalStat = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(filename, { bigint: true })
+    if (
+      !writtenStat.isFile() || !finalStat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      writtenStat.dev !== finalStat.dev || writtenStat.ino !== finalStat.ino ||
+      writtenStat.size !== finalStat.size || writtenStat.mtimeNs !== finalStat.mtimeNs ||
+      writtenStat.ctimeNs !== finalStat.ctimeNs || finalStat.dev !== pathStat.dev ||
+      finalStat.ino !== pathStat.ino || BigInt(readOffset) !== finalStat.size ||
+      !actualBytes.equals(expectedBytes)
+    ) fail('native target evidence write was not byte-exact')
   } catch (error) {
     if (error.code === 'EEXIST') fail('native target evidence already exists')
+    if (error.message.startsWith('release smoke integrity:')) throw error
     fail(`native target evidence write failed: ${error.message}`)
-  }
-  const stat = fs.lstatSync(filename)
-  if (!stat.isFile() || stat.isSymbolicLink() || fs.readFileSync(filename, 'utf8') !== bytes) {
-    fail('native target evidence write was not byte-exact')
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
   }
   return relativePath
 }

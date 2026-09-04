@@ -2,6 +2,8 @@
 tests/preprocessors/sass/corpus/cases/** -whitespace
 
 # Native conformance preserves authored text-fixture bytes across every checkout host.
+VERSION text eol=lf
+native-integrity.json text eol=lf
 tests/preprocessors/sass/corpus/cases/**/*.css text eol=lf
 tests/preprocessors/sass/corpus/cases/**/*.sass text eol=lf
 tests/preprocessors/sass/corpus/cases/**/*.scss text eol=lf

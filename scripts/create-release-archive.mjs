@@ -55,22 +55,22 @@ export function parseArchiveArguments(args) {
     fail('expected exactly --binary, --archive, and --source-date-epoch')
   }
   const allowed = new Set(['--binary', '--archive', '--source-date-epoch'])
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const option = args[index]
     const value = args[index + 1]
     if (!allowed.has(option)) fail(`unsupported option ${JSON.stringify(option)}`)
-    if (Object.hasOwn(values, option)) fail(`duplicate option ${option}`)
+    if (values.has(option)) fail(`duplicate option ${option}`)
     if (typeof value !== 'string' || value.length === 0 || value.startsWith('--')) {
       fail(`${option} requires one value`)
     }
-    values[option] = value
+    values.set(option, value)
   }
-  if (!same(Object.keys(values).sort(), [...allowed].sort())) fail('required archive options are missing')
+  if (!same([...values.keys()].sort(), [...allowed].sort())) fail('required archive options are missing')
   return Object.freeze({
-    binary: values['--binary'],
-    archive: values['--archive'],
-    sourceDateEpoch: parseSourceDateEpoch(values['--source-date-epoch']),
+    binary: values.get('--binary'),
+    archive: values.get('--archive'),
+    sourceDateEpoch: parseSourceDateEpoch(values.get('--source-date-epoch')),
   })
 }
 

@@ -18,13 +18,13 @@ Active source candidate `0.7.0-rc.1` is unpublished. The current source snapshot
 
 [Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started/) · [Documentation](https://vyakymenko.github.io/zigcss/docs/guide/status/) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Stable package identity: 0.6.0 — published.** npm `latest` serves `zigcss@0.6.0`, and the matching non-prerelease [GitHub Release](https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0) carries 25 verified release files: 15 attested archive/checksum/SBOM subjects and 10 Sigstore bundle files. The immutable `0.6.0-rc.2` prerelease remains on `next` as historical release evidence.
+> **Stable package identity: 0.6.0 — published.** npm `latest` serves `zigcss@0.6.0` as an immutable version, and the matching non-prerelease [GitHub Release](https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0) carries 25 verified release files: 15 attested archive/checksum/SBOM subjects and 10 Sigstore bundle files. Historical npm version `0.6.0-rc.2` remains on `next`. Both historical GitHub releases predate Immutable Releases and read back `immutable: false`; `0.7.0-rc.1` must be the first true immutable GitHub Release.
 
 > **Active source candidate: 0.7.0-rc.1 — unpublished.** The current tree extends the native CLI with dependency files, target prefixing, all-syntax optimizer and Source Map guarantees, hardened output commits, and deterministic cross-platform batch naming. It also adds a typed programmatic Node.js API and `zigcss-install` recovery entry point at the package root; experimental adapters for Vite, Rollup, esbuild, Bun, Webpack, and Rspack; bounded Next.js 16.3.4 Turbopack and Webpack host proofs that reuse `zigcss/webpack`; pinned SvelteKit 2.70.3, Astro 7.2.10, and Nuxt 4.5.2 external CSS Module examples that reuse `zigcss/vite`; and a real local-transformer Parcel example. None of these additions rewrites the published 0.6.0 artifact. Use them directly from a checkout after building its current native binary. The distinct prerelease identity prevents a source package from masquerading as stable `zigcss@0.6.0`; it still is not registry delivery until matching native archives pass the release gates.
 
 `release/next-release.json` selects `0.7.0-rc.1` as the planned candidate with `candidateReady: false`. It remains blocked from tagging and publication until all seven pre-tag gates pass; stable `0.6.0` remains the only `latest` identity while that work is open.
 
-Active source versioning is independent of immutable published-stable evidence: `VERSION`, package metadata, the CLI, and source-only surfaces advance together, while `release/stable-promotion.json` and `Formula/zigcss.rb` continue to describe the latest independently verified stable publication until a later release completes its own gates.
+Active source versioning is independent of closed published-stable evidence: `VERSION`, package metadata, the CLI, and source-only surfaces advance together, while `release/stable-promotion.json` and `Formula/zigcss.rb` continue to describe the latest independently verified stable publication until a later release completes its own gates.
 
 ## Native dependency-free migration
 
@@ -32,7 +32,7 @@ Publication of the provider-backed 0.5 candidate was cancelled before tagging. D
 
 The current native package contract has zero `dependencies` and zero `optionalDependencies`. The compiler itself starts no child process, performs no network access, and requires no runtime download. Five archive and offline-package jobs cover Linux x64/arm64, macOS x64/arm64, and Windows x64.
 
-The native implementation was first proven on immutable `0.6.0-rc.2`: its historical machine contract records `nativeReleaseReady: true`, and all nine pre-tag evidence surfaces, five attested target archives, offline consumers, and provenance passed. GitHub prerelease and npm `next` publication are verified for that immutable RC. Stable `0.6.0` then passed its separate ten-gate terminal and was published from immutable tag `v0.6.0`; it does not rewrite the RC or loosen any gate.
+The native implementation was first proven on protected historical tag `v0.6.0-rc.2`: its machine contract records `nativeReleaseReady: true`, and all nine pre-tag evidence surfaces, five attested target archives, offline consumers, and provenance passed. GitHub prerelease and npm `next` publication are verified; GitHub prerelease 369856953 reads back `immutable: false`, while npm version `0.6.0-rc.2` is immutable. Stable `0.6.0` then passed its separate ten-gate terminal and was published from protected tag `v0.6.0`; GitHub Release 372291445 also reads back `immutable: false`, while npm version `0.6.0` is immutable.
 
 `NATIVE-008` closed the finite source-capability inventory. `NATIVE-009` graduated the four preprocessor machine rows together and closed the exact prerelease terminal with five native archives, 25 release assets, one GitHub prerelease, and npm `next`; executable preprocessor extension parity remains outside the contract. `REL-010` owns the separate stable tag, npm `latest`, Pages, and public readback.
 
@@ -110,7 +110,7 @@ The published stable package exposes the five explicit native language selection
 | Less (`.less`) | Native Less parser/evaluator | `native-graduated` |
 | Stylus (`.styl`) | Native Stylus parser/evaluator | `native-graduated` |
 
-`native-graduated` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, five-target, documentation, release, and publication gates passed for the immutable release line. It does not grant executable provider or plugin extension points.
+`native-graduated` means the pinned corpus, negative/resource, deterministic, generated-CSS, product-routing, package, five-target, documentation, release, and publication gates passed for the closed verified release line. It does not grant executable provider or plugin extension points.
 
 To build the exact stable five-language source snapshot locally:
 
@@ -550,7 +550,7 @@ The experimental CSS LSP covers bounded JSON-RPC framing, full document sync, UT
 
 Its release checks pass large-document, Unicode, malformed-request, leak, and editor-integration gates.
 
-- The immutable historical VS Code proof remains a Marketplace-compatible package version 0.6.0 mapped to core 0.6.0-rc.2. The current source extension is version 0.7.0, aligned with core candidate 0.7.0-rc.1; publication remains unauthorized, so build and install the verified pre-release VSIX locally with a separately installed ZigCSS binary.
+- The closed historical VS Code proof remains a Marketplace-compatible package version 0.6.0 mapped to core 0.6.0-rc.2. The current source extension is version 0.7.0, aligned with core candidate 0.7.0-rc.1; publication remains unauthorized, so build and install the verified pre-release VSIX locally with a separately installed ZigCSS binary.
 - The [Neovim configuration](neovim-config/README.md) uses the built-in LSP client and an explicit trusted executable path.
 
 Neither integration bundles a compiler binary.
@@ -566,9 +566,9 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 - Future-release integrity in the current source: deterministic single-entry archives use the committed `sourceDateEpoch`; a future tag workflow requires every fresh archive to match the exact digest committed in `native-integrity.json`, while its npm installer cross-checks that npm-carried digest against GitHub before downloading the archive. Published stable 0.6.0 predates this independent npm-carried inventory.
 - Ecosystem delivery: CI requires six install variants across npm, pnpm 11.25.0, Yarn Classic 1.22.22, Yarn Modern 4.9.4 (`node-modules` and default Plug'n'Play), and Bun 1.4.0; the source tree also carries pinned Next.js Turbopack and Webpack, SvelteKit, Astro, and Nuxt host proofs, Make, Ninja, CMake, Meson, local Parcel 2.16.4, and stable Homebrew evidence without claiming unshipped public integrations.
 - Reference engines: Dart Sass 1.101.0, Less 4.9.0, and Stylus 0.64.0 remain development-only and excluded from production bytes and runtime execution; Less forward-checks the frozen 4.6.7 native baseline, and CI separately audits the complete root, documentation, and VS Code development/build graphs.
-- Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; `NATIVE-009` binds the immutable prerelease evidence and `REL-010` binds the stable identity.
+- Public capability graduation: all seven predeclared `NATIVE-008` surfaces match native evidence; `NATIVE-009` binds the closed prerelease evidence and `REL-010` binds the stable identity.
 - Controlled comparative benchmark: the machine-verifiable bare-metal gate is implemented; publication is waiting for the dedicated Linux x64 runner and its scheduled archive.
-- Stable publication: verified on immutable tag `v0.6.0` at commit `6786655d66ca65c5a06421c8ed70d84183722dce`; the GitHub Release's 15 attested archive/checksum/SBOM subjects and 10 Sigstore bundle files, npm `latest`, SLSA provenance, preserved `next`, and anonymous five-syntax installation all passed exact readback. The immutable RC remains separate.
+- Stable publication: verified on protected tag `v0.6.0` at commit `6786655d66ca65c5a06421c8ed70d84183722dce`; the GitHub Release's 15 attested archive/checksum/SBOM subjects and 10 Sigstore bundle files, npm `latest`, SLSA provenance, preserved `next`, and anonymous five-syntax installation all passed exact readback. Historical GitHub Release 372291445 reads back `immutable: false`; the immutable npm version and separately closed RC remain unchanged.
 
 The completed recovery plan and its verbose execution ledger were retired after stable publication. Git history preserves the audit trail; accepted [architecture decisions](docs/adr/README.md), machine-readable native and stable-release contracts, release metadata, and executable tests remain the maintained evidence.
 

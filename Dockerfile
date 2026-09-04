@@ -3,11 +3,11 @@
 # Keep each downloadable Zig archive content-addressed. BuildKit selects only
 # the stage matching TARGETARCH, so an emulated cross-platform build never
 # executes a host-architecture compiler by accident.
-FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS zig-amd64
+FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS zig-amd64
 ADD --checksum=sha256:02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239 https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz /tmp/zig.tar.xz
 RUN test "$(wc -c < /tmp/zig.tar.xz)" -eq 53733924
 
-FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS zig-arm64
+FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS zig-arm64
 ADD --checksum=sha256:958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f https://ziglang.org/download/0.15.2/zig-aarch64-linux-0.15.2.tar.xz /tmp/zig.tar.xz
 RUN test "$(wc -c < /tmp/zig.tar.xz)" -eq 49471996
 

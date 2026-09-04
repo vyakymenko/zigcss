@@ -163,6 +163,19 @@ test('evidence anchors cannot escape through a symlink', () => {
     }
 
     assert.throws(() => validateMetadata(metadata, root), /anchor escapes the repository/)
+
+    fs.rmSync(path.join(root, 'evidence-link'), { recursive: true })
+    const evidence = path.join(root, 'evidence.txt')
+    const evidenceLink = path.join(root, 'evidence-link.txt')
+    fs.writeFileSync(evidence, 'verified')
+    metadata.gates.evidence.anchors[0].path = 'evidence-link.txt'
+    if (process.platform !== 'win32') {
+      fs.symlinkSync(evidence, evidenceLink)
+      assert.throws(() => validateMetadata(metadata, root), /regular non-symlink file/)
+      fs.rmSync(evidenceLink)
+    }
+    fs.writeFileSync(evidenceLink, Buffer.alloc((2 * 1024 * 1024) + 1))
+    assert.throws(() => validateMetadata(metadata, root), /must contain 1 through 2097152 bytes/)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
     fs.rmSync(outside, { recursive: true, force: true })

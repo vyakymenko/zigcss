@@ -526,6 +526,15 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, releaseConcurrency, 1, 'immutable release concurrency policy')
   const permissions = '    permissions:\n      attestations: write\n      contents: read\n      id-token: write'
   expectLiteralCount(source, permissions, 1, 'release attestation permissions')
+  const setupNode = actionPins['actions/setup-node']
+  if (setupNode === undefined) fail('actions/setup-node has no reviewed immutable pin')
+  expectLiteralCount(
+    source,
+    `uses: actions/setup-node@${setupNode.sha} # ${setupNode.version}`,
+    5,
+    'pinned Node runtime across every release job that executes Node',
+  )
+  expectLiteralCount(source, "          node-version: '24.20.0'", 5, 'exact Node release runtime')
 
   const actualTargets = workflowTargets(source)
   const expectedTargets = releaseTargets.map(target => ({
@@ -625,14 +634,55 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, '- name: Smoke Native Archive and npm Installation', 1, 'native release smoke step')
   expectLiteralCount(source, 'node scripts/smoke-release-artifact.mjs \\', 1, 'native release smoke command')
   expectLiteralCount(source, '- name: Verify npm publication authority', 1, 'npm publication preflight')
-  expectLiteralCount(source, '          npm whoami', 1, 'npm publication credential preflight')
+  const npmAuthorityStep = [
+    '      - name: Verify npm publication authority',
+    '        id: npm-policy',
+    '        shell: bash',
+    '        env:',
+    '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}',
+    '        run: |',
+    '          set -euo pipefail',
+    '          version="${GITHUB_REF_NAME#v}"',
+    '          versions="$RUNNER_TEMP/zigcss-npm-versions.json"',
+    '          versions_attempt="$versions.attempt"',
+    '          for attempt in 1 2 3 4; do',
+    '            if timeout 30s npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then',
+    '              break',
+    '            fi',
+    '            if [[ "$attempt" == 4 ]]; then',
+    '              echo "npm credential verification failed after 4 bounded attempts" >&2',
+    '              exit 1',
+    '            fi',
+    '            sleep 5',
+    '          done',
+    '          for attempt in 1 2 3 4; do',
+    '            if timeout 30s npm view zigcss versions --json --registry=https://registry.npmjs.org/ > "$versions_attempt"; then',
+    '              mv -- "$versions_attempt" "$versions"',
+    '              break',
+    '            fi',
+    '            if [[ "$attempt" == 4 ]]; then',
+    '              echo "npm registry authority readback failed after 4 bounded attempts" >&2',
+    '              exit 1',
+    '            fi',
+    '            sleep 5',
+    '          done',
+    '          node scripts/check-npm-version-availability.mjs \\',
+    '            --version "$version" \\',
+    '            --versions-file "$versions" \\',
+    '            --github-output "$GITHUB_OUTPUT"',
+  ].join('\n')
+  expectLiteralCount(source, npmAuthorityStep, 1, 'bounded npm publication authority preflight')
+  expectLiteralCount(source, 'timeout 30s npm whoami --registry=https://registry.npmjs.org/', 1, 'private-output canonical-registry npm credential preflight')
+  expectLiteralCount(source, 'timeout 30s npm view zigcss versions --json --registry=https://registry.npmjs.org/', 1, 'bounded canonical-registry npm version authority readback')
+  expectLiteralCount(source, '          for attempt in 1 2 3 4; do', 2, 'npm authority retry loops')
+  expectLiteralCount(source, '            sleep 5', 2, 'npm authority bounded retry delays')
   expectLiteralCount(
     source,
     '          node scripts/check-npm-version-availability.mjs \\',
     1,
     'npm immutable-version preflight',
   )
-  expectLiteralCount(source, '            --github-output "$GITHUB_OUTPUT"', 2, 'bounded npm preflight outputs')
+  expectLiteralCount(source, '            --github-output "$GITHUB_OUTPUT"', 3, 'bounded publication state outputs')
   expectLiteralCount(
     source,
     '      release-channel: ${{ steps.npm-policy.outputs.channel }}',
@@ -644,6 +694,18 @@ export function validateReleaseWorkflowSource(source) {
     '      github-prerelease: ${{ steps.npm-policy.outputs.github_prerelease }}',
     1,
     'GitHub release mode output',
+  )
+  expectLiteralCount(
+    source,
+    '      github-make-latest: ${{ steps.npm-policy.outputs.github_make_latest }}',
+    1,
+    'channel-aware GitHub latest output',
+  )
+  expectLiteralCount(
+    source,
+    '      npm-already-published: ${{ steps.npm-policy.outputs.already_published }}',
+    1,
+    'resumable npm publication output',
   )
   for (const [output, label] of [
     ['      npm-package-archive: ${{ steps.npm-package.outputs.archive-name }}', 'exact npm archive job output'],
@@ -673,24 +735,101 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, '          pattern: zigcss-*', 1, 'closed GitHub release artifact selection')
   expectLiteralCount(
     source,
-    '        run: npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+    '          if ! timeout 300s npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance; then',
     1,
-    'exact channel-aware npm publication',
+    'bounded ambiguity-safe channel-aware npm publication',
   )
   expectLiteralCount(source, 'npm publish', 1, 'publish-once npm release policy')
+  expectLiteralCount(source, '      - name: Verify exact resumable npm publication\n', 1, 'exact npm resume gate')
+  expectLiteralCount(source, "        if: steps.npm-policy.outputs.already_published == 'true'", 1, 'verified existing npm publication condition')
+  expectLiteralCount(source, "        if: needs.npm-preflight.outputs.npm-already-published != 'true'", 1, 'create-only npm publication condition')
+  expectLiteralCount(
+    source,
+    '            echo "npm publication response was inconclusive; continuing to authoritative readback" >&2',
+    1,
+    'ambiguous npm publication recovery',
+  )
   expectLiteralCount(
     source,
     '          prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}',
     1,
     'channel-aware GitHub release',
   )
+  const releaseAction = actionPins['softprops/action-gh-release']
+  if (releaseAction === undefined) fail('softprops/action-gh-release has no reviewed immutable pin')
+  expectLiteralCount(
+    source,
+    `uses: softprops/action-gh-release@${releaseAction.sha} # ${releaseAction.version}`,
+    1,
+    'pinned GitHub release action',
+  )
+  for (const [literal, label] of [
+    ['    environment:\n      name: immutable-release', 'mandatory immutable-release approval environment'],
+    ['          tag_name: ${{ github.ref_name }}', 'exact GitHub release tag'],
+    ['          target_commitish: ${{ github.sha }}', 'exact GitHub release commit'],
+    ['          files: artifacts/**/*', 'closed GitHub release file glob'],
+    ['          draft: true', 'draft-first GitHub release'],
+    ['          make_latest: false', 'draft latest exclusion'],
+    ['          overwrite_files: true', 'controlled draft GitHub release asset reconciliation'],
+    ['          fail_on_unmatched_files: true', 'fail-closed GitHub release file glob'],
+    ['          timeout 60s gh api graphql \\', 'bounded exact release discovery'],
+    ["            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){databaseId,isDraft,isPrerelease,tagName}}}' \\", 'draft-aware exact release selector'],
+    ['          if ! timeout 30s gh api --method PATCH \\', 'single ambiguity-safe GitHub release publication'],
+    ['              -F draft=false \\', 'single GitHub release point of no return'],
+    ['              -F "prerelease=$GITHUB_PRERELEASE" \\', 'preserved GitHub prerelease channel'],
+    ['              -f "make_latest=$GITHUB_MAKE_LATEST" \\', 'channel-aware published latest routing'],
+    ['            --phase tag', 'exact lightweight tag binding'],
+    ["        if: needs.npm-preflight.outputs.github-make-latest == 'true'", 'stable-only GitHub Latest readback'],
+    ['              "repos/$GITHUB_REPOSITORY/releases/latest" > "$release_latest" && \\', 'exact GitHub Latest endpoint'],
+    ['                --phase latest; then', 'stable GitHub Latest identity verification'],
+    ['          release_attestation="$RUNNER_TEMP/zigcss-release-attestation.json"', 'immutable release attestation output'],
+    ['            if timeout 30s gh release verify "$GITHUB_REF_NAME" \\', 'bounded immutable release attestation verification'],
+    ['              --repo "$GITHUB_REPOSITORY" \\', 'release attestation repository identity'],
+    ['              --format json > "$release_attestation" && \\', 'signature-verified release attestation evidence'],
+    ['                --attestation-json "$release_attestation" \\', 'bounded release attestation payload'],
+    ['                --repository "$GITHUB_REPOSITORY" \\\n                --release-id "$RELEASE_ID" \\', 'attested release repository and ID binding'],
+    ['                --phase attestation; then', 'exact release attestation subject verification'],
+  ]) {
+    expectLiteralCount(source, literal, 1, label)
+  }
+  expectLiteralCount(source, 'IMMUTABLE_RELEASES_READ_TOKEN', 0, 'stored immutable-releases administration credential')
+  expectLiteralCount(
+    source,
+    "        if: steps.github-release-state.outputs.release-mode != 'published'",
+    3,
+    'create, draft verification, and publication resume conditions',
+  )
+  expectLiteralCount(
+    source,
+    '          if [[ "$RELEASE_MODE" == draft && "$release_id" != "$DISCOVERED_RELEASE_ID" ]]; then',
+    1,
+    'partial-draft release ID reconciliation',
+  )
+  expectLiteralCount(
+    source,
+    '"repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" > "$tag_ref"',
+    2,
+    'pre-publish and immutable lightweight tag readbacks',
+  )
+  expectLiteralCount(source, 'timeout 30s gh api', 6, 'bounded GitHub release API transitions')
+  expectLiteralCount(source, '          draft: false', 0, 'immediate mutable GitHub release publication')
+  expectLiteralCount(source, 'node scripts/verify-github-release-assets.mjs', 7, 'GitHub release integrity verifier')
+  for (const phase of ['local', 'discovery', 'draft', 'tag', 'published', 'latest', 'attestation']) {
+    expectLiteralCount(source, `--phase ${phase}`, 1, `GitHub release ${phase} verification`)
+  }
+  expectLiteralCount(source, '--phase setting', 0, 'workflow-held repository administration readback')
+  expectLiteralCount(source, '--phase absent', 0, 'unbounded release absence enumeration')
+  expectLiteralCount(source, '          for attempt in 1 2 3 4 5 6; do', 4, 'bounded draft and immutable release readback retries')
+  expectLiteralCount(source, 'X-GitHub-Api-Version: 2026-03-10', 6, 'versioned GitHub release API calls')
+  expectLiteralCount(source, '          RELEASE_ID: ${{ steps.release-identity.outputs.release-id }}', 5, 'resolved exact GitHub release ID handoff')
+  expectLiteralCount(source, '\n          RELEASE_ID: ${{ steps.github-release.outputs.id }}\n', 0, 'unreconciled action release ID handoff')
   expectLiteralCount(source, 'npm version ', 0, 'npm package version mutation')
   expectLiteralCount(source, '      - name: Verify npm publication\n', 1, 'npm publication readback')
   expectLiteralCount(
     source,
     '        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}" --archive "$NPM_PACKAGE_ARCHIVE"',
-    1,
-    'exact bounded npm publication readback',
+    2,
+    'initial-resume and terminal npm publication readbacks',
   )
   expectLiteralCount(
     source,
@@ -699,6 +838,12 @@ export function validateReleaseWorkflowSource(source) {
     'exact npm package archive binding',
   )
   expectLiteralCount(source, '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 2, 'bounded npm token use')
+  expectLiteralCount(
+    source,
+    '  publish-npm:\n    name: Publish to npm\n    needs: [npm-preflight, create-release]\n    runs-on: ubuntu-latest\n    timeout-minutes: 60',
+    1,
+    'bounded npm publication job budget',
+  )
 
   expectOrdered(source, [
     '  npm-preflight:',
@@ -706,6 +851,7 @@ export function validateReleaseWorkflowSource(source) {
     'node scripts/validate-native-integrity.mjs --check',
     '- name: Verify npm publication authority',
     '- name: Pack exact npm package',
+    '- name: Verify exact resumable npm publication',
     '- name: Upload exact npm package',
     '  release:',
     '    needs: npm-preflight',
@@ -726,14 +872,23 @@ export function validateReleaseWorkflowSource(source) {
     '- name: Upload Release Assets',
     '  create-release:',
     '    needs: [npm-preflight, release]',
+    '- name: Setup Node.js',
     '- name: Download All Artifacts',
-    '- name: Create Release',
+    '- name: Verify exact local release inventory',
+    '- name: Discover resumable GitHub release state',
+    '- name: Create verified draft release',
+    '- name: Resolve exact GitHub release ID',
+    '- name: Verify draft release identity and assets',
+    '- name: Publish immutable GitHub release',
+    '- name: Verify immutable release readback',
+    '- name: Verify stable Latest release identity',
+    '- name: Verify immutable release attestation',
     '  publish-npm:',
     '    needs: [npm-preflight, create-release]',
     '- name: Download exact npm package',
     '- name: Verify exact npm package handoff',
     '- name: Publish to npm',
-    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance',
     '      - name: Verify npm publication\n',
   ])
 
@@ -746,7 +901,9 @@ export function validateReleaseWorkflowSource(source) {
     signatureVerifications: 2,
     npmPreflight: true,
     npmChannels: ['next', 'latest'],
-    githubReleaseMode: 'semver',
+    githubReleaseMode: 'immutable-semver',
+    githubApprovalEnvironment: 'immutable-release',
+    githubReleaseAttestation: true,
     npmProvenance: true,
   }
 }
@@ -1038,7 +1195,7 @@ function main() {
   if (same(args, ['--check-workflow'])) {
     const result = validateReleaseWorkflow()
     process.stdout.write(
-      `Release workflow metadata verified: ${result.targets} native-smoked targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications, npm ${result.npmChannels.join('/')} SemVer channels with provenance.\n`,
+      `Release workflow metadata verified: ${result.targets} native-smoked targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications, immutable GitHub release attestation, npm ${result.npmChannels.join('/')} SemVer channels with provenance.\n`,
     )
     return
   }

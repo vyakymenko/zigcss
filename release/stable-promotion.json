@@ -12,6 +12,7 @@
     "tag": "v0.6.0-rc.2",
     "commit": "b63e190f7edeccd829abe34bfb96d9e1a8a320e2",
     "githubReleaseId": 369856953,
+    "githubImmutable": false,
     "npmDistTag": "next"
   },
   "candidateSelection": {
@@ -128,8 +129,8 @@
       "id": "tag-workflow-publication",
       "state": "verified",
       "evidence": [
-        "Release run 32130950531 attempt 1 completed success on immutable v0.6.0 at 6786655d66ca65c5a06421c8ed70d84183722dce",
-        "GitHub release 372291445 is non-draft, non-prerelease, and owns the exact 25-asset inventory",
+        "Release run 32130950531 attempt 1 completed success on protected tag v0.6.0 at 6786655d66ca65c5a06421c8ed70d84183722dce",
+        "GitHub release 372291445 is non-draft, non-prerelease, reads back immutable=false, and owns the exact 25-asset inventory",
         "npm serves exact zigcss@0.6.0 on latest with SLSA provenance, preserves next at 0.6.0-rc.2, and passed anonymous five-syntax installation"
       ]
     }
@@ -144,6 +145,7 @@
     "githubReleaseUrl": "https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0",
     "githubPrerelease": false,
     "githubDraft": false,
+    "githubImmutable": false,
     "githubPublishedAt": "2026-08-18T11:23:10Z",
     "githubAssetCount": 25,
     "githubAssetBytes": 16374807,

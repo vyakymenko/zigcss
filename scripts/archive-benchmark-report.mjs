@@ -20,7 +20,7 @@ const contract = {
     labels: ['self-hosted', 'linux', 'x64', 'zigcss-benchmark-v1'],
     platform: 'linux',
     architecture: 'x64',
-    nodeVersion: '22.22.0',
+    nodeVersion: '24.20.0',
     fingerprintFields: [
       'platform',
       'architecture',
@@ -405,7 +405,8 @@ function parseCommand(argumentsList) {
   if (!['--write', '--check'].includes(argumentsList[0]) || argumentsList.length !== 9) {
     fail('usage: node scripts/archive-benchmark-report.mjs --check-policy|--write|--check --directory absolute-path --commit sha --run-id id --run-attempt attempt')
   }
-  const result = { mode: argumentsList[0].slice(2) }
+  const mode = argumentsList[0].slice(2)
+  const values = new Map()
   const seen = new Set()
   for (let index = 1; index < argumentsList.length; index += 2) {
     const name = argumentsList[index]
@@ -414,13 +415,20 @@ function parseCommand(argumentsList) {
       fail('archive command arguments are invalid or duplicated')
     }
     seen.add(name)
-    result[name.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value
+    values.set(name, value)
   }
   if (!same([...seen].sort(), ['--commit', '--directory', '--run-attempt', '--run-id'])) {
     fail('archive command is missing a required argument')
   }
-  if (!path.isAbsolute(result.directory)) fail('archive directory argument must be absolute')
-  return result
+  const directory = values.get('--directory')
+  if (!path.isAbsolute(directory)) fail('archive directory argument must be absolute')
+  return {
+    mode,
+    directory,
+    commit: values.get('--commit'),
+    runId: values.get('--run-id'),
+    runAttempt: values.get('--run-attempt'),
+  }
 }
 
 function main() {

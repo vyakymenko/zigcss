@@ -8,22 +8,43 @@
   "candidateTag": "v0.7.0-rc.1",
   "npmDistTag": "next",
   "githubPrerelease": true,
-  "immutableHistory": [
+  "closedHistory": [
     {
       "version": "0.6.0-rc.2",
       "tag": "v0.6.0-rc.2",
       "commit": "b63e190f7edeccd829abe34bfb96d9e1a8a320e2",
+      "githubReleaseId": 369856953,
+      "githubImmutable": false,
       "npmDistTag": "next",
+      "npmVersionImmutable": true,
       "githubPrerelease": true
     },
     {
       "version": "0.6.0",
       "tag": "v0.6.0",
       "commit": "6786655d66ca65c5a06421c8ed70d84183722dce",
+      "githubReleaseId": 372291445,
+      "githubImmutable": false,
       "npmDistTag": "latest",
+      "npmVersionImmutable": true,
       "githubPrerelease": false
     }
   ],
+  "publicationApproval": {
+    "environment": "immutable-release",
+    "environmentId": 21234930544,
+    "requiredReviewer": {
+      "type": "User",
+      "login": "vyakymenko",
+      "id": 7300673
+    },
+    "preventSelfReview": false,
+    "canAdminsBypass": false,
+    "deploymentPattern": "v*",
+    "deploymentPolicyType": "tag",
+    "deploymentPolicyId": 59095548,
+    "storedSecrets": 0
+  },
   "preTagSurfaces": [
     "candidate-selection",
     "version-synchronization",
@@ -54,7 +75,7 @@
         "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.1."
       ],
       "evidence": [
-        "Exact version validation passed on 2026-09-03: all 45 active source surfaces agree on 0.7.0-rc.1 while immutable published stable evidence remains 0.6.0."
+        "Exact version validation passed on 2026-09-04: all 46 active source surfaces agree on 0.7.0-rc.1 while closed published stable evidence remains 0.6.0."
       ]
     },
     {
@@ -84,14 +105,15 @@
         "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
       ],
       "evidence": [
-        "Documentation validation passed on 2026-09-03: 228/228 tests, production, SEO, bundle, 33-file served-bundle, container, and desktop/mobile browser checks preserved the unpublished 0.7.0-rc.1 versus stable 0.6.0 identity boundary."
+        "Documentation validation passed on 2026-09-03: 228/228 tests, production, SEO, bundle, 33-file served-bundle, container, and desktop/mobile browser checks preserved the unpublished 0.7.0-rc.1 versus stable 0.6.0 identity boundary; after release hardening, the 2026-09-04 rerun passed 230/230 tests, production, SEO, bundle, and the exact 33-file served-bundle gate."
       ]
     },
     {
       "id": "hosted-validation",
       "state": "pending",
       "evidenceRequirements": [
-        "A same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for the candidate checkpoint."
+        "A recorded same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for a pre-admission checkpoint, with its run ID and completion time stored without a commit hash.",
+        "Recorded default-setup CodeQL analysis covers the Actions, JavaScript/TypeScript, and Ruby categories for the pre-admission checkpoint with no error or warning status and zero open CodeQL alerts; tag admission revalidates Build and CodeQL against the exact runtime candidate commit."
       ],
       "evidence": []
     },
@@ -99,7 +121,9 @@
       "id": "origin-main-integration",
       "state": "pending",
       "evidenceRequirements": [
-        "The final candidate is integrated into origin/main; tag admission independently requires the peeled candidate commit to equal the exact origin/main commit."
+        "Candidate-ready evidence stores no candidate commit hash; after that contract is committed, tag admission requires the peeled runtime candidate commit to equal a fresh exact origin/main readback.",
+        "Repository ruleset 22261144 (`Protect release tags`) is re-read immediately before tag admission as active for the tag target including `refs/tags/v*`, with exact update and deletion rules, no bypass actors, and `current_user_can_bypass: never`.",
+        "Before tag creation, the repository immutable-releases endpoint records enabled=true and enforced_by_owner=false through a live admin read; the create-release job then waits on the immutable-release environment until its required reviewer repeats that live read immediately before approval."
       ],
       "evidence": []
     },
@@ -107,7 +131,7 @@
       "id": "tag-workflow-publication",
       "state": "pending",
       "evidenceRequirements": [
-        "The immutable tag workflow publishes the five-target GitHub prerelease and exact npm package on next with provenance and complete readback."
+        "The protected tag workflow publishes the first repository GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next."
       ],
       "evidence": []
     }

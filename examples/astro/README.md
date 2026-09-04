@@ -1,9 +1,9 @@
 # Astro host proof
 
-This is one deliberately narrow integration proof for the current ZigCSS source checkout. It pins Astro 7.2.10 exactly and registers the existing `zigcss/vite` plugin through Astro's documented `vite` configuration surface. Astro 7.2.10 requires Node `>=22.12.0`; the example manifest enforces that exact lower bound and its CI host is pinned to Node 22.22.0.
+This is one deliberately narrow integration proof for the current ZigCSS source checkout. It pins Astro 7.2.10 exactly and registers the existing `zigcss/vite` plugin through Astro's documented `vite` configuration surface. Astro 7.2.10 requires Node `>=22.12.0`; the example manifest preserves that supported lower bound while its maintained CI host is pinned to Node 24.20.0 LTS.
 
 Run the maintained proof from the repository root with Zig 0.15.2 and Node
-22.22.0:
+24.20.0 LTS:
 
 ```bash
 zig build -Doptimize=ReleaseFast

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import test from 'node:test'
 
-import { finishReleaseContainerSmoke } from './test-release-container.mjs'
+import {
+  findZig,
+  finishReleaseContainerSmoke,
+  releaseContainerZigCandidates,
+} from './test-release-container.mjs'
 
 test('release container cleanup failures cannot be reported as success', () => {
   const outcome = { dockerPlatform: 'linux/amd64' }
@@ -19,4 +24,11 @@ test('release container cleanup failures cannot be reported as success', () => {
       && error.errors[1] === imageCleanup
       && error.errors[2] === temporaryCleanup,
   )
+})
+
+test('release container Zig discovery uses only bounded absolute candidates', () => {
+  const candidates = releaseContainerZigCandidates('/fixture-home')
+  assert.ok(candidates.length > 5)
+  assert.equal(candidates.every(candidate => path.isAbsolute(candidate)), true)
+  assert.throws(() => findZig([]), /Zig 0\.15\.2 executable is unavailable/)
 })

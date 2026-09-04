@@ -1,6 +1,4 @@
 const inheritedKeys = ['SystemRoot', 'WINDIR', 'TMP', 'TEMP', 'TMPDIR']
-const runtimeKeys = new Set(['LANG', 'LC_ALL', 'TZ', ...inheritedKeys])
-
 export function sanitizedHostEnvironment(source = process.env) {
   const environment = {
     LANG: 'C',
@@ -22,11 +20,8 @@ export function sanitizedHostEnvironment(source = process.env) {
 }
 
 export function sanitizeRuntimeEnvironment(environment = process.env) {
-  for (const key of Object.keys(environment)) {
-    if (!runtimeKeys.has(key)) delete environment[key]
-  }
-  environment.LANG = 'C'
-  environment.LC_ALL = 'C'
-  environment.TZ = 'UTC'
-  return environment
+  // Return a new allowlisted object instead of deleting attacker-controlled
+  // property names from the supplied object. Callers replace process.env as a
+  // single value before invoking any provider code.
+  return sanitizedHostEnvironment(environment)
 }

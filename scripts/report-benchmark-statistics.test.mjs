@@ -5,6 +5,8 @@ import path from 'node:path'
 import test from 'node:test'
 
 import {
+  benchmarkReportOutputPath,
+  benchmarkRunnerPath,
   repositoryRoot,
   summarizeSamples,
   validateBenchmarkReport,
@@ -66,6 +68,35 @@ test('statistics report exact median, nearest-rank p95, and population variance'
     p95: '19',
     variance: '33.25',
   })
+})
+
+test('benchmark runner and report destinations are closed to the release pipeline', () => {
+  const runner = path.join(
+    repositoryRoot,
+    'zig-out',
+    'bin',
+    process.platform === 'win32' ? 'zigcss-bench.exe' : 'zigcss-bench',
+  )
+  assert.equal(benchmarkRunnerPath(repositoryRoot, undefined), runner)
+  assert.equal(benchmarkRunnerPath(repositoryRoot, runner), runner)
+  assert.throws(
+    () => benchmarkRunnerPath(repositoryRoot, path.join(repositoryRoot, 'attacker-controlled')),
+    /repository ReleaseFast binary/,
+  )
+
+  const workflowOutput = path.resolve(
+    repositoryRoot,
+    '..',
+    '..',
+    '_temp',
+    'zigcss-benchmark-archive',
+    'benchmark-report.json',
+  )
+  assert.equal(benchmarkReportOutputPath(repositoryRoot, workflowOutput), workflowOutput)
+  assert.throws(
+    () => benchmarkReportOutputPath(repositoryRoot, path.join(os.tmpdir(), 'attacker-controlled.json')),
+    /dedicated benchmark archive path/,
+  )
 })
 
 test('statistics reject incomplete, negative, unsafe, and altered raw samples', () => {

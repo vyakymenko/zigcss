@@ -271,8 +271,34 @@ function generate(manifestBytes, manifest, data) {
   return formatZig(lines.join('\n'))
 }
 
+export function prefixDataZigCommand(configured = process.env.ZIG) {
+  switch (configured) {
+    case undefined:
+    case 'zig':
+      return 'zig'
+    case 'zig.exe':
+      return 'zig.exe'
+    case '/usr/bin/zig':
+      return '/usr/bin/zig'
+    case '/usr/local/bin/zig':
+      return '/usr/local/bin/zig'
+    case '/opt/homebrew/bin/zig':
+      return '/opt/homebrew/bin/zig'
+    case '/opt/local/bin/zig':
+      return '/opt/local/bin/zig'
+    case '/nix/var/nix/profiles/default/bin/zig':
+      return '/nix/var/nix/profiles/default/bin/zig'
+    case 'C:\\Program Files\\zig\\zig.exe':
+      return 'C:\\Program Files\\zig\\zig.exe'
+    case 'C:\\ProgramData\\chocolatey\\bin\\zig.exe':
+      return 'C:\\ProgramData\\chocolatey\\bin\\zig.exe'
+    default:
+      fail('ZIG must select the PATH command or a finite reviewed Zig installation')
+  }
+}
+
 function formatZig(input) {
-  const executable = process.env.ZIG ?? 'zig'
+  const executable = prefixDataZigCommand()
   const result = spawnSync(executable, ['fmt', '--stdin'], {
     cwd: repositoryRoot,
     encoding: 'utf8',

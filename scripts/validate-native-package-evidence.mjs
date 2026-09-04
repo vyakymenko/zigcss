@@ -11,6 +11,11 @@ import {
 import { releaseAssetsFor } from './generate-release-metadata.mjs'
 import { parseReleaseVersion } from './validate-release-version.mjs'
 import { actionPins } from './validate-workflows.mjs'
+import {
+  hashStableRegularFile,
+  readBoundedDirectory,
+  readStableRegularFile,
+} from './bounded-filesystem.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -91,34 +96,29 @@ function regularDirectory(root, relativePath, label) {
 
 function regularFile(root, relativePath, label, maximumBytes) {
   const candidate = confinedPath(root, relativePath, label)
-  let stat
+  let canonical
   try {
-    stat = fs.lstatSync(candidate)
+    canonical = fs.realpathSync(candidate)
   } catch (error) {
     fail(`${label} is unavailable: ${error.message}`)
   }
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    fail(`${label} must be a regular non-symlink file`)
-  }
-  if (stat.size <= 0 || stat.size > maximumBytes) {
-    fail(`${label} must contain 1 through ${maximumBytes} bytes`)
-  }
-  const canonical = fs.realpathSync(candidate)
   const relative = path.relative(root, canonical)
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     fail(`${label} escapes the root`)
   }
-  return canonical
+  return {
+    filename: candidate,
+    options: { label, maximumBytes, reject: fail },
+  }
 }
 
 function exactDirectoryEntries(directory, expected, label) {
-  let entries
-  try {
-    entries = fs.readdirSync(directory).sort()
-  } catch (error) {
-    fail(`${label} inventory is unavailable: ${error.message}`)
-  }
   const wanted = [...expected].sort()
+  const entries = readBoundedDirectory(directory, {
+    label: `${label} inventory`,
+    maximumEntries: wanted.length + 1,
+    reject: fail,
+  }).map(entry => entry.name).sort()
   if (!same(entries, wanted)) {
     fail(`${label} inventory must contain exactly ${wanted.join(', ')}`)
   }
@@ -126,22 +126,6 @@ function exactDirectoryEntries(directory, expected, label) {
 
 function hashBytes(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex')
-}
-
-function hashFile(filename) {
-  const hash = crypto.createHash('sha256')
-  const descriptor = fs.openSync(filename, 'r')
-  const buffer = Buffer.allocUnsafe(64 * 1024)
-  try {
-    while (true) {
-      const length = fs.readSync(descriptor, buffer, 0, buffer.length, null)
-      if (length === 0) break
-      hash.update(buffer.subarray(0, length))
-    }
-  } finally {
-    fs.closeSync(descriptor)
-  }
-  return hash.digest('hex')
 }
 
 function validateSha256(value, label) {
@@ -293,7 +277,7 @@ export function validateNativePackageEvidence(options = {}) {
 
     const receiptRelative = `${receiptsRelative}/${policy.target}.json`
     const receipt = regularFile(root, receiptRelative, `receipt ${policy.target}`, maximumReceiptBytes)
-    const receiptBytes = fs.readFileSync(receipt)
+    const receiptBytes = readStableRegularFile(receipt.filename, receipt.options)
     let parsed
     try {
       parsed = JSON.parse(receiptBytes.toString('utf8'))
@@ -329,7 +313,7 @@ export function validateNativePackageEvidence(options = {}) {
     exactDirectoryEntries(binaryDirectory, [policy.binaryName], `binary directory ${policy.target}`)
     const binaryRelative = `${binaryDirectoryRelative}/${policy.binaryName}`
     const binary = regularFile(root, binaryRelative, `binary ${policy.target}`, maximumBinaryBytes)
-    if (hashFile(binary) !== evidence.artifacts.binarySha256) {
+    if (hashStableRegularFile(binary.filename, binary.options) !== evidence.artifacts.binarySha256) {
       fail(`binary ${policy.target} does not match its receipt`)
     }
     return {
@@ -374,24 +358,56 @@ export function writeNativePackageEvidence(rootInput, relativePath, evidenceInpu
   if (relativePath !== outputFilename) fail(`output path must be ${outputFilename}`)
   const evidence = validateAggregateEvidence(evidenceInput)
   const output = confinedPath(root, relativePath, 'output path')
-  try {
-    fs.lstatSync(output)
-    fail('output already exists')
-  } catch (error) {
-    if (error.message.startsWith('native package evidence integrity:')) throw error
-    if (error.code !== 'ENOENT') fail(`output is unavailable: ${error.message}`)
-  }
   const bytes = `${JSON.stringify(evidence, null, 2)}\n`
-  if (Buffer.byteLength(bytes) > maximumAggregateBytes) fail('aggregate evidence exceeds its byte limit')
+  const buffer = Buffer.from(bytes)
+  if (buffer.length > maximumAggregateBytes) fail('aggregate evidence exceeds its byte limit')
+  let descriptor
   try {
-    fs.writeFileSync(output, bytes, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    descriptor = fs.openSync(
+      output,
+      fs.constants.O_CREAT
+        | fs.constants.O_EXCL
+        | fs.constants.O_RDWR
+        | (fs.constants.O_NOFOLLOW ?? 0)
+        | (fs.constants.O_CLOEXEC ?? 0),
+      0o600,
+    )
   } catch (error) {
     if (error.code === 'EEXIST') fail('output already exists')
     fail(`output write failed: ${error.message}`)
   }
-  const stat = fs.lstatSync(output)
-  if (!stat.isFile() || stat.isSymbolicLink() || fs.readFileSync(output, 'utf8') !== bytes) {
-    fail('output write was not byte-exact')
+  try {
+    let offset = 0
+    while (offset < buffer.length) {
+      const count = fs.writeSync(descriptor, buffer, offset, buffer.length - offset, offset)
+      if (count === 0) fail('output write ended before all bytes were written')
+      offset += count
+    }
+    fs.fsyncSync(descriptor)
+    const written = fs.fstatSync(descriptor, { bigint: true })
+    if (!written.isFile() || written.size !== BigInt(buffer.length)) {
+      fail('output write was not byte-exact')
+    }
+    const readback = Buffer.allocUnsafe(buffer.length)
+    offset = 0
+    while (offset < readback.length) {
+      const count = fs.readSync(descriptor, readback, offset, readback.length - offset, offset)
+      if (count === 0) fail('output readback ended before all bytes were read')
+      offset += count
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true })
+    if (
+      !readback.equals(buffer)
+      || after.dev !== written.dev
+      || after.ino !== written.ino
+      || after.size !== written.size
+      || after.mtimeNs !== written.mtimeNs
+      || after.ctimeNs !== written.ctimeNs
+    ) {
+      fail('output write was not byte-exact')
+    }
+  } finally {
+    fs.closeSync(descriptor)
   }
   return relativePath
 }
@@ -399,33 +415,33 @@ export function writeNativePackageEvidence(rootInput, relativePath, evidenceInpu
 export function parseNativePackageEvidenceArguments(args) {
   if (!Array.isArray(args) || args.length !== 8) fail('expected exactly four inputs')
   const required = ['--artifacts', '--commit', '--version', '--output']
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
     if (!required.includes(name)) fail(`unknown argument ${JSON.stringify(name)}`)
-    if (Object.hasOwn(values, name)) fail(`duplicate argument ${name}`)
+    if (values.has(name)) fail(`duplicate argument ${name}`)
     if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
       fail(`${name} has an invalid value`)
     }
-    values[name] = value
+    values.set(name, value)
   }
-  for (const name of required) if (!Object.hasOwn(values, name)) fail(`missing argument ${name}`)
-  if (values['--artifacts'] !== artifactsDirectory) {
+  for (const name of required) if (!values.has(name)) fail(`missing argument ${name}`)
+  if (values.get('--artifacts') !== artifactsDirectory) {
     fail(`artifacts directory must be ${artifactsDirectory}`)
   }
-  if (!/^[0-9a-f]{40}$/.test(values['--commit'])) fail('commit is invalid')
+  if (!/^[0-9a-f]{40}$/.test(values.get('--commit'))) fail('commit is invalid')
   try {
-    parseReleaseVersion(values['--version'], 'native package evidence version')
+    parseReleaseVersion(values.get('--version'), 'native package evidence version')
   } catch (error) {
     fail(error.message)
   }
-  if (values['--output'] !== outputFilename) fail(`output path must be ${outputFilename}`)
+  if (values.get('--output') !== outputFilename) fail(`output path must be ${outputFilename}`)
   return {
-    artifacts: values['--artifacts'],
-    commit: values['--commit'],
-    version: values['--version'],
-    output: values['--output'],
+    artifacts: values.get('--artifacts'),
+    commit: values.get('--commit'),
+    version: values.get('--version'),
+    output: values.get('--output'),
   }
 }
 
@@ -472,7 +488,7 @@ export function validateNativePackageEvidenceWorkflow(source) {
   }
   for (const [needle, label] of [
     ['    permissions:\n      contents: read', 'permissions'],
-    ["          node-version: '20.19.0'", 'Node version'],
+    ["          node-version: '24.20.0'", 'Node version'],
     ['          pattern: zigcss-*', 'artifact pattern'],
     ['          path: native-target-artifacts', 'artifact path'],
     ['          merge-multiple: false', 'artifact isolation'],

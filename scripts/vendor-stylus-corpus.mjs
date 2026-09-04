@@ -1,15 +1,29 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  hashStableRegularFile,
+  readBoundedDirectory,
+  readStableRegularFile,
+  readStableUtf8File,
+} from './bounded-filesystem.mjs'
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const scriptPath = fileURLToPath(import.meta.url)
+const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 const corpusRoot = path.join(repositoryRoot, 'tests/preprocessors/stylus/corpus')
 const filesRoot = path.join(corpusRoot, 'files')
 const selectionPath = path.join(corpusRoot, 'selection.json')
 const manifestPath = path.join(corpusRoot, 'manifest.json')
 const licensePath = path.join(corpusRoot, 'STYLUS_LICENSE')
 const forbiddenExecutable = /\.(?:c?js|mjs)$/i
+const maximumArchiveBytes = 256 * 1024 * 1024
+const maximumFileBytes = 16 * 1024 * 1024
+const maximumSelectionBytes = 2 * 1024 * 1024
+const maximumTraversalBytes = 256 * 1024 * 1024
+const maximumTraversalDepth = 32
+const maximumTraversalEntries = 20_000
+const maximumEntriesPerDirectory = 4096
 
 function fail(message) {
   throw new Error(`Stylus corpus: ${message}`)
@@ -17,6 +31,21 @@ function fail(message) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+function traversalBudget() {
+  return { bytes: 0, entries: 0 }
+}
+
+function accountEntry(budget, relativePath, depth) {
+  budget.entries += 1
+  if (budget.entries > maximumTraversalEntries) fail(`source traversal exceeds ${maximumTraversalEntries} entries`)
+  if (depth > maximumTraversalDepth) fail(`source traversal exceeds depth ${maximumTraversalDepth}: ${relativePath}`)
+}
+
+function accountBytes(budget, bytes) {
+  budget.bytes += bytes.length
+  if (budget.bytes > maximumTraversalBytes) fail(`source traversal exceeds ${maximumTraversalBytes} bytes`)
 }
 
 function sorted(values) {
@@ -90,7 +119,11 @@ function safeRelative(value, label) {
 }
 
 function readSelection() {
-  const value = JSON.parse(fs.readFileSync(selectionPath, 'utf8'))
+  const value = JSON.parse(readStableUtf8File(selectionPath, {
+    label: 'selection.json',
+    maximumBytes: maximumSelectionBytes,
+    reject: fail,
+  }))
   exactKeys(value, ['schemaVersion', 'upstream', 'exclusions', 'negativeCases'], 'selection')
   if (value.schemaVersion !== 1) fail(`unsupported selection schema ${value.schemaVersion}`)
   exactKeys(value.upstream, [
@@ -192,56 +225,111 @@ function readSelection() {
 }
 
 function listFiles(root) {
-  if (!fs.existsSync(root)) return []
+  const first = readBoundedDirectory(root, {
+    allowMissing: true,
+    label: 'generated corpus root',
+    maximumEntries: maximumEntriesPerDirectory,
+    reject: fail,
+  })
+  if (first === null) return []
   const output = []
-  function visit(directory, relative) {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+  const budget = traversalBudget()
+  function visit(directory, relative, entries, depth) {
+    for (const entry of entries) {
       const childRelative = relative === '' ? entry.name : `${relative}/${entry.name}`
       const child = path.join(directory, entry.name)
+      accountEntry(budget, childRelative, depth + 1)
       if (entry.isSymbolicLink()) fail(`generated corpus contains a symlink: ${childRelative}`)
-      if (entry.isDirectory()) visit(child, childRelative)
+      if (entry.isDirectory()) {
+        const children = readBoundedDirectory(child, {
+          label: `generated corpus directory ${childRelative}`,
+          maximumEntries: maximumEntriesPerDirectory,
+          reject: fail,
+        })
+        visit(child, childRelative, children, depth + 1)
+      }
       else if (entry.isFile()) output.push(childRelative)
       else fail(`generated corpus contains a special file: ${childRelative}`)
     }
   }
-  visit(root, '')
+  visit(root, '', first, 0)
   return sorted(output)
 }
 
-function collectTree(sourceRoot, sourceRelative, targetRelative, output) {
+export function collectStylusTree(
+  sourceRoot,
+  sourceRelative,
+  targetRelative,
+  output,
+  budget = traversalBudget(),
+  depth = 0,
+) {
+  accountEntry(budget, sourceRelative, depth)
   const relative = safeRelative(sourceRelative, 'source path')
   const filename = path.resolve(sourceRoot, ...relative.split('/'))
   if (!filename.startsWith(`${sourceRoot}${path.sep}`)) fail(`source path escapes root: ${relative}`)
-  const stat = fs.lstatSync(filename)
-  if (stat.isSymbolicLink()) fail(`source contains a symlink: ${relative}`)
-  if (stat.isDirectory()) {
-    for (const entry of fs.readdirSync(filename, { withFileTypes: true }).sort((left, right) => (
+  const entries = readBoundedDirectory(filename, {
+    allowFile: true,
+    label: `source path ${relative}`,
+    maximumEntries: maximumEntriesPerDirectory,
+    reject: fail,
+  })
+  if (entries !== null) {
+    entries.sort((left, right) => (
       Buffer.from(left.name).compare(Buffer.from(right.name))
-    ))) {
-      collectTree(
+    ))
+    for (const entry of entries) {
+      collectStylusTree(
         sourceRoot,
         `${relative}/${entry.name}`,
         `${targetRelative}/${entry.name}`,
         output,
+        budget,
+        depth + 1,
       )
     }
     return
   }
-  if (!stat.isFile()) fail(`source contains a special file: ${relative}`)
   if (forbiddenExecutable.test(relative)) return
   const target = safeRelative(targetRelative, 'target path')
-  const bytes = fs.readFileSync(filename)
+  const bytes = readStableRegularFile(filename, {
+    label: `source file ${relative}`,
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
+  accountBytes(budget, bytes)
+  const existing = output.get(target)
+  if (existing !== undefined && !existing.bytes.equals(bytes)) {
+    fail(`selected source bytes conflict: ${target}`)
+  }
   output.set(target, { bytes, source: relative })
 }
 
+function writeAtomicFile(filename, bytes) {
+  const temporary = `${filename}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`
+  try {
+    fs.writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o644 })
+    fs.renameSync(temporary, filename)
+  } finally {
+    fs.rmSync(temporary, { force: true })
+  }
+}
+
 function writeOrCheck(filename, bytes, mode) {
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > maximumFileBytes) {
+    fail(`generated file ${path.relative(repositoryRoot, filename)} is outside its byte limit`)
+  }
   if (mode === 'write') {
     fs.mkdirSync(path.dirname(filename), { recursive: true })
-    fs.writeFileSync(filename, bytes)
+    writeAtomicFile(filename, bytes)
     return
   }
-  if (!fs.existsSync(filename)) fail(`missing generated file: ${path.relative(repositoryRoot, filename)}`)
-  if (!fs.readFileSync(filename).equals(bytes)) {
+  const actual = readStableRegularFile(filename, {
+    label: `generated file ${path.relative(repositoryRoot, filename)}`,
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
+  if (!actual.equals(bytes)) {
     fail(`stale generated file: ${path.relative(repositoryRoot, filename)}`)
   }
 }
@@ -277,15 +365,19 @@ function main() {
     fail('--source must be a regular extracted Stylus repository directory')
   }
   if (arguments_.archive !== null) {
-    const archiveStat = fs.lstatSync(arguments_.archive)
-    if (!archiveStat.isFile() || archiveStat.isSymbolicLink()) {
-      fail('--archive must be a regular file')
-    }
-    const digest = sha256(fs.readFileSync(arguments_.archive))
+    const digest = hashStableRegularFile(arguments_.archive, {
+      label: '--archive',
+      maximumBytes: maximumArchiveBytes,
+      reject: fail,
+    })
     if (digest !== selection.upstream.archiveSha256) fail(`archive checksum mismatch: ${digest}`)
   }
 
-  const packageBytes = fs.readFileSync(path.join(arguments_.source, 'package.json'))
+  const packageBytes = readStableRegularFile(path.join(arguments_.source, 'package.json'), {
+    label: 'package.json',
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
   const packageValue = JSON.parse(packageBytes)
   if (
     packageValue.name !== 'stylus' ||
@@ -295,24 +387,46 @@ function main() {
   ) {
     fail('package.json does not match the reviewed provider identity')
   }
-  const testRun = fs.readFileSync(path.join(arguments_.source, 'test/run.js'))
+  const testRun = readStableRegularFile(path.join(arguments_.source, 'test/run.js'), {
+    label: 'test/run.js',
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
   if (sha256(testRun) !== selection.upstream.testRunSha256) {
     fail('test/run.js does not match the reviewed official harness')
   }
-  const license = fs.readFileSync(path.join(arguments_.source, 'LICENSE'))
+  const license = readStableRegularFile(path.join(arguments_.source, 'LICENSE'), {
+    label: 'LICENSE',
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
   if (sha256(license) !== selection.upstream.licenseSha256) {
     fail('LICENSE does not match the reviewed MIT text')
   }
 
   const casesDirectory = path.join(arguments_.source, 'test/cases')
-  const candidates = sorted(fs.readdirSync(casesDirectory)
-    .filter(name => name.endsWith('.styl'))
-    .map(name => name.slice(0, -5))
+  const caseEntries = readBoundedDirectory(casesDirectory, {
+    label: 'official cases directory',
+    maximumEntries: maximumEntriesPerDirectory,
+    reject: fail,
+  })
+  for (const entry of caseEntries) {
+    if (entry.name.endsWith('.styl') && (!entry.isFile() || entry.isSymbolicLink())) {
+      fail(`official case ${entry.name} must be a regular non-symlink file`)
+    }
+  }
+  const candidates = sorted(caseEntries
+    .filter(entry => entry.isFile() && entry.name.endsWith('.styl'))
+    .map(entry => entry.name.slice(0, -5))
     .filter(name => name !== 'index'))
   for (const name of candidates) {
     safeName(name, 'official case')
     const expected = path.join(casesDirectory, `${name}.css`)
-    if (!fs.lstatSync(expected).isFile()) fail(`official case ${name} has no paired CSS`)
+    readStableRegularFile(expected, {
+      label: `official case ${name} paired CSS`,
+      maximumBytes: maximumFileBytes,
+      reject: fail,
+    })
   }
   const candidateNames = new Set(candidates)
   for (const item of selection.exclusions) {
@@ -322,8 +436,9 @@ function main() {
   const selected = candidates.filter(name => !excluded.has(name))
 
   const selectedFiles = new Map()
-  collectTree(arguments_.source, 'test/cases', 'upstream/cases', selectedFiles)
-  collectTree(arguments_.source, 'test/images', 'upstream/images', selectedFiles)
+  const sourceBudget = traversalBudget()
+  collectStylusTree(arguments_.source, 'test/cases', 'upstream/cases', selectedFiles, sourceBudget)
+  collectStylusTree(arguments_.source, 'test/images', 'upstream/images', selectedFiles, sourceBudget)
   for (const item of selection.negativeCases) {
     const relative = `integration/errors/${item.id}.styl`
     selectedFiles.set(relative, {
@@ -394,4 +509,4 @@ function main() {
   )
 }
 
-main()
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === scriptPath) main()

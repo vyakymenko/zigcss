@@ -13,7 +13,18 @@ function read(relativePath) {
 }
 
 function field(manifest, name) {
-  const match = manifest.match(new RegExp(`\\.${name}\\s*=\\s*"([^"]+)"`))
+  let pattern
+  switch (name) {
+    case 'version':
+      pattern = /\.version\s*=\s*"([^"]+)"/
+      break
+    case 'minimum_zig_version':
+      pattern = /\.minimum_zig_version\s*=\s*"([^"]+)"/
+      break
+    default:
+      assert.fail(`unsupported Zig package field ${JSON.stringify(name)}`)
+  }
+  const match = manifest.match(pattern)
   assert.ok(match, `missing ${name}`)
   return match[1]
 }
@@ -34,7 +45,7 @@ const maximumZigOutputBytes = 8 * 1024 * 1024
 const zigCommandTimeoutMs = 15 * 60 * 1000
 
 function exactZigTool() {
-  const command = process.env.ZIG ?? (process.platform === 'win32' ? 'zig.exe' : 'zig')
+  const command = process.platform === 'win32' ? 'zig.exe' : 'zig'
   const result = spawnSync(command, ['version'], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024,
@@ -47,6 +58,14 @@ function exactZigTool() {
   assert.equal(result.status, 0, result.stderr || result.stdout)
   if (!['0.15.2\n', '0.15.2\r\n'].includes(result.stdout)) return null
   return command
+}
+
+function admittedZigTool(command) {
+  switch (command) {
+    case 'zig': return 'zig'
+    case 'zig.exe': return 'zig.exe'
+    default: assert.fail(`unrecognized Zig command ${JSON.stringify(command)}`)
+  }
 }
 
 function zigBuildEnvironment(workspace) {
@@ -73,7 +92,7 @@ function zigBuildEnvironment(workspace) {
 }
 
 function runZig(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(admittedZigTool(command), args, {
     cwd: options.cwd ?? repositoryRoot,
     encoding: 'utf8',
     env: options.env ?? process.env,
@@ -132,8 +151,10 @@ test('Zig package identity version and minimum toolchain are pinned', () => {
   assert.equal(vscodeManifest.preview, true)
   assert.match(read('vscode-extension/scripts/verify-package.mjs'), /'--pre-release'/)
   assert.equal(field(manifest, 'minimum_zig_version'), '0.15.2')
+  assert.throws(() => field(manifest, 'dependencies'), /unsupported Zig package field/)
+  assert.throws(() => admittedZigTool(path.join(os.tmpdir(), 'zig')), /unrecognized Zig command/)
   assert.match(manifest, /\.dependencies\s*=\s*\.\{\},/)
-  assert.match(main, new RegExp(`const version = "${npmManifest.version.replaceAll('.', '\\.')}";`))
+  assert.equal(main.includes(`const version = "${npmManifest.version}";`), true)
 })
 
 test('Zig package contents are an explicit minimal allowlist', () => {
@@ -237,10 +258,14 @@ test('a fresh isolated zig fetch cache copy compiles the external package consum
     assert.equal(fetched.stderr, '')
     const packageHash = fetched.stdout.trim()
     const version = field(read('build.zig.zon'), 'version')
-    assert.match(
-      packageHash,
-      new RegExp(`^zigcss-${version.replaceAll('.', '\\.')}[-+][A-Za-z0-9_-]{20,}$`),
+    const packageHashPrefix = `zigcss-${version}`
+    assert.equal(
+      packageHash.startsWith(`${packageHashPrefix}-`) ||
+        packageHash.startsWith(`${packageHashPrefix}+`),
+      true,
+      'fetched Zig package hash must bind the exact package version',
     )
+    assert.match(packageHash.slice(packageHashPrefix.length + 1), /^[A-Za-z0-9_-]{20,}$/)
     const packageRoot = path.join(globalCache, 'p', packageHash)
     const packageStat = fs.lstatSync(packageRoot)
     assert.equal(packageStat.isDirectory(), true)

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readStableUtf8File } from './bounded-filesystem.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -10,6 +11,7 @@ export const endMarker = '<!-- capability-status:end -->'
 export const generatedTargets = [
   path.join(repositoryRoot, 'docs', 'src', 'content', 'docs', 'guide', 'status.md'),
 ]
+const maximumSourceBytes = 2 * 1024 * 1024
 
 function fail(message) {
   throw new Error(`capability metadata: ${message}`)
@@ -19,9 +21,17 @@ function requireString(value, label) {
   if (typeof value !== 'string' || value.length === 0) fail(`${label} must be a non-empty string`)
 }
 
+function readText(filename, label) {
+  return readStableUtf8File(filename, {
+    label,
+    maximumBytes: maximumSourceBytes,
+    reject: fail,
+  })
+}
+
 function validateGateCommand(command, root) {
-  const rootManifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-  const docsManifest = JSON.parse(fs.readFileSync(path.join(root, 'docs', 'package.json'), 'utf8'))
+  const rootManifest = JSON.parse(readText(path.join(root, 'package.json'), 'root package manifest'))
+  const docsManifest = JSON.parse(readText(path.join(root, 'docs', 'package.json'), 'documentation package manifest'))
   const rootMatch = /^npm run ([a-z0-9:-]+)$/.exec(command)
   if (rootMatch) {
     if (rootManifest.scripts[rootMatch[1]] === undefined) fail(`gate command has no root script: ${command}`)
@@ -33,7 +43,7 @@ function validateGateCommand(command, root) {
   }
   const zigMatch = /^zig build ([a-z0-9-]+) --summary all$/.exec(command)
   if (zigMatch) {
-    const buildSource = fs.readFileSync(path.join(root, 'build.zig'), 'utf8')
+    const buildSource = readText(path.join(root, 'build.zig'), 'Zig build source')
     const escapedStep = zigMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     if (!new RegExp(`\\bb\\.step\\(\\s*"${escapedStep}"`).test(buildSource)) {
       fail(`gate command has no Zig build step: ${command}`)
@@ -44,7 +54,7 @@ function validateGateCommand(command, root) {
 }
 
 export function loadMetadata() {
-  return JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
+  return JSON.parse(readText(metadataPath, 'capability metadata'))
 }
 
 export function validateMetadata(metadata, root = repositoryRoot) {
@@ -76,10 +86,8 @@ export function validateMetadata(metadata, root = repositoryRoot) {
       const canonicalPath = fs.realpathSync(absolutePath)
       const canonicalRelative = path.relative(canonicalRoot, canonicalPath)
       if (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative)) fail(`gate ${gateId} anchor escapes the repository`)
-      const stat = fs.statSync(canonicalPath)
-      if (!stat.isFile()) fail(`gate ${gateId} anchor is not a file: ${anchor.path}`)
       if (!Array.isArray(anchor.contains) || anchor.contains.length === 0) fail(`gate ${gateId} anchor needs a content assertion`)
-      const content = fs.readFileSync(canonicalPath, 'utf8')
+      const content = readText(absolutePath, `gate ${gateId} anchor ${anchor.path}`)
       for (const [needleIndex, needle] of anchor.contains.entries()) {
         requireString(needle, `gate ${gateId} anchor ${anchorIndex} content ${needleIndex}`)
         if (!content.includes(needle)) fail(`gate ${gateId} anchor ${anchor.path} is missing: ${needle}`)
@@ -146,8 +154,8 @@ export function replaceGeneratedTable(content, table) {
 export function expectedTargets(metadata = validateMetadata(loadMetadata())) {
   const table = renderTable(metadata)
   return generatedTargets.map(target => {
-    const content = fs.readFileSync(target, 'utf8')
-    return { target, content: replaceGeneratedTable(content, table) }
+    const current = readText(target, `generated target ${path.relative(repositoryRoot, target)}`)
+    return { target, current, content: replaceGeneratedTable(current, table) }
   })
 }
 
@@ -158,7 +166,7 @@ function main() {
   }
   const metadata = validateMetadata(loadMetadata())
   const targets = expectedTargets(metadata)
-  const stale = targets.filter(({ target, content }) => fs.readFileSync(target, 'utf8') !== content)
+  const stale = targets.filter(({ current, content }) => current !== content)
   if (mode === '--write') {
     for (const { target, content } of stale) fs.writeFileSync(target, content)
   } else if (stale.length !== 0) {

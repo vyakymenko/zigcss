@@ -8,6 +8,7 @@ import {
   hasNotes,
   normalizeSupport,
   parseVersion,
+  prefixDataZigCommand,
   validateInputs,
 } from './generate-prefix-data.mjs'
 
@@ -67,6 +68,15 @@ test('uses canonical versions and locale-independent ASCII ordering', () => {
   assert.deepEqual(['z.test', 'a.test', 'm.test'].sort(compareAscii), ['a.test', 'm.test', 'z.test'])
   assert.equal(hasNotes(undefined, 'test'), false)
   assert.equal(hasNotes('Qualified behavior.', 'test'), true)
+})
+
+test('formatter command selection is finite and cannot execute an injected path', () => {
+  assert.equal(prefixDataZigCommand(undefined), 'zig')
+  assert.equal(prefixDataZigCommand('/opt/homebrew/bin/zig'), '/opt/homebrew/bin/zig')
+  assert.throws(
+    () => prefixDataZigCommand('/tmp/attacker-controlled-zig'),
+    /finite reviewed Zig installation/,
+  )
 })
 
 test('manifest validation binds the generated table to the closed browser grammar', () => {

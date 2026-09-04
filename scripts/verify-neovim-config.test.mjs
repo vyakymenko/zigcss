@@ -3,6 +3,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import {
+  expectedNeovimRelease,
+  neovimCommand,
+  neovimZigcssPath,
+} from './test-neovim-integration.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = relativePath => fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8')
@@ -65,9 +70,30 @@ test('CI pins and runs the real headless integration without a plugin framework'
   assert.match(workflow, /install_neovim 0\.11\.7 38a7c6317f94503841096c00e8fde05ef04b9472fc9d7d62b6e033cecd6f7991/)
   assert.match(workflow, /install_neovim 0\.12\.4 012bf3fcac5ade43914df3f174668bf64d05e049a4f032a388c027b1ebd78628/)
   assert.match(workflow, /npm run test:neovim/)
-  assert.match(integration, /expectedRelease = process\.env\.NEOVIM_TEST_VERSION \|\| '0\.12\.4'/)
+  assert.match(integration, /expectedNeovimRelease/)
   assert.match(integration, /ZIGCSS_NEOVIM_CONFIG_ROOT/)
   assert.match(integration, /NEOVIM_REJECTION_PASS/)
   assert.match(integration, /NEOVIM_SMOKE_PASS/)
   assert.doesNotMatch(workflow, /nvim-lspconfig/)
+})
+
+test('integration tool selection is finite and repository-bound', () => {
+  assert.equal(expectedNeovimRelease(undefined), '0.12.4')
+  assert.equal(expectedNeovimRelease('0.11.7'), '0.11.7')
+  assert.throws(() => expectedNeovimRelease('nightly'), /exactly 0\.11\.7 or 0\.12\.4/)
+  assert.equal(neovimCommand(undefined, '0.12.4'), 'nvim')
+  assert.equal(
+    neovimCommand('/home/runner/work/_temp/nvim-0.11.7/bin/nvim', '0.11.7'),
+    '/home/runner/work/_temp/nvim-0.11.7/bin/nvim',
+  )
+  assert.throws(
+    () => neovimCommand('/tmp/attacker-controlled-nvim', '0.12.4'),
+    /finite reviewed Neovim installation/,
+  )
+  const expectedZigcss = path.join(repositoryRoot, 'zig-out', 'bin', process.platform === 'win32' ? 'zigcss.exe' : 'zigcss')
+  assert.equal(neovimZigcssPath(repositoryRoot, expectedZigcss), expectedZigcss)
+  assert.throws(
+    () => neovimZigcssPath(repositoryRoot, '/tmp/attacker-controlled-zigcss'),
+    /repository ReleaseFast binary/,
+  )
 })

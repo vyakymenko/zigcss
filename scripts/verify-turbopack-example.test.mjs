@@ -123,7 +123,7 @@ export function validateExampleContract(contract) {
   assert.match(contract.readme, /Next\.js added configurable loader output\s+module types in 16\.2/)
   assert.match(contract.readme, /pinned to Next\.js 16\.3\.4 with\s+React and ReactDOM 19\.2\.4/)
   assert.match(contract.readme, /published `zigcss@0\.6\.0` binary predates the current `zigcss-node-v1` protocol/)
-  assert.match(contract.readme, /exact root lock with Node 22\.22\.0/)
+  assert.match(contract.readme, /exact root lock with Node 24\.20\.0 LTS/)
   assert.match(contract.readme, /zig build -Doptimize=ReleaseFast/)
   assert.match(contract.readme, /npm ci --ignore-scripts/)
   assert.match(contract.readme, /npm install --ignore-scripts --no-save --install-links=false \.\.\/\.\./)
@@ -132,6 +132,13 @@ export function validateExampleContract(contract) {
   assert.match(contract.readme, /nextjs\.org\/docs\/app\/api-reference\/config\/next-config-js\/turbopack#module-types/)
   for (const anchor of [
     "ZIGCSS_TURBOPACK_OFFLINE !== '1'",
+    "^zigcss-turbopack-(?:(?:boundary|network)-)?[A-Za-z0-9]{6}$",
+    'const traceRoot = fs.realpathSync(__dirname)',
+    'function openBoundedRegularFile(',
+    'function withTraceLock(action)',
+    'const count = fs.readSync(opened.descriptor, content, offset, bytes - offset, offset)',
+    'requiredPreload !== __filename',
+    "if (input !== expected) fail('allowed ZigCSS binary must equal its exact staged path')",
     'captureAllowedBinary(process.env.ZIGCSS_TURBOPACK_ALLOWED_BINARY)',
     "immutable(workerThreads, 'Worker'",
     "immutable(cluster, 'fork'",
@@ -180,11 +187,13 @@ function validateNativeBinary(input) {
 }
 
 function offlineEnvironment(root, trace, allowedBinary) {
+  const stagedPreload = path.join(root, path.basename(preload))
+  fs.copyFileSync(preload, stagedPreload)
   return {
     ...process.env,
     CI: '1',
     NEXT_TELEMETRY_DISABLED: '1',
-    NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+    NODE_OPTIONS: `--require=${JSON.stringify(fs.realpathSync(stagedPreload))}`,
     NO_COLOR: '1',
     ZIGCSS_TURBOPACK_OFFLINE: '1',
     ZIGCSS_TURBOPACK_TRACE: trace,
@@ -339,8 +348,38 @@ test('Turbopack example contract rejects aliases modules syntaxes PostCSS and mu
   const trace = path.join(temporary, 'offline-trace.jsonl')
   try {
     fs.writeFileSync(trace, '')
+    const env = offlineEnvironment(temporary, trace)
+    const raceProbeEnv = { ...env }
+    delete raceProbeEnv.NODE_OPTIONS
+    const raceProbe = run(process.execPath, ['-e', [
+      "const fs = require('node:fs')",
+      'const originalLstat = fs.lstatSync',
+      'let appended = false',
+      'fs.lstatSync = function injectedConcurrentAppend(filename, options) {',
+      '  if (!appended && filename === process.argv[2]) { appended = true; fs.appendFileSync(filename, " ") }',
+      '  return originalLstat(filename, options)',
+      '}',
+      "process.env.NODE_OPTIONS = '--require=' + JSON.stringify(process.argv[1])",
+      'require(process.argv[1])',
+    ].join('\n'), path.join(temporary, path.basename(preload)), trace], { env: raceProbeEnv, timeout: 5_000 })
+    requireSuccess(raceProbe, 'concurrent Turbopack trace metadata mutation probe')
+    const unadmittedTrace = path.join(temporary, 'unadmitted-trace.jsonl')
+    fs.writeFileSync(unadmittedTrace, 'sentinel\n')
+    const deniedTrace = run(process.execPath, ['-e', 'process.exit(0)'], {
+      env: { ...env, ZIGCSS_TURBOPACK_TRACE: unadmittedTrace },
+      timeout: 5_000,
+    })
+    assert.equal(deniedTrace.status, 1)
+    assert.match(deniedTrace.stderr, /trace file must use an admitted fixed filename/)
+    assert.equal(fs.readFileSync(unadmittedTrace, 'utf8'), 'sentinel\n')
+    const linkedTrace = path.join(temporary, 'linked-trace.jsonl')
+    fs.linkSync(trace, linkedTrace)
+    const deniedLinkedTrace = run(process.execPath, ['-e', 'process.exit(0)'], { env, timeout: 5_000 })
+    assert.equal(deniedLinkedTrace.status, 1)
+    assert.match(deniedLinkedTrace.stderr, /bounded canonical singly-linked regular non-symlink file/)
+    fs.unlinkSync(linkedTrace)
     const denied = run(process.execPath, ['-e', "require('node:https').get('https://example.com')"], {
-      env: offlineEnvironment(temporary, trace),
+      env,
       timeout: 5_000,
     })
     assert.equal(denied.signal, null)

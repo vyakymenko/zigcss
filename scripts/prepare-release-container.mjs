@@ -186,20 +186,20 @@ export async function prepareReleaseContainer(options) {
 function parseOptions(args) {
   const allowed = new Set(['--root', '--output-directory', '--target', '--version'])
   if (args.length !== allowed.size * 2) fail('CLI requires root, output directory, target, and version')
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
-    if (!allowed.has(name) || value === undefined || Object.hasOwn(values, name)) {
+    if (!allowed.has(name) || value === undefined || values.has(name)) {
       fail(`invalid or repeated option ${name}`)
     }
-    values[name] = value
+    values.set(name, value)
   }
   return {
-    root: values['--root'],
-    outputDirectory: values['--output-directory'],
-    target: values['--target'],
-    version: values['--version'],
+    root: values.get('--root'),
+    outputDirectory: values.get('--output-directory'),
+    target: values.get('--target'),
+    version: values.get('--version'),
   }
 }
 

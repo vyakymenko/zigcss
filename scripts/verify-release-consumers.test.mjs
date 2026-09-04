@@ -14,6 +14,7 @@ import { prepareReleaseContainer } from './prepare-release-container.mjs'
 import {
   homebrewArchiveDownloadArguments,
   homebrewArchiveDownloadPolicy,
+  homebrewZigCommand,
   parseHomebrewFormula,
 } from './verify-homebrew-formula.mjs'
 
@@ -111,7 +112,7 @@ function windowsSystemFilesystem({
       if (name === undefined) throw new Error(`unexpected lstat ${candidate}`)
       const calls = (lstatCalls.get(name) ?? 0) + 1
       lstatCalls.set(name, calls)
-      return identity(name, replaced === name && calls > 1)
+      return identity(name, replaced === name && (name === 'file' || calls > 1))
     },
     openSync(candidate) {
       assert.equal(classify(candidate), 'file')
@@ -151,6 +152,10 @@ test('npm installation selects only finite verified absolute system archive read
   )
   assert.equal(
     installer.archiveExecutable('win32', 'D:\\Windows', windowsSystemFilesystem()),
+    'D:\\Windows\\System32\\tar.exe',
+  )
+  assert.equal(
+    installer.archiveExecutable('win32', 'd:/WINDOWS/', windowsSystemFilesystem()),
     'D:\\Windows\\System32\\tar.exe',
   )
   assert.throws(() => installer.archiveExecutable('win32', undefined), /Windows system root/)
@@ -195,6 +200,13 @@ test('npm installation selects only finite verified absolute system archive read
       /No trusted Windows system tar\.exe/,
     )
   }
+})
+
+test('npm installer renders remote failures as one bounded inert log field', () => {
+  const diagnostic = installer.formatInstallFailure(new Error('remote\r\nforged\u001b[31m'))
+  assert.equal(diagnostic, '"remote\\r\\nforged\\u001b[31m"')
+  assert.doesNotMatch(diagnostic, /[\r\n\u001b]/)
+  assert.ok(installer.formatInstallFailure(new Error('x'.repeat(5000))).length <= 4098)
 })
 
 function sha256(bytes) {
@@ -590,6 +602,32 @@ test('npm installer reads its trust manifest only from a bounded regular stable 
     const oversized = path.join(temporary, 'oversized.json')
     fs.writeFileSync(oversized, Buffer.alloc(installer.installLimits.maximumManifestBytes + 1, 0x20))
     assert.throws(() => installer.readNativeIntegrityManifest(oversized), /must contain 1 through/)
+
+    const raced = path.join(temporary, 'raced.json')
+    const displaced = path.join(temporary, 'displaced.json')
+    const replacement = path.join(temporary, 'replacement.json')
+    fs.writeFileSync(raced, source)
+    fs.writeFileSync(replacement, source)
+    const originalOpenSync = fs.openSync
+    let swapped = false
+    fs.openSync = function hardenedManifestRace(filename, ...args) {
+      const descriptor = originalOpenSync.call(this, filename, ...args)
+      if (!swapped && filename === raced) {
+        swapped = true
+        fs.renameSync(raced, displaced)
+        fs.renameSync(replacement, raced)
+      }
+      return descriptor
+    }
+    try {
+      assert.throws(
+        () => installer.readNativeIntegrityManifest(raced),
+        /stable identity|changed while it was being read/,
+      )
+      assert.equal(swapped, true)
+    } finally {
+      fs.openSync = originalOpenSync
+    }
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
   }
@@ -887,6 +925,15 @@ test('Homebrew source download is hermetic, bounded, and retryable', () => {
   ])
 })
 
+test('Homebrew smoke admits only finite reviewed Zig command locations', () => {
+  assert.equal(homebrewZigCommand(undefined), 'zig')
+  assert.equal(homebrewZigCommand('/usr/local/bin/zig'), '/usr/local/bin/zig')
+  assert.throws(
+    () => homebrewZigCommand('/tmp/attacker-controlled-zig'),
+    /finite reviewed Zig installation/,
+  )
+})
+
 test('Homebrew formula policy rejects mutable sources, missing trust data, and second downloads', () => {
   const formula = fs.readFileSync(path.join(repositoryRoot, 'Formula/zigcss.rb'), 'utf8')
   const invalid = [
@@ -1039,7 +1086,10 @@ test('release Dockerfile copies only a locally verified binary into a non-root s
     dockerfile,
     /^# syntax=docker\/dockerfile:1\.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e$/m,
   )
-  assert.match(dockerfile, /^FROM node:22-alpine@sha256:[0-9a-f]{64} AS verifier$/m)
+  assert.match(
+    dockerfile,
+    /^FROM node:24\.20\.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS verifier$/m,
+  )
   assert.match(dockerfile, /linux\/amd64\) zigcss_target=x86_64-linux/)
   assert.match(dockerfile, /linux\/arm64\) zigcss_target=aarch64-linux/)
   assert.match(dockerfile, /^COPY package\.json install\.js native-integrity\.json \.\/$/m)

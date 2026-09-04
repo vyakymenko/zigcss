@@ -13,7 +13,9 @@ const http2 = require('node:http2')
 const https = require('node:https')
 const inspector = require('node:inspector')
 const net = require('node:net')
+const os = require('node:os')
 const path = require('node:path')
+const { Readable } = require('node:stream')
 const tls = require('node:tls')
 const { pathToFileURL } = require('node:url')
 const workerThreads = require('node:worker_threads')
@@ -46,6 +48,7 @@ const posixArchiveEnvironment = Object.freeze({
   LC_ALL: 'C',
   PATH: '/usr/bin:/bin',
 })
+const repositoryRoot = path.resolve(__dirname, '..')
 
 function fail(message) {
   throw new Error(`release smoke preload: ${message}`)
@@ -289,6 +292,36 @@ function boundedStringEnvironment(environment) {
   })
 }
 
+function canonicalSmokeDirectory(rootInput, label, allowRepositoryAssets = false) {
+  if (typeof rootInput !== 'string' || rootInput.includes('\0') || !path.isAbsolute(rootInput)) {
+    fail(`${label} must be an absolute local path`)
+  }
+  const repositoryAssets = path.join(repositoryRoot, 'release-assets')
+  if (rootInput === repositoryAssets) {
+    if (!allowRepositoryAssets) fail(`${label} must remain inside the smoke temporary root`)
+  } else {
+    const relative = path.relative(path.resolve(os.tmpdir()), rootInput)
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      fail(allowRepositoryAssets
+        ? `${label} must be the repository assets or remain inside the smoke temporary root`
+        : `${label} must remain inside the smoke temporary root`)
+    }
+  }
+  const stat = fs.lstatSync(rootInput)
+  if (!stat.isDirectory() || stat.isSymbolicLink()) fail(`${label} must be a regular non-symlink directory`)
+  const canonical = fs.realpathSync(rootInput)
+  if (rootInput === repositoryAssets) {
+    if (canonical !== fs.realpathSync(repositoryAssets)) fail(`${label} escapes the repository assets`)
+  } else {
+    const canonicalTemporary = fs.realpathSync(path.resolve(os.tmpdir()))
+    const canonicalRelative = path.relative(canonicalTemporary, canonical)
+    if (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative)) {
+      fail(`${label} escapes its admitted root`)
+    }
+  }
+  return canonical
+}
+
 function fileSha256(filename) {
   const hash = crypto.createHash('sha256')
   const descriptor = fs.openSync(filename, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
@@ -315,6 +348,8 @@ function canonicalLifecyclePackage(
     typeof rootInput !== 'string' || rootInput.includes('\0') || !path.isAbsolute(rootInput) ||
     !boundedStringEnvironment(environment)
   ) return null
+  const temporaryRelative = path.relative(fs.realpathSync(path.resolve(os.tmpdir())), rootInput)
+  if (temporaryRelative.startsWith('..') || path.isAbsolute(temporaryRelative)) return null
   try {
     const rootStat = fs.lstatSync(rootInput)
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null
@@ -385,17 +420,17 @@ function trustedArchiveExecutable(command) {
   try {
     const resolved = fs.realpathSync(command)
     if (!policy.resolved.includes(resolved)) return false
-    const before = fs.lstatSync(resolved)
-    if (
-      !before.isFile() || before.isSymbolicLink() || before.uid !== 0 ||
-      (before.mode & 0o022) !== 0 || (before.mode & 0o111) === 0
-    ) return false
-    descriptor = fs.openSync(resolved, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
+    descriptor = fs.openSync(
+      resolved,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
     const opened = fs.fstatSync(descriptor)
     const after = fs.lstatSync(resolved)
-    return opened.isFile() && after.isFile() &&
-      opened.dev === before.dev && opened.ino === before.ino && opened.mode === before.mode &&
-      opened.uid === before.uid && opened.size === before.size && opened.mtimeMs === before.mtimeMs &&
+    return opened.isFile() && after.isFile() && !after.isSymbolicLink() &&
+      opened.uid === 0 && (opened.mode & 0o022) === 0 && (opened.mode & 0o111) !== 0 &&
       after.dev === opened.dev && after.ino === opened.ino && after.mode === opened.mode &&
       after.uid === opened.uid && after.size === opened.size && after.mtimeMs === opened.mtimeMs &&
       fs.realpathSync(command) === resolved
@@ -649,21 +684,107 @@ if (typeof assetRootInput !== 'string' || typeof version !== 'string') fail('ass
 if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.test(version)) fail('version is invalid')
 if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(archiveName ?? '')) fail('archive name is invalid')
 if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(checksumsName ?? '')) fail('checksum name is invalid')
+if (archiveName === checksumsName) fail('archive and checksum names must be distinct')
 
-const inputRootStat = fs.lstatSync(assetRootInput)
-if (!inputRootStat.isDirectory() || inputRootStat.isSymbolicLink()) fail('asset root must be a regular non-symlink directory')
-const assetRoot = fs.realpathSync(assetRootInput)
+const assetRoot = canonicalSmokeDirectory(assetRootInput, 'asset root', true)
+const assetEntries = fs.readdirSync(assetRoot, { withFileTypes: true })
 
-const allowed = new Map([archiveName, checksumsName].map(name => {
+function openReleaseAsset(requestedName, maximumBytes) {
+  const entry = assetEntries.find(candidate => candidate.name === requestedName)
+  if (entry === undefined || !entry.isFile() || entry.isSymbolicLink()) {
+    fail(`${requestedName} must be a nonempty regular file`)
+  }
+  const name = entry.name
   const filename = path.join(assetRoot, name)
-  const stat = fs.lstatSync(filename)
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0) fail(`${name} must be a nonempty regular file`)
-  if (path.dirname(fs.realpathSync(filename)) !== assetRoot) fail(`${name} escapes the asset root`)
-  return [
-    `https://github.com/vyakymenko/zigcss/releases/download/v${version}/${name}`,
-    Object.freeze({ filename, size: stat.size }),
-  ]
-}))
+  let descriptor
+  try {
+    try {
+      descriptor = fs.openSync(
+        filename,
+        fs.constants.O_RDONLY |
+          (fs.constants.O_NOFOLLOW ?? 0) |
+          (fs.constants.O_NONBLOCK ?? 0) |
+          (fs.constants.O_CLOEXEC ?? 0),
+      )
+    } catch (error) {
+      fail(`${name} is unavailable: ${error.message}`)
+    }
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(filename, { bigint: true })
+    if (
+      !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      opened.dev !== pathStat.dev || opened.ino !== pathStat.ino ||
+      opened.mode !== pathStat.mode || opened.nlink !== pathStat.nlink ||
+      opened.size !== pathStat.size || opened.mtimeNs !== pathStat.mtimeNs ||
+      opened.ctimeNs !== pathStat.ctimeNs || opened.size <= 0n ||
+      opened.size > BigInt(maximumBytes)
+    ) fail(`${name} must be a bounded stable regular file inside the asset root`)
+    const asset = Object.freeze({
+      ctimeNs: opened.ctimeNs,
+      descriptor,
+      dev: opened.dev,
+      ino: opened.ino,
+      mtimeNs: opened.mtimeNs,
+      size: Number(opened.size),
+    })
+    descriptor = undefined
+    return { asset, name }
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+  }
+}
+
+const allowed = new Map()
+try {
+  for (const [requestedName, maximumBytes] of [
+    [archiveName, maximumArchiveBytes],
+    [checksumsName, maximumManifestBytes],
+  ]) {
+    const { asset, name } = openReleaseAsset(requestedName, maximumBytes)
+    allowed.set(
+      `https://github.com/vyakymenko/zigcss/releases/download/v${version}/${name}`,
+      asset,
+    )
+  }
+} catch (error) {
+  for (const asset of allowed.values()) fs.closeSync(asset.descriptor)
+  throw error
+}
+
+function createAssetReadStream(asset) {
+  let offset = 0
+  return new Readable({
+    read() {
+      if (offset === asset.size) {
+        this.push(null)
+        return
+      }
+
+      try {
+        const current = fs.fstatSync(asset.descriptor, { bigint: true })
+        if (
+          !current.isFile() || current.dev !== asset.dev || current.ino !== asset.ino ||
+          current.size !== BigInt(asset.size) || current.mtimeNs !== asset.mtimeNs ||
+          current.ctimeNs !== asset.ctimeNs
+        ) fail('release asset changed after descriptor admission')
+
+        const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, asset.size - offset))
+        const bytesRead = fs.readSync(
+          asset.descriptor,
+          chunk,
+          0,
+          chunk.length,
+          offset,
+        )
+        if (bytesRead <= 0) fail('release asset descriptor ended before its admitted size')
+        offset += bytesRead
+        this.push(bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead))
+      } catch (error) {
+        this.destroy(error)
+      }
+    },
+  })
+}
 
 function installAssetService() {
   https.get = function smokeGet(url, options, callback) {
@@ -686,7 +807,7 @@ function installAssetService() {
         request.emit('error', new Error(`release smoke blocked unexpected HTTPS request ${requested}`))
         return
       }
-      const response = fs.createReadStream(asset.filename)
+      const response = createAssetReadStream(asset)
       response.statusCode = 200
       response.headers = { 'content-length': String(asset.size) }
       callback(response)
@@ -707,43 +828,133 @@ function installAssetService() {
   installNetworkBoundary(networkError, { allowedHttpsGet })
 }
 
-function canonicalRuntimeFile(filename, label, maximumBytes, permitEmpty = false) {
+const runtimeSystemExecutables = new Set([
+  '/bin/bash',
+  '/bin/sh',
+  '/bin/zsh',
+  '/usr/bin/bash',
+  '/usr/bin/sh',
+  '/usr/bin/zsh',
+])
+
+function openRuntimeFile(
+  filename,
+  label,
+  maximumBytes,
+  permitEmpty,
+  admittedRoot,
+  flags = fs.constants.O_RDONLY,
+  allowSystemExecutable = false,
+) {
   if (typeof filename !== 'string' || filename.includes('\0') || !path.isAbsolute(filename)) {
     fail(`${label} must be an absolute local path`)
   }
-  const stat = fs.lstatSync(filename)
-  if (!stat.isFile() || stat.isSymbolicLink()) fail(`${label} must be a regular non-symlink file`)
-  if ((!permitEmpty && stat.size === 0) || stat.size > maximumBytes) fail(`${label} has an invalid size`)
-  return fs.realpathSync(filename)
+  const normalized = path.resolve(filename)
+  const lexicalRoot = path.resolve(admittedRoot)
+  const lexicalRelative = path.relative(lexicalRoot, normalized)
+  const admittedSystemPath = allowSystemExecutable && runtimeSystemExecutables.has(normalized)
+  if (
+    normalized !== filename ||
+    (!admittedSystemPath &&
+      (lexicalRelative.startsWith('..') || path.isAbsolute(lexicalRelative)))
+  ) fail(`${label} escapes its admitted root`)
+  let descriptor
+  try {
+    const canonical = fs.realpathSync(normalized)
+    const canonicalRoot = fs.realpathSync(admittedRoot)
+    const canonicalRelative = path.relative(canonicalRoot, canonical)
+    const admittedCanonicalSystemPath =
+      allowSystemExecutable && runtimeSystemExecutables.has(canonical)
+    if (
+      !admittedCanonicalSystemPath &&
+      (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative))
+    ) fail(`${label} resolves outside its admitted root`)
+    descriptor = fs.openSync(
+      canonical,
+      flags |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(canonical, { bigint: true })
+    if (
+      !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      opened.dev !== pathStat.dev || opened.ino !== pathStat.ino ||
+      opened.size !== pathStat.size || opened.mtimeNs !== pathStat.mtimeNs ||
+      opened.ctimeNs !== pathStat.ctimeNs ||
+      (!permitEmpty && opened.size === 0n) || opened.size > BigInt(maximumBytes)
+    ) fail(`${label} must be a bounded stable regular file`)
+    return { canonical, descriptor, stat: opened }
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+    throw error
+  }
+}
+
+function canonicalRuntimeFile(filename, label, maximumBytes, admittedRoot, allowSystemExecutable = false) {
+  const opened = openRuntimeFile(
+    filename,
+    label,
+    maximumBytes,
+    false,
+    admittedRoot,
+    fs.constants.O_RDONLY,
+    allowSystemExecutable,
+  )
+  fs.closeSync(opened.descriptor)
+  return opened.canonical
 }
 
 function installRuntimeTrace() {
+  for (const asset of allowed.values()) fs.closeSync(asset.descriptor)
   allowed.clear()
   const traceRootInput = process.env.ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE_ROOT
   const traceInput = process.env.ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE
   const binaryInput = process.env.ZIGCSS_RELEASE_SMOKE_RUNTIME_BINARY
   if (typeof traceRootInput !== 'string') fail('runtime trace root is required')
-  const traceRootStat = fs.lstatSync(traceRootInput)
-  if (!traceRootStat.isDirectory() || traceRootStat.isSymbolicLink()) {
-    fail('runtime trace root must be a regular non-symlink directory')
-  }
-  const traceRoot = fs.realpathSync(traceRootInput)
-  const trace = canonicalRuntimeFile(traceInput, 'runtime trace', maximumTraceBytes, true)
-  if (path.dirname(trace) !== traceRoot) fail('runtime trace escapes its root')
-  const expectedBinary = canonicalRuntimeFile(binaryInput, 'runtime binary', 256 * 1024 * 1024)
+  const traceRoot = canonicalSmokeDirectory(traceRootInput, 'runtime trace root')
+  const openedTrace = openRuntimeFile(
+    traceInput,
+    'runtime trace',
+    maximumTraceBytes,
+    true,
+    traceRootInput,
+    fs.constants.O_RDWR | fs.constants.O_APPEND,
+  )
+  const traceDescriptor = openedTrace.descriptor
+  const expectedBinary = canonicalRuntimeFile(
+    binaryInput,
+    'runtime binary',
+    256 * 1024 * 1024,
+    traceRootInput,
+    process.platform === 'darwin',
+  )
 
   let nativeSpawns = 0
   let networkAttempts = 0
   let deniedProcessAttempts = 0
 
   function record(event) {
-    const stat = fs.lstatSync(trace)
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maximumTraceBytes) {
+    const before = fs.fstatSync(traceDescriptor, { bigint: true })
+    if (!before.isFile() || before.size > BigInt(maximumTraceBytes)) {
       fail('runtime trace changed type or exceeded its byte limit')
     }
-    const line = `${JSON.stringify({ event, pid: process.pid })}\n`
-    if (stat.size + Buffer.byteLength(line) > maximumTraceBytes) fail('runtime trace exceeds its byte limit')
-    fs.appendFileSync(trace, line, { encoding: 'utf8', flag: 'a' })
+    const bytes = Buffer.from(`${JSON.stringify({ event, pid: process.pid })}\n`)
+    if (before.size + BigInt(bytes.length) > BigInt(maximumTraceBytes)) {
+      fail('runtime trace exceeds its byte limit')
+    }
+    let offset = 0
+    while (offset < bytes.length) {
+      const written = fs.writeSync(traceDescriptor, bytes, offset, bytes.length - offset, null)
+      if (written === 0) fail('runtime trace write made no progress')
+      offset += written
+    }
+    const after = fs.fstatSync(traceDescriptor, { bigint: true })
+    if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino ||
+        after.size !== before.size + BigInt(bytes.length)) {
+      fail('runtime trace write changed identity or size')
+    }
   }
 
   function denyProcess(operation) {
@@ -770,7 +981,14 @@ function installRuntimeTrace() {
   immutableFunction(childProcess, 'spawn', function tracedNativeSpawn(command, args, options) {
     let canonicalCommand
     try {
-      canonicalCommand = canonicalRuntimeFile(command, 'spawn command', 256 * 1024 * 1024)
+      if (command !== expectedBinary) throw new Error('spawn command does not match the admitted binary')
+      canonicalCommand = canonicalRuntimeFile(
+        expectedBinary,
+        'spawn command',
+        256 * 1024 * 1024,
+        traceRoot,
+        process.platform === 'darwin',
+      )
     } catch {
       return denyProcess('unexpected child process')
     }
@@ -836,10 +1054,6 @@ function installRuntimeTrace() {
 
   record('runtime-start')
   process.on('exit', () => {
-    const stat = fs.lstatSync(trace)
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maximumTraceBytes) {
-      fail('runtime trace changed type or exceeded its byte limit')
-    }
     const summary = `${JSON.stringify({
       event: 'runtime-summary',
       pid: process.pid,
@@ -847,8 +1061,27 @@ function installRuntimeTrace() {
       networkAttempts,
       deniedProcessAttempts,
     })}\n`
-    if (stat.size + Buffer.byteLength(summary) > maximumTraceBytes) fail('runtime trace exceeds its byte limit')
-    fs.appendFileSync(trace, summary, { encoding: 'utf8', flag: 'a' })
+    const before = fs.fstatSync(traceDescriptor, { bigint: true })
+    const bytes = Buffer.from(summary)
+    if (!before.isFile() || before.size + BigInt(bytes.length) > BigInt(maximumTraceBytes)) {
+      fail('runtime trace changed type or exceeded its byte limit')
+    }
+    try {
+      let offset = 0
+      while (offset < bytes.length) {
+        const written = fs.writeSync(traceDescriptor, bytes, offset, bytes.length - offset, null)
+        if (written === 0) fail('runtime summary write made no progress')
+        offset += written
+      }
+      const after = fs.fstatSync(traceDescriptor, { bigint: true })
+      if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino ||
+          after.size !== before.size + BigInt(bytes.length)) {
+        fail('runtime summary write changed identity or size')
+      }
+      fs.fsyncSync(traceDescriptor)
+    } finally {
+      fs.closeSync(traceDescriptor)
+    }
   })
 }
 

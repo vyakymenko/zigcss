@@ -98,10 +98,22 @@ test('Windows archive extraction ignores Git Bash PATH shadowing', async () => {
     setup.resolveArchiveCommand('win32', environment),
     'C:\\Windows\\System32\\tar.exe',
   )
+  assert.equal(
+    setup.resolveArchiveCommand('win32', { SystemRoot: 'd:/WINDOWS/' }),
+    'D:\\Windows\\System32\\tar.exe',
+  )
   assert.equal(setup.resolveArchiveCommand('linux', environment), 'tar')
   assert.equal(setup.resolveArchiveCommand('darwin', environment), 'tar')
 
-  for (const SystemRoot of [undefined, '', 'Windows', '\\\\server\\Windows', 'C:\\Windows\n']) {
+  for (const SystemRoot of [
+    undefined,
+    '',
+    'Windows',
+    '\\\\server\\Windows',
+    'C:\\Windows\n',
+    'C:\\FakeRoot',
+    'C:\\Nested\\Windows',
+  ]) {
     assert.throws(
       () => setup.resolveArchiveCommand('win32', { ...environment, SystemRoot }),
       /SystemRoot/,

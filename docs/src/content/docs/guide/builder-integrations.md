@@ -8,7 +8,7 @@ capabilities: the immutable published `zigcss@0.6.0` binary predates the
 
 ## Prepare one verified checkout
 
-Use Zig 0.15.2 and exact Node.js 22.22.0. Run every command on this page from
+Use Zig 0.15.2 and exact Node.js 24.20.0 LTS for the maintained proof environment. Run every command on this page from
 the repository root. Dependency lifecycle scripts stay disabled so preparing a
 source checkout cannot download the older published binary into `bin/`.
 

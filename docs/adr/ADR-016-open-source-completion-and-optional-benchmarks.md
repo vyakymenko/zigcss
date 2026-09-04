@@ -18,7 +18,7 @@ The only missing benchmark input is a qualifying physical Linux x64 runner and i
 4. `benchmarks/publication.json` remains `status: withdrawn`, and `BENCHMARK_REPORT.md` remains the generated no-claims report. No timing, ranking, ratio, “fastest”, or equivalent claim may appear without the existing controlled archive gates.
 5. A future community contributor or operator may explicitly reopen section 19 by supplying eligible non-emulated Linux x64 hardware and registration authority without weakening schema v2 attestation. Paid capacity still requires a new explicit owner decision.
 6. The autonomous supervisor must stop with `COMPLETE` instead of repeatedly emitting `controlled-benchmark-archive`. It may not invent substitute work, register infrastructure, or keep spending model passes on the deferred terminal.
-7. Immutable `v0.6.0-rc.2`, `v0.6.0`, npm `next`, npm `latest`, GitHub Releases, assets, attestations, and Pages evidence remain unchanged.
+7. Protected historical tags `v0.6.0-rc.2` and `v0.6.0`, immutable npm versions on `next` and `latest`, historically mutable GitHub Releases and assets, attestations, and Pages evidence remain unchanged. Both historical GitHub releases predate Immutable Releases and read back `immutable: false`.
 
 ## Consequences
 

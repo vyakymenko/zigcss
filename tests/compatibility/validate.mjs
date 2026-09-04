@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { readStableRegularFile } from '../../scripts/bounded-filesystem.mjs'
 
 const require = createRequire(import.meta.url)
 const { transform } = require('lightningcss')
@@ -17,20 +18,28 @@ const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf
 const expectedCliStderr = /^[0-9]+\.[0-9]+\.[0-9]+-/.test(activeVersion)
   ? `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\n`
   : ''
+const exactCompiler = path.join(
+  repositoryRoot,
+  'zig-out',
+  'bin',
+  process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
+)
+const maximumFixtureBytes = 1024 * 1024
 
 function fail(message) {
   throw new Error(message)
 }
 
 function compilerFromArguments(argumentsList) {
-  let compiler = path.join(repositoryRoot, 'zig-out', 'bin', process.platform === 'win32' ? 'zigcss.exe' : 'zigcss')
   for (let index = 0; index < argumentsList.length; index += 1) {
     if (argumentsList[index] !== '--compiler') fail(`unknown argument: ${argumentsList[index]}`)
     if (index + 1 >= argumentsList.length) fail('--compiler requires a path')
-    compiler = path.resolve(argumentsList[index + 1])
+    if (path.resolve(argumentsList[index + 1]) !== exactCompiler) {
+      fail('--compiler must identify the repository ZigCSS test binary')
+    }
     index += 1
   }
-  return compiler
+  return exactCompiler
 }
 
 function loadMatrix() {
@@ -54,8 +63,11 @@ function loadMatrix() {
     const fixturePath = path.resolve(scriptDirectory, testCase.fixture)
     const fixturePrefix = `${path.resolve(fixturesRoot)}${path.sep}`
     if (!fixturePath.startsWith(fixturePrefix)) fail(`fixture escapes compatibility root: ${testCase.fixture}`)
-    if (!fs.statSync(fixturePath).isFile()) fail(`fixture is not a file: ${testCase.fixture}`)
-    if (fs.readFileSync(fixturePath).length === 0) fail(`fixture is empty: ${testCase.fixture}`)
+    readStableRegularFile(fixturePath, {
+      label: `fixture ${testCase.fixture}`,
+      maximumBytes: maximumFixtureBytes,
+      reject: fail,
+    })
     if (testCase.requiredFragments !== undefined) {
       if (typeof testCase.requiredFragments !== 'object' || testCase.requiredFragments === null) {
         fail(`${testCase.id} requiredFragments must be an object`)
@@ -99,9 +111,10 @@ function loadMatrix() {
 }
 
 function runCompiler(compiler, testCase, mode) {
+  if (compiler !== exactCompiler) fail('compiler escaped the exact repository test binary')
   const argumentsList = [testCase.fixturePath]
   if (mode === 'minified') argumentsList.push('--minify')
-  const result = spawnSync(compiler, argumentsList, {
+  const result = spawnSync(exactCompiler, argumentsList, {
     cwd: repositoryRoot,
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024,

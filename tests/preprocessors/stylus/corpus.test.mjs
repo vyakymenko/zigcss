@@ -13,6 +13,7 @@ import {
   createStylusProvider,
 } from '../../../preprocessor/providers/stylus.mjs'
 import { makeRequest } from '../protocol/helpers.mjs'
+import { readStableRegularFile } from '../../../scripts/bounded-filesystem.mjs'
 
 const require = createRequire(import.meta.url)
 const { transform } = require('lightningcss')
@@ -296,10 +297,12 @@ test('pins, license-reviews, and checksum-verifies the Stylus 0.64.0 corpus', ()
     if (file.path.startsWith('upstream/')) assert.match(file.source, /^test\/(?:cases|images)\//)
     else assert.match(file.source, /^selection\.json#negativeCases\//)
     const filename = path.join(filesRoot, ...file.path.split('/'))
-    const stat = fs.lstatSync(filename)
-    assert.equal(stat.isFile(), true, file.path)
-    assert.equal(stat.isSymbolicLink(), false, file.path)
-    const bytes = fs.readFileSync(filename)
+    const bytes = readStableRegularFile(filename, {
+      allowEmpty: true,
+      label: file.path,
+      maximumBytes: Math.max(file.bytes, 1),
+      reject: assert.fail,
+    })
     assert.equal(bytes.length, file.bytes, `${file.path}: size`)
     assert.equal(sha256(bytes), file.sha256, `${file.path}: checksum`)
     expectedInventory.push(file.path)
@@ -328,9 +331,24 @@ test('pins, license-reviews, and checksum-verifies the Stylus 0.64.0 corpus', ()
     }
   }
   assert.equal(manifest.exclusions.some(item => upstreamNames.has(item.name)), false)
-  const exclusionCounts = {}
+  const exclusionCounts = {
+    'executable-extension': 0,
+    'unsupported-option': 0,
+    'generated-css-invalid': 0,
+  }
   for (const item of manifest.exclusions) {
-    exclusionCounts[item.category] = (exclusionCounts[item.category] ?? 0) + 1
+    switch (item.category) {
+      case 'executable-extension':
+        exclusionCounts['executable-extension'] += 1
+        break
+      case 'unsupported-option':
+        exclusionCounts['unsupported-option'] += 1
+        break
+      case 'generated-css-invalid':
+        exclusionCounts['generated-css-invalid'] += 1
+        break
+      default: assert.fail(`unknown Stylus exclusion category ${JSON.stringify(item.category)}`)
+    }
   }
   assert.deepEqual(exclusionCounts, {
     'executable-extension': 5,

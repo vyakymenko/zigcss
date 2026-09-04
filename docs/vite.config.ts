@@ -9,6 +9,14 @@ const productionContentSecurityPolicy = "default-src 'self'; base-uri 'none'; co
 const developmentContentSecurityPolicy = productionContentSecurityPolicy
   .replace("connect-src 'none'", "connect-src 'self' ws://127.0.0.1:* ws://localhost:*")
   .replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")
+const localBinDirectory = path.resolve(import.meta.dirname, '..', 'bin')
+const dockerBinDirectory = '/app/bin'
+
+export function resolveZigBinaryDirectory(configured: string | undefined): string {
+  if (configured === undefined || configured === localBinDirectory) return localBinDirectory
+  if (configured === dockerBinDirectory) return dockerBinDirectory
+  throw new Error(`ZIGCSS_DEV_BIN_DIRECTORY must be ${dockerBinDirectory} or the repository bin directory`)
+}
 
 function localDevelopmentContentSecurityPolicyPlugin(): Plugin {
   return {
@@ -30,13 +38,7 @@ function localDevelopmentContentSecurityPolicyPlugin(): Plugin {
  */
 function zigBinaryWatchPlugin() {
   const binaryName = process.platform === 'win32' ? 'zigcss.exe' : 'zigcss'
-  const configuredBinDirectory = process.env.ZIGCSS_DEV_BIN_DIRECTORY
-  if (configuredBinDirectory !== undefined && (
-    !path.isAbsolute(configuredBinDirectory) || path.resolve(configuredBinDirectory) !== configuredBinDirectory
-  )) {
-    throw new Error('ZIGCSS_DEV_BIN_DIRECTORY must be an absolute normalized path')
-  }
-  const binDirectory = configuredBinDirectory ?? path.resolve(import.meta.dirname, '..', 'bin')
+  const binDirectory = resolveZigBinaryDirectory(process.env.ZIGCSS_DEV_BIN_DIRECTORY)
   return {
     name: 'zigcss-binary-watch',
     configureServer(server) {

@@ -2,12 +2,14 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readBoundedDirectory, readStableRegularFile } from './bounded-filesystem.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 const corpusVersion = 'v1'
 const relativeCorpusDirectory = path.join('benchmarks', 'corpora', corpusVersion)
 const manifestName = 'manifest.json'
+const maximumCorpusBytes = 1024 * 1024
 const corpusSpecs = [
   { id: 'small-flat', file: 'small.css', qualifiedRules: 1 },
   { id: 'medium-flat', file: 'medium.css', qualifiedRules: 128 },
@@ -118,19 +120,43 @@ function confinedCorpusDirectory(root, create) {
   return canonicalDirectory
 }
 
-function requireRegularFile(file) {
-  const stat = fs.lstatSync(file)
-  if (!stat.isFile() || stat.isSymbolicLink()) fail(`corpus entry must be a regular non-symlink file: ${path.basename(file)}`)
-}
-
 function writeAtomic(file, content) {
-  if (fs.existsSync(file)) requireRegularFile(file)
-  const temporary = `${file}.zigcss-tmp`
-  if (fs.existsSync(temporary)) fail(`refusing to replace existing temporary file: ${path.basename(temporary)}`)
+  const expectedBytes = Buffer.from(content)
+  const existing = readStableRegularFile(file, {
+    allowMissing: true,
+    label: `corpus entry ${path.basename(file)}`,
+    maximumBytes: maximumCorpusBytes,
+    reject: fail,
+  })
+  if (existing !== null && existing.equals(expectedBytes)) return
+  const temporary = `${file}.zigcss-tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`
+  let descriptor
   try {
-    fs.writeFileSync(temporary, content, { flag: 'wx', mode: 0o644 })
+    descriptor = fs.openSync(
+      temporary,
+      fs.constants.O_CREAT
+        | fs.constants.O_EXCL
+        | fs.constants.O_WRONLY
+        | (fs.constants.O_NOFOLLOW ?? 0)
+        | (fs.constants.O_CLOEXEC ?? 0),
+      0o644,
+    )
+    let offset = 0
+    while (offset < expectedBytes.length) {
+      const count = fs.writeSync(descriptor, expectedBytes, offset, expectedBytes.length - offset, offset)
+      if (count === 0) fail(`temporary corpus entry ended before it was written: ${path.basename(file)}`)
+      offset += count
+    }
+    fs.fsyncSync(descriptor)
+    const written = fs.fstatSync(descriptor, { bigint: true })
+    if (!written.isFile() || written.size !== BigInt(expectedBytes.length)) {
+      fail(`temporary corpus entry was not written exactly: ${path.basename(file)}`)
+    }
+    fs.closeSync(descriptor)
+    descriptor = undefined
     fs.renameSync(temporary, file)
   } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
     fs.rmSync(temporary, { force: true })
   }
 }
@@ -147,20 +173,31 @@ export function validateRepository(root = repositoryRoot) {
   const expected = expectedCorpus()
   const directory = confinedCorpusDirectory(root, false)
   const expectedNames = [...expected.files.map(file => file.name), manifestName].sort(compareAscii)
-  const actualNames = fs.readdirSync(directory).sort(compareAscii)
+  const actualNames = readBoundedDirectory(directory, {
+    label: 'version directory',
+    maximumEntries: expectedNames.length + 1,
+    reject: fail,
+  }).map(entry => entry.name).sort(compareAscii)
   if (actualNames.length !== expectedNames.length || actualNames.some((name, index) => name !== expectedNames[index])) {
     fail(`unexpected corpus inventory: expected ${expectedNames.join(', ')}, found ${actualNames.join(', ')}`)
   }
 
   for (const file of expected.files) {
     const target = path.join(directory, file.name)
-    requireRegularFile(target)
-    if (!fs.readFileSync(target).equals(Buffer.from(file.content))) fail(`stale corpus file: ${file.name}`)
+    const actual = readStableRegularFile(target, {
+      label: `corpus entry ${file.name}`,
+      maximumBytes: maximumCorpusBytes,
+      reject: fail,
+    })
+    if (!actual.equals(Buffer.from(file.content))) fail(`stale corpus file: ${file.name}`)
   }
 
   const manifestPath = path.join(directory, manifestName)
-  requireRegularFile(manifestPath)
-  const manifestContent = fs.readFileSync(manifestPath, 'utf8')
+  const manifestContent = readStableRegularFile(manifestPath, {
+    label: `corpus entry ${manifestName}`,
+    maximumBytes: maximumCorpusBytes,
+    reject: fail,
+  }).toString('utf8')
   if (manifestContent !== expected.manifestContent) fail('stale corpus manifest: manifest.json')
   const manifest = JSON.parse(manifestContent)
 

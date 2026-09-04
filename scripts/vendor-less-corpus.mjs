@@ -1,15 +1,29 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  hashStableRegularFile,
+  readBoundedDirectory,
+  readStableRegularFile,
+  readStableUtf8File,
+} from './bounded-filesystem.mjs'
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const scriptPath = fileURLToPath(import.meta.url)
+const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 const corpusRoot = path.join(repositoryRoot, 'tests/preprocessors/less/corpus')
 const filesRoot = path.join(corpusRoot, 'files')
 const selectionPath = path.join(corpusRoot, 'selection.json')
 const manifestPath = path.join(corpusRoot, 'manifest.json')
 const licensePath = path.join(corpusRoot, 'LESS_LICENSE')
 const sourcePrefix = 'packages/test-data/'
+const maximumArchiveBytes = 256 * 1024 * 1024
+const maximumFileBytes = 16 * 1024 * 1024
+const maximumSelectionBytes = 2 * 1024 * 1024
+const maximumTraversalBytes = 256 * 1024 * 1024
+const maximumTraversalDepth = 32
+const maximumTraversalEntries = 20_000
+const maximumEntriesPerDirectory = 4096
 
 function fail(message) {
   throw new Error(`Less corpus: ${message}`)
@@ -17,6 +31,21 @@ function fail(message) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+function traversalBudget() {
+  return { bytes: 0, entries: 0 }
+}
+
+function accountEntry(budget, relativePath, depth) {
+  budget.entries += 1
+  if (budget.entries > maximumTraversalEntries) fail(`source traversal exceeds ${maximumTraversalEntries} entries`)
+  if (depth > maximumTraversalDepth) fail(`source traversal exceeds depth ${maximumTraversalDepth}: ${relativePath}`)
+}
+
+function accountBytes(budget, bytes) {
+  budget.bytes += bytes.length
+  if (budget.bytes > maximumTraversalBytes) fail(`source traversal exceeds ${maximumTraversalBytes} bytes`)
 }
 
 function exactKeys(value, expected, label) {
@@ -89,7 +118,11 @@ function providerOptions(value, label) {
 }
 
 function readSelection() {
-  const value = JSON.parse(fs.readFileSync(selectionPath, 'utf8'))
+  const value = JSON.parse(readStableUtf8File(selectionPath, {
+    label: 'selection.json',
+    maximumBytes: maximumSelectionBytes,
+    reject: fail,
+  }))
   exactKeys(
     value,
     ['schemaVersion', 'upstream', 'options', 'support', 'dependencies', 'cases'],
@@ -191,7 +224,7 @@ function readSelection() {
     fail('selection dependencies must be an object')
   }
   const casesById = new Map(cases.map(selectedCase => [selectedCase.id, selectedCase]))
-  const dependencies = {}
+  const dependencies = new Map()
   for (const [id, values] of Object.entries(value.dependencies)) {
     const selectedCase = casesById.get(id)
     if (selectedCase === undefined || selectedCase.outcome !== 'success') {
@@ -202,9 +235,9 @@ function readSelection() {
     }
     const owned = values.map((item, index) => safeRelative(item, `${id} dependency ${index}`))
     if (new Set(owned).size !== owned.length) fail(`${id} dependencies must be unique`)
-    dependencies[id] = owned
+    dependencies.set(id, owned)
   }
-  return { ...value, options, support, dependencies, cases }
+  return { ...value, options, support, dependencies: Object.fromEntries(dependencies), cases }
 }
 
 function sourcePath(sourceRoot, relativePath) {
@@ -220,21 +253,31 @@ function generatedPath(sourceRelative) {
   return sourceRelative.slice(sourcePrefix.length)
 }
 
-function collectSource(sourceRoot, relativePath, output) {
+export function collectLessSource(sourceRoot, relativePath, output, budget = traversalBudget(), depth = 0) {
+  accountEntry(budget, relativePath, depth)
   const filename = sourcePath(sourceRoot, relativePath)
-  const stat = fs.lstatSync(filename)
-  if (stat.isSymbolicLink()) fail(`source contains a symlink: ${relativePath}`)
-  if (stat.isDirectory()) {
-    for (const entry of fs.readdirSync(filename, { withFileTypes: true }).sort((left, right) => (
+  const entries = readBoundedDirectory(filename, {
+    allowFile: true,
+    label: `source path ${relativePath}`,
+    maximumEntries: maximumEntriesPerDirectory,
+    reject: fail,
+  })
+  if (entries !== null) {
+    entries.sort((left, right) => (
       Buffer.from(left.name).compare(Buffer.from(right.name))
-    ))) {
-      collectSource(sourceRoot, `${relativePath}/${entry.name}`, output)
+    ))
+    for (const entry of entries) {
+      collectLessSource(sourceRoot, `${relativePath}/${entry.name}`, output, budget, depth + 1)
     }
     return
   }
-  if (!stat.isFile()) fail(`source contains a special file: ${relativePath}`)
   const target = generatedPath(relativePath)
-  const bytes = fs.readFileSync(filename)
+  const bytes = readStableRegularFile(filename, {
+    label: `source file ${relativePath}`,
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
+  accountBytes(budget, bytes)
   const existing = output.get(target)
   if (existing !== undefined && !existing.bytes.equals(bytes)) {
     fail(`selected source bytes conflict: ${target}`)
@@ -243,37 +286,73 @@ function collectSource(sourceRoot, relativePath, output) {
 }
 
 function listFiles(root) {
-  if (!fs.existsSync(root)) return []
+  const first = readBoundedDirectory(root, {
+    allowMissing: true,
+    label: 'generated corpus root',
+    maximumEntries: maximumEntriesPerDirectory,
+    reject: fail,
+  })
+  if (first === null) return []
   const output = []
-  function visit(directory, relative) {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+  const budget = traversalBudget()
+  function visit(directory, relative, entries, depth) {
+    for (const entry of entries) {
       const childRelative = relative === '' ? entry.name : `${relative}/${entry.name}`
       const child = path.join(directory, entry.name)
+      accountEntry(budget, childRelative, depth + 1)
       if (entry.isSymbolicLink()) fail(`generated corpus contains a symlink: ${childRelative}`)
-      if (entry.isDirectory()) visit(child, childRelative)
+      if (entry.isDirectory()) {
+        const children = readBoundedDirectory(child, {
+          label: `generated corpus directory ${childRelative}`,
+          maximumEntries: maximumEntriesPerDirectory,
+          reject: fail,
+        })
+        visit(child, childRelative, children, depth + 1)
+      }
       else if (entry.isFile()) output.push(childRelative)
       else fail(`generated corpus contains a special file: ${childRelative}`)
     }
   }
-  visit(root, '')
+  visit(root, '', first, 0)
   return output.sort((left, right) => Buffer.from(left).compare(Buffer.from(right)))
 }
 
+function writeAtomicFile(filename, bytes) {
+  const temporary = `${filename}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`
+  try {
+    fs.writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o644 })
+    fs.renameSync(temporary, filename)
+  } finally {
+    fs.rmSync(temporary, { force: true })
+  }
+}
+
 function writeOrCheck(filename, bytes, mode) {
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > maximumFileBytes) {
+    fail(`generated file ${path.relative(repositoryRoot, filename)} is outside its byte limit`)
+  }
   if (mode === 'write') {
     fs.mkdirSync(path.dirname(filename), { recursive: true })
-    fs.writeFileSync(filename, bytes)
+    writeAtomicFile(filename, bytes)
     return
   }
-  if (!fs.existsSync(filename)) fail(`missing generated file: ${path.relative(repositoryRoot, filename)}`)
-  if (!fs.readFileSync(filename).equals(bytes)) {
+  const actual = readStableRegularFile(filename, {
+    label: `generated file ${path.relative(repositoryRoot, filename)}`,
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
+  if (!actual.equals(bytes)) {
     fail(`stale generated file: ${path.relative(repositoryRoot, filename)}`)
   }
 }
 
 function verifiedPackage(sourceRoot, relativePath, expectedName, expectedDigest, upstream) {
   const filename = path.join(sourceRoot, ...relativePath.split('/'))
-  const bytes = fs.readFileSync(filename)
+  const bytes = readStableRegularFile(filename, {
+    label: relativePath,
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
   const value = JSON.parse(bytes)
   if (
     value.name !== expectedName ||
@@ -293,11 +372,11 @@ function main() {
     fail('--source must be a regular extracted Less repository directory')
   }
   if (arguments_.archive !== null) {
-    const archiveStat = fs.lstatSync(arguments_.archive)
-    if (!archiveStat.isFile() || archiveStat.isSymbolicLink()) {
-      fail('--archive must be a regular file')
-    }
-    const digest = sha256(fs.readFileSync(arguments_.archive))
+    const digest = hashStableRegularFile(arguments_.archive, {
+      label: '--archive',
+      maximumBytes: maximumArchiveBytes,
+      reject: fail,
+    })
     if (digest !== selection.upstream.archiveSha256) {
       fail(`archive checksum mismatch: ${digest}`)
     }
@@ -317,30 +396,37 @@ function main() {
     selection.upstream.providerPackageSha256,
     selection.upstream,
   )
-  const license = fs.readFileSync(path.join(arguments_.source, 'LICENSE'))
+  const license = readStableRegularFile(path.join(arguments_.source, 'LICENSE'), {
+    label: 'LICENSE',
+    maximumBytes: maximumFileBytes,
+    reject: fail,
+  })
   if (sha256(license) !== selection.upstream.licenseSha256) {
     fail('LICENSE does not match the reviewed Apache-2.0 text')
   }
 
   const selectedFiles = new Map()
+  const sourceBudget = traversalBudget()
   for (const selectedCase of selection.cases) {
     for (const relative of [selectedCase.entry, selectedCase.expected]) {
-      collectSource(
+      collectLessSource(
         arguments_.source,
         `${sourcePrefix}${selectedCase.suite}/${relative}`,
         selectedFiles,
+        sourceBudget,
       )
     }
   }
   for (const support of selection.support) {
-    collectSource(arguments_.source, `${sourcePrefix}${support}`, selectedFiles)
+    collectLessSource(arguments_.source, `${sourcePrefix}${support}`, selectedFiles, sourceBudget)
   }
   for (const dependencies of Object.values(selection.dependencies)) {
     for (const dependency of dependencies) {
-      collectSource(
+      collectLessSource(
         arguments_.source,
         `${sourcePrefix}tests-unit/${dependency}`,
         selectedFiles,
+        sourceBudget,
       )
     }
   }
@@ -393,4 +479,4 @@ function main() {
   )
 }
 
-main()
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === scriptPath) main()

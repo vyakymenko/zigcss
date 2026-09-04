@@ -61,6 +61,7 @@ const packageScripts = {
   'check:benchmark-output': 'node scripts/validate-benchmark-output.mjs --check',
   'test:benchmark-output': 'node --test scripts/validate-benchmark-output.test.mjs',
 }
+const maximumBenchmarkExecutableBytes = 512 * 1024 * 1024
 
 function fail(message) {
   throw new Error(`benchmark output: ${message}`)
@@ -87,14 +88,47 @@ function readJson(file, label) {
 }
 
 function confinedExecutable(root, file, label) {
-  if (!path.isAbsolute(file)) fail(`${label} must be absolute`)
-  const stat = requireRegularFile(file, label)
-  if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) fail(`${label} is not executable`)
+  if (!path.isAbsolute(file) || file.includes('\0')) fail(`${label} must be absolute`)
   const canonicalRoot = fs.realpathSync(root)
   const canonicalFile = fs.realpathSync(file)
   const relative = path.relative(canonicalRoot, canonicalFile)
   if (relative.startsWith('..') || path.isAbsolute(relative)) fail(`${label} escapes the repository`)
-  return canonicalFile
+  let descriptor
+  try {
+    descriptor = fs.openSync(
+      canonicalFile,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(canonicalFile, { bigint: true })
+    if (
+      !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      opened.dev !== pathStat.dev || opened.ino !== pathStat.ino ||
+      opened.size !== pathStat.size || opened.mtimeNs !== pathStat.mtimeNs ||
+      opened.ctimeNs !== pathStat.ctimeNs || opened.size <= 0n ||
+      opened.size > BigInt(maximumBenchmarkExecutableBytes)
+    ) fail(`${label} must be a bounded stable regular file`)
+    if (process.platform !== 'win32' && (opened.mode & 0o111n) === 0n) {
+      fail(`${label} is not executable`)
+    }
+    return canonicalFile
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+  }
+}
+
+export function benchmarkCompilerPath(root = repositoryRoot, compilerArgument) {
+  const expected = path.join(
+    root,
+    'zig-out',
+    'bin',
+    process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
+  )
+  if (compilerArgument === undefined || compilerArgument === expected) return expected
+  fail('zigcss benchmark executable must be the repository ReleaseFast binary')
 }
 
 export function validateBenchmarkOutputContract(root = repositoryRoot) {
@@ -240,12 +274,9 @@ export function runBenchmarkCli(root, tool, executable, input, output, clock) {
 }
 
 export function resolveBenchmarkExecutables(root = repositoryRoot, compilerArgument) {
-  if (compilerArgument !== undefined && !path.isAbsolute(compilerArgument)) {
-    fail('zigcss benchmark executable argument must be absolute')
-  }
   const compiler = confinedExecutable(
     root,
-    compilerArgument ?? path.join(root, 'zig-out', 'bin', process.platform === 'win32' ? 'zigcss.exe' : 'zigcss'),
+    benchmarkCompilerPath(root, compilerArgument),
     'zigcss benchmark executable',
   )
   const installed = verifyInstalledToolchain(root)

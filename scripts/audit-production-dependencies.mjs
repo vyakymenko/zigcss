@@ -55,8 +55,8 @@ export const developmentAuditModes = Object.freeze(developmentAuditScriptPolicy.
 })))
 
 export const auditExecutionPolicy = Object.freeze({
-  maximumAttempts: 2,
-  timeoutMilliseconds: 180_000,
+  maximumAttempts: 4,
+  timeoutMilliseconds: 90_000,
 })
 
 const retryableAuditStatusCodes = new Set([408, 425, 429, 500, 502, 503, 504])
@@ -377,11 +377,12 @@ export function auditArguments(surface, { omitDevelopment = true } = {}) {
 }
 
 export function auditEnvironment(environment = process.env) {
-  const sanitized = {}
+  const sanitized = new Map()
   for (const [name, value] of Object.entries(environment)) {
-    if (!ambientDependencyScopeKeys.has(name.toLowerCase())) sanitized[name] = value
+    if (!ambientDependencyScopeKeys.has(name.toLowerCase())) sanitized.set(name, value)
   }
-  return { ...sanitized, NO_COLOR: '1' }
+  sanitized.set('NO_COLOR', '1')
+  return Object.fromEntries(sanitized)
 }
 
 function isAuditEndpoint(uri) {

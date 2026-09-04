@@ -15,6 +15,7 @@ export const policyPath = path.join(repositoryRoot, 'docs', 'documentation-valid
 const executableLanguages = new Set(['bash', 'css', 'scss', 'json', 'lua', 'vim', 'zig'])
 const presentationLanguages = new Set(['mermaid', 'text'])
 const siteRoutes = new Set(['/', '/docs', '/features', '/getting-started', '/playground'])
+const maximumDocumentationToolBytes = 512 * 1024 * 1024
 
 function fail(message) {
   throw new Error(`documentation validation: ${message}`)
@@ -93,8 +94,7 @@ export function extractFences(content, source = '<memory>') {
     const startLine = index + 1
     let closed = false
     for (index += 1; index < lines.length; index += 1) {
-      const closing = new RegExp(`^ {0,3}${marker}{${minimumLength},}\\s*$`)
-      if (closing.test(lines[index])) {
+      if (isFenceClosingLine(lines[index], marker, minimumLength)) {
         closed = true
         break
       }
@@ -112,6 +112,20 @@ export function extractFences(content, source = '<memory>') {
     })
   }
   return fences
+}
+
+function isFenceClosingLine(line, marker, minimumLength) {
+  let cursor = 0
+  while (cursor < line.length && cursor < 3 && line[cursor] === ' ') cursor += 1
+  let markerLength = 0
+  while (line[cursor + markerLength] === marker) markerLength += 1
+  if (markerLength < minimumLength) return false
+  cursor += markerLength
+  while (cursor < line.length) {
+    if (line[cursor] !== ' ' && line[cursor] !== '\t') return false
+    cursor += 1
+  }
+  return true
 }
 
 function stripInlineCode(line) {
@@ -227,8 +241,7 @@ function headingAnchors(content) {
     if (fencedLines.has(index + 1)) continue
     const heading = /^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line)
     if (!heading) continue
-    const base = heading[1]
-      .replace(/<[^>]*>/g, '')
+    const base = stripMarkupTags(heading[1])
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
       .replace(/[`*_~]/g, '')
       .toLowerCase()
@@ -241,6 +254,21 @@ function headingAnchors(content) {
   }
   for (const match of content.matchAll(/\b(?:id|name)=["']([^"']+)["']/gi)) anchors.add(match[1])
   return anchors
+}
+
+function stripMarkupTags(value) {
+  let output = ''
+  let insideTag = false
+  for (const character of value) {
+    if (character === '<') {
+      insideTag = true
+    } else if (character === '>' && insideTag) {
+      insideTag = false
+    } else if (!insideTag) {
+      output += character
+    }
+  }
+  return output
 }
 
 function isExternal(destination) {
@@ -297,11 +325,10 @@ export function validateInternalLink(link, root = repositoryRoot) {
   const canonicalTarget = fs.realpathSync(target)
   assertInside(canonicalRoot, canonicalTarget, `${link.source}:${link.line} link`)
   if (fragment.length !== 0) {
-    const stat = fs.statSync(canonicalTarget)
-    if (!stat.isFile()) {
-      fail(`${link.source}:${link.line} has a fragment on a non-Markdown target`)
-    }
-    const targetContent = fs.readFileSync(canonicalTarget, 'utf8')
+    const targetContent = readStableTextFile(
+      canonicalTarget,
+      `${link.source}:${link.line} fragment target`,
+    )
     if (canonicalTarget.endsWith('.md')) {
       if (!headingAnchors(targetContent).has(fragment)) {
         fail(`${link.source}:${link.line} has a missing heading fragment: #${fragment}`)
@@ -316,6 +343,43 @@ export function validateInternalLink(link, root = repositoryRoot) {
     }
   }
   return true
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs
+}
+
+function readStableTextFile(filename, label) {
+  let descriptor
+  try {
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const before = fs.fstatSync(descriptor, { bigint: true })
+    const pathBefore = fs.lstatSync(filename, { bigint: true })
+    if (
+      !before.isFile() || !pathBefore.isFile() || pathBefore.isSymbolicLink() ||
+      !sameFileIdentity(before, pathBefore) || before.size > 16n * 1024n * 1024n
+    ) fail(`${label} is not a bounded stable regular file`)
+    const bytes = fs.readFileSync(descriptor)
+    const after = fs.fstatSync(descriptor, { bigint: true })
+    const pathAfter = fs.lstatSync(filename, { bigint: true })
+    if (
+      !sameFileIdentity(before, after) || !pathAfter.isFile() || pathAfter.isSymbolicLink() ||
+      !sameFileIdentity(after, pathAfter) || BigInt(bytes.length) !== after.size
+    ) fail(`${label} changed while it was being read`)
+    return bytes.toString('utf8')
+  } catch (error) {
+    if (error.message.startsWith('documentation validation:')) throw error
+    fail(`${label} is unavailable: ${error.message}`)
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+  }
 }
 
 function recursiveFiles(directory, extension) {
@@ -459,7 +523,12 @@ export function validateFencePolicy(fences, root = repositoryRoot) {
 }
 
 function validateBash(fence) {
-  run(process.env.BASH ?? 'bash', ['-n'], { input: fence.content }, `${fence.source}:${fence.startLine} bash syntax`)
+  const bash = admittedDocumentationExecutable(
+    process.env.BASH ?? (process.platform === 'win32' ? 'C:\\Program Files\\Git\\bin\\bash.exe' : '/bin/bash'),
+    documentationBashCandidates(),
+    'BASH',
+  )
+  run(bash, ['-n'], { input: fence.content }, `${fence.source}:${fence.startLine} bash syntax`)
 }
 
 function validateJson(fence) {
@@ -475,22 +544,74 @@ function executablePath(root, name) {
   return path.join(root, 'zig-out', 'bin', `${name}${suffix}`)
 }
 
-function explicitExecutable(value, label) {
+function documentationBashCandidates() {
+  return [
+    '/bin/bash',
+    '/usr/bin/bash',
+    '/usr/local/bin/bash',
+    '/opt/homebrew/bin/bash',
+    '/opt/local/bin/bash',
+    '/nix/var/nix/profiles/default/bin/bash',
+    path.join(os.homedir(), '.nix-profile', 'bin', 'bash'),
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+  ]
+}
+
+function documentationNeovimCandidates() {
+  const candidates = [
+    '/usr/bin/nvim',
+    '/usr/local/bin/nvim',
+    '/opt/homebrew/bin/nvim',
+    '/opt/local/bin/nvim',
+    '/nix/var/nix/profiles/default/bin/nvim',
+    path.join(os.homedir(), '.local', 'bin', 'nvim'),
+    path.join(os.homedir(), '.nix-profile', 'bin', 'nvim'),
+    'C:\\Program Files\\Neovim\\bin\\nvim.exe',
+  ]
+  for (const version of ['0.11.7', '0.12.4']) {
+    candidates.push(path.join(os.tmpdir(), `nvim-${version}`, 'bin', 'nvim'))
+    candidates.push(`/home/runner/work/_temp/nvim-${version}/bin/nvim`)
+  }
+  return candidates
+}
+
+function admittedDocumentationExecutable(value, candidates, label) {
   if (typeof value !== 'string' || !path.isAbsolute(value) || value.includes('\0')) {
     fail(`${label} must be an explicit absolute executable path`)
   }
+  const selected = candidates.find(candidate => candidate === value)
+  if (selected === undefined) fail(`${label} is outside the finite admitted executable locations`)
+  let descriptor
   try {
-    const canonical = fs.realpathSync(value)
-    if (!fs.statSync(canonical).isFile()) fail(`${label} is not a regular file`)
-    fs.accessSync(canonical, fs.constants.X_OK)
+    const canonical = fs.realpathSync(selected)
+    descriptor = fs.openSync(
+      canonical,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(canonical, { bigint: true })
+    if (
+      !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      !sameFileIdentity(opened, pathStat) || opened.size <= 0n ||
+      opened.size > BigInt(maximumDocumentationToolBytes)
+    ) fail(`${label} is not a bounded stable regular file`)
+    if (process.platform !== 'win32' && (opened.mode & 0o111n) === 0n) {
+      fail(`${label} is not executable`)
+    }
     return canonical
   } catch (error) {
+    if (error.message.startsWith('documentation validation:')) throw error
     fail(`${label} is not an accessible executable: ${error.message}`)
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
   }
 }
 
 function documentationNeovim(value) {
-  const executable = explicitExecutable(value, 'NVIM')
+  const executable = admittedDocumentationExecutable(value, documentationNeovimCandidates(), 'NVIM')
   const versionOutput = run(executable, ['--version'], {}, 'Neovim version check').stdout
   const version = /^NVIM v(\d+)\.(\d+)\.(\d+)/.exec(versionOutput)
   if (!version) fail('NVIM returned an unrecognized version')

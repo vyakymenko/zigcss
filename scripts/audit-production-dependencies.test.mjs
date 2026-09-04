@@ -262,8 +262,8 @@ test('production audit parsing requires a consistent v2 report with no high or c
 
 test('audit execution retries one bounded timeout and then validates the report', () => {
   assert.deepEqual(auditExecutionPolicy, {
-    maximumAttempts: 2,
-    timeoutMilliseconds: 180_000,
+    maximumAttempts: 4,
+    timeoutMilliseconds: 90_000,
   })
   const invocations = []
   const counts = runAudit(dependencySurfaces[1], '/fixture/repository', {
@@ -277,7 +277,7 @@ test('audit execution retries one bounded timeout and then validates the report'
   })
 
   assert.deepEqual(counts, cleanAuditReport.metadata.vulnerabilities)
-  assert.equal(invocations.length, auditExecutionPolicy.maximumAttempts)
+  assert.equal(invocations.length, 2)
   for (const invocation of invocations) {
     assert.equal(invocation.command, 'npm')
     assert.deepEqual(invocation.args, auditArguments(dependencySurfaces[1]))
@@ -296,7 +296,7 @@ test('audit execution stays fail-closed after its bounded timeout retry', () => 
         return { error: Object.assign(new Error('operation timed out'), { code: 'ETIMEDOUT' }) }
       },
     }),
-    /documentation site audit could not reach the npm audit endpoint after 2 bounded attempts/,
+    /documentation site audit could not reach the npm audit endpoint after 4 bounded attempts/,
   )
   assert.equal(invocations, auditExecutionPolicy.maximumAttempts)
 })
@@ -326,9 +326,9 @@ test('audit execution retries only structured transient npm endpoint failures', 
         return { error: undefined, status: 1, stdout: JSON.stringify(unavailable), stderr: '' }
       },
     }),
-    /could not reach the npm audit endpoint after 2 bounded attempts/,
+    /could not reach the npm audit endpoint after 4 bounded attempts/,
   )
-  assert.equal(unavailableAttempts, 2)
+  assert.equal(unavailableAttempts, auditExecutionPolicy.maximumAttempts)
 
   for (const terminal of [
     { ...transientAuditReport, message: 'authentication required', statusCode: 401 },

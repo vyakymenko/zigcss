@@ -61,7 +61,7 @@ Each native adapter progresses through these states:
 3. `native-differential`: the native adapter passes its selected official corpus, strict negative cases, deterministic reruns, and exact generated-CSS validation;
 4. `native-graduated`: CLI, Zig API, JavaScript wrapper, batch, watch, source maps, diagnostics, dependencies, platform, package, and release gates all pass without a runtime provider.
 
-No migration step may replace a green path with a partial native parser. The published native prerelease records all four preprocessor rows as `native-graduated`, retains exact providers only as development oracles, and closes immutable tag-workflow publication through the authorized GitHub prerelease and npm `next` channels.
+No migration step may replace a green path with a partial native parser. The published native prerelease records all four preprocessor rows as `native-graduated`, retains exact providers only as development oracles, and closes protected tag-workflow publication through the authorized GitHub prerelease and immutable npm `next` version.
 
 The active machine compatibility strategy supersedes the four provider-runtime rows without rewriting their reference evidence:
 
@@ -104,12 +104,12 @@ All tag-triggered releases are fail-closed while the machine-readable native con
 
 On 2026-07-27 the project owner separately authorized publication of the first fully graduated native candidate after every `NATIVE-009` gate passes. The authorization is intentionally narrower than general release access:
 
-- the exact candidate commit must already be integrated to `origin/main`, use an unused version and unused immutable `v*` tag, match `nativeReleaseVersion`, and report `nativeReleaseReady: true`;
+- the exact candidate commit must already be integrated to `origin/main`, use an unused version and unused protected `v*` tag, match `nativeReleaseVersion`, and report `nativeReleaseReady: true`;
 - publication must run only through the existing fail-closed `.github/workflows/release.yml` tag workflow;
 - the authorized outputs are its GitHub prerelease, five-target artifacts and attestations, and the exact npm package published under the `next` dist-tag;
 - the unpublished provider-backed `0.5.0-rc.1` reference candidate remains permanently outside this authority;
 - tags may not be moved or reused, npm `latest` may not be changed, failed gates may not be bypassed, and Homebrew, editor-extension, container, documentation, or service publication is not authorized by this decision; and
-- a failed immutable candidate is recorded as evidence. Any retry uses a new candidate identity selected and documented by the roadmap rather than rewriting public history.
+- a failed candidate is recorded as closed evidence. Any retry uses a new candidate identity selected and documented by the roadmap rather than rewriting public history.
 
 ## Consequences
 

@@ -62,6 +62,32 @@ export function homebrewArchiveDownloadArguments(archive, url) {
   ]
 }
 
+export function homebrewZigCommand(configured = process.env.ZIG) {
+  switch (configured) {
+    case undefined:
+    case 'zig':
+      return 'zig'
+    case 'zig.exe':
+      return 'zig.exe'
+    case '/usr/bin/zig':
+      return '/usr/bin/zig'
+    case '/usr/local/bin/zig':
+      return '/usr/local/bin/zig'
+    case '/opt/homebrew/bin/zig':
+      return '/opt/homebrew/bin/zig'
+    case '/opt/local/bin/zig':
+      return '/opt/local/bin/zig'
+    case '/nix/var/nix/profiles/default/bin/zig':
+      return '/nix/var/nix/profiles/default/bin/zig'
+    case 'C:\\Program Files\\zig\\zig.exe':
+      return 'C:\\Program Files\\zig\\zig.exe'
+    case 'C:\\ProgramData\\chocolatey\\bin\\zig.exe':
+      return 'C:\\ProgramData\\chocolatey\\bin\\zig.exe'
+    default:
+      fail('ZIG must select the PATH command or a finite reviewed Zig installation')
+  }
+}
+
 function fail(message) {
   throw new Error(`Homebrew release verification: ${message}`)
 }
@@ -266,7 +292,7 @@ export function smokeHomebrewFormula(root = repositoryRoot) {
       fail('downloaded source version does not match the formula')
     }
 
-    const zig = process.env.ZIG ?? 'zig'
+    const zig = homebrewZigCommand()
     if (run(zig, ['version']).trim() !== '0.15.2') fail('formula smoke requires the reviewed Zig 0.15.2 toolchain')
     const buildEnvironment = zigBuildEnvironment(temporary)
     run(zig, [

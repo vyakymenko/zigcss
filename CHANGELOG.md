@@ -57,9 +57,9 @@ Planned prerelease target `0.7.0-rc.1` is selected in `release/next-release.json
 
 ## [0.6.0] - 2026-08-18
 
-Released as immutable tag `v0.6.0`, non-prerelease GitHub Release `372291445`, and `zigcss@0.6.0` on npm `latest` with provenance.
+Released from protected tag `v0.6.0` as non-prerelease GitHub Release `372291445` and immutable `zigcss@0.6.0` on npm `latest` with provenance. The historical GitHub Release predates Immutable Releases and reads back `immutable: false`.
 
-Stable `0.6.0` promotes the exact self-contained native surface proven by immutable `0.6.0-rc.2`; it does not move, replace, or republish the RC. Release run `32130950531` passed on attempt 1 with five architecture-matched archives, 15 attested archive/checksum/SBOM subjects, 10 Sigstore bundle files, npm SLSA provenance, preserved `next`, and anonymous CSS/SCSS/Sass/Less/Stylus installation. The package retains zero production and optional dependencies, deterministic and fail-closed compilation, and explicit plugin boundaries.
+Stable `0.6.0` promotes the exact self-contained native surface proven by the closed `0.6.0-rc.2` publication; it does not move, replace, or republish the RC. Release run `32130950531` passed on attempt 1 with five architecture-matched archives, 15 attested archive/checksum/SBOM subjects, 10 Sigstore bundle files, npm SLSA provenance, preserved `next`, and anonymous CSS/SCSS/Sass/Less/Stylus installation. The package retains zero production and optional dependencies, deterministic and fail-closed compilation, and explicit plugin boundaries.
 
 ### Changed
 
@@ -73,9 +73,9 @@ Stable `0.6.0` promotes the exact self-contained native surface proven by immuta
 
 Target release: `0.6.0-rc.2` (published as a GitHub prerelease and on npm `next`).
 
-The provider-backed `0.5.0-rc.1` historical reference identity remains ineligible for publication. The native `0.6.0-rc.1` candidate failed closed during automatic Windows hosted validation before any tag or publication, so it remains immutable failure evidence. Replacement candidate `0.6.0-rc.2` was selected only after its GitHub tag and npm version were proven unused; every ordered pre-tag `NATIVE-009` evidence surface is now verified.
+The provider-backed `0.5.0-rc.1` historical reference identity remains ineligible for publication. The native `0.6.0-rc.1` candidate failed closed during automatic Windows hosted validation before any tag or publication, so it remains closed failure evidence. Replacement candidate `0.6.0-rc.2` was selected only after its GitHub tag and npm version were proven unused; every ordered pre-tag `NATIVE-009` evidence surface is now verified.
 
-`NATIVE-008` closes the finite source-capability inventory for the self-contained native stylesheet frontends: machine rows, binary help, README, website lab, compiled examples, compatibility guides, and these migration notes describe one self-contained implementation. `NATIVE-009` graduates all four preprocessor rows together; `nativeReleaseReady` is `true` for exact candidate `0.6.0-rc.2`, and its one immutable tag workflow produced the verified GitHub prerelease, 25 release assets, and npm `next` package with provenance while npm `latest` remained stable.
+`NATIVE-008` closes the finite source-capability inventory for the self-contained native stylesheet frontends: machine rows, binary help, README, website lab, compiled examples, compatibility guides, and these migration notes describe one self-contained implementation. `NATIVE-009` graduates all four preprocessor rows together; `nativeReleaseReady` is `true` for exact candidate `0.6.0-rc.2`, and one protected tag workflow produced the verified, historically mutable GitHub prerelease, 25 release assets, and immutable npm `next` package with provenance while npm `latest` remained stable.
 
 ### Added
 

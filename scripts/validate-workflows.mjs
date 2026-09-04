@@ -67,8 +67,9 @@ export const actionPins = Object.freeze({
     runtime: 'node24',
   }),
   'softprops/action-gh-release': Object.freeze({
-    sha: 'de2c0eb89ae2a093876385947365aca7b0e5f844',
-    version: 'v1',
+    sha: 'efb35369e0ad2afab669f228072c1b0d510eae64',
+    version: 'v3.0.3',
+    runtime: 'node24',
   }),
 })
 
@@ -86,6 +87,7 @@ export const actionRuntimeMigration = Object.freeze({
     'actions/upload-pages-artifact',
     'actions/deploy-pages',
     'oven-sh/setup-bun',
+    'softprops/action-gh-release',
     'mlugg/setup-zig',
   ]),
   replacedActions: Object.freeze(['mlugg/setup-zig']),
@@ -158,7 +160,7 @@ export const workflowPolicy = Object.freeze({
   }),
   'release.yml': Object.freeze({
     'npm-preflight': Object.freeze({
-      permissions: Object.freeze({ actions: 'read', contents: 'read' }),
+      permissions: Object.freeze({ actions: 'read', contents: 'read', 'security-events': 'read' }),
       actions: Object.freeze(['actions/checkout', 'actions/setup-node', 'actions/upload-artifact']),
     }),
     release: Object.freeze({
@@ -174,9 +176,10 @@ export const workflowPolicy = Object.freeze({
       ]),
     }),
     'create-release': Object.freeze({
-      permissions: Object.freeze({ contents: 'write' }),
+      permissions: Object.freeze({ attestations: 'read', contents: 'write' }),
       actions: Object.freeze([
         'actions/checkout',
+        'actions/setup-node',
         'actions/download-artifact',
         'softprops/action-gh-release',
       ]),
@@ -208,7 +211,7 @@ export const terminalWorkflowTimeoutPolicy = Object.freeze({
     'npm-preflight': 45,
     release: 120,
     'create-release': 30,
-    'publish-npm': 30,
+    'publish-npm': 60,
     'anonymous-public-delivery': 15,
   }),
 })
@@ -245,7 +248,7 @@ export const publicDeliveryCiPolicy = Object.freeze({
   command: 'node scripts/smoke-public-delivery.mjs --version "${GITHUB_REF_NAME#v}"',
   job: 'anonymous-public-delivery',
   needs: 'publish-npm',
-  nodeVersion: '20.19.0',
+  nodeVersion: '24.20.0',
   registry: 'https://registry.npmjs.org/',
   runner: 'ubuntu-latest',
   timeoutMinutes: 15,
@@ -269,7 +272,7 @@ export const nextWebpackCiPolicy = Object.freeze({
   gate: 'npm run test:next-webpack-example',
   host: 'Next.js 16.3.4 with Webpack 5.110.2',
   nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
-  nodeVersion: '22.22.0',
+  nodeVersion: '24.20.0',
 })
 
 export const sveltekitCiPolicy = Object.freeze({
@@ -282,14 +285,14 @@ export const astroCiPolicy = Object.freeze({
   gate: 'npm run test:astro-example',
   host: 'Astro 7.2.10',
   nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
-  nodeVersion: '22.22.0',
+  nodeVersion: '24.20.0',
 })
 
 export const nuxtCiPolicy = Object.freeze({
   gate: 'npm run test:nuxt-example',
   host: 'Nuxt 4.5.2',
   nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
-  nodeVersion: '22.22.0',
+  nodeVersion: '24.20.0',
 })
 
 export const buildThroughputPolicy = Object.freeze({
@@ -457,6 +460,11 @@ export function validateZigTestSuiteRunner() {
 
 export function validateNativeCorpusCheckoutAttributes(source) {
   if (source.includes('\r')) fail('.gitattributes must use LF line endings')
+  for (const attribute of ['VERSION text eol=lf', 'native-integrity.json text eol=lf']) {
+    if (source.split(attribute).length !== 2) {
+      fail(`canonical release checkout attribute changed: ${attribute}`)
+    }
+  }
   const actual = source
     .split('\n')
     .filter(line => /^tests\/preprocessors\/(?:sass|less|stylus)\/corpus\/.* text eol=lf$/.test(line))
@@ -669,9 +677,30 @@ export function validateDocumentationWorkflowContract(docsWorkflow, buildWorkflo
   ) {
     fail('docs.yml must receive only the completed main Build workflow as its deployment trigger')
   }
+  const buildAdmission = [
+    '  build:',
+    '    if: >-',
+    "      github.event_name != 'workflow_run' ||",
+    '      (',
+    "        github.event.workflow_run.name == 'Build' &&",
+    "        github.event.workflow_run.path == '.github/workflows/build.yml' &&",
+    "        github.event.workflow_run.conclusion == 'success' &&",
+    "        github.event.workflow_run.event == 'push' &&",
+    "        github.event.workflow_run.head_branch == 'main' &&",
+    '        github.event.workflow_run.repository.full_name == github.repository &&',
+    '        github.event.workflow_run.head_repository.full_name == github.repository',
+    '      )',
+    '    runs-on: ubuntu-latest',
+  ].join('\n')
+  if (docsWorkflow.split(buildAdmission).length !== 2) {
+    fail('docs.yml must reject untrusted workflow_run source before checkout or execution')
+  }
   const exactCheckout = "          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
   if (docsWorkflow.split(exactCheckout).length !== 2) {
     fail('docs.yml must check out the exact successful Build commit')
+  }
+  if (docsWorkflow.split('          persist-credentials: false').length !== 2) {
+    fail('docs.yml checkout must not persist repository credentials')
   }
   const sourceIdentity = [
     '    outputs:',
@@ -771,8 +800,11 @@ export function validateDocumentationWorkflowContract(docsWorkflow, buildWorkflo
 
 export function validateReleaseBuildEvidenceWorkflowContract(releaseWorkflow) {
   if (typeof releaseWorkflow !== 'string') fail('release workflow source is unavailable')
-  const npmPreflight = splitJobs(releaseWorkflow, 'release.yml').get('npm-preflight')?.join('\n')
+  const releaseJobs = splitJobs(releaseWorkflow, 'release.yml')
+  const npmPreflight = releaseJobs.get('npm-preflight')?.join('\n')
   if (typeof npmPreflight !== 'string') fail('release.yml npm-preflight job is unavailable')
+  const publishNpm = releaseJobs.get('publish-npm')?.join('\n')
+  if (typeof publishNpm !== 'string') fail('release.yml publish-npm job is unavailable')
   const evidenceStep = [
     '      - name: Verify successful Build evidence for release commit',
     '        shell: bash',
@@ -787,9 +819,27 @@ export function validateReleaseBuildEvidenceWorkflowContract(releaseWorkflow) {
   if (
     npmPreflight.split(evidenceStep).length !== 2
     || npmPreflight.split('node scripts/verify-build-workflow-run.mjs').length !== 2
-    || npmPreflight.split('GITHUB_TOKEN: ${{ github.token }}').length !== 2
   ) {
     fail('release.yml npm preflight must verify one exact-SHA successful Build run through the bounded helper')
+  }
+
+  const codeScanningStep = [
+    '      - name: Verify clean CodeQL evidence for release commit',
+    '        shell: bash',
+    '        env:',
+    '          GITHUB_TOKEN: ${{ github.token }}',
+    '        run: |',
+    '          candidate_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"',
+    '          node scripts/verify-code-scanning-gate.mjs \\',
+    '            --repository "$GITHUB_REPOSITORY" \\',
+    '            --commit "$candidate_commit"',
+  ].join('\n')
+  if (
+    npmPreflight.split(codeScanningStep).length !== 2
+    || npmPreflight.split('node scripts/verify-code-scanning-gate.mjs').length !== 2
+    || npmPreflight.split('GITHUB_TOKEN: ${{ github.token }}').length !== 3
+  ) {
+    fail('release.yml npm preflight must verify exact-SHA clean CodeQL coverage and zero open alerts')
   }
 
   const admissionStep = [
@@ -813,15 +863,71 @@ export function validateReleaseBuildEvidenceWorkflowContract(releaseWorkflow) {
     fail('release.yml npm preflight must run one exact fail-closed candidate admission gate')
   }
 
+  const npmAuthorityStep = [
+    '      - name: Verify npm publication authority',
+    '        id: npm-policy',
+    '        shell: bash',
+    '        env:',
+    '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}',
+    '        run: |',
+    '          set -euo pipefail',
+    '          version="${GITHUB_REF_NAME#v}"',
+    '          versions="$RUNNER_TEMP/zigcss-npm-versions.json"',
+    '          versions_attempt="$versions.attempt"',
+    '          for attempt in 1 2 3 4; do',
+    '            if timeout 30s npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then',
+    '              break',
+    '            fi',
+    '            if [[ "$attempt" == 4 ]]; then',
+    '              echo "npm credential verification failed after 4 bounded attempts" >&2',
+    '              exit 1',
+    '            fi',
+    '            sleep 5',
+    '          done',
+    '          for attempt in 1 2 3 4; do',
+    '            if timeout 30s npm view zigcss versions --json --registry=https://registry.npmjs.org/ > "$versions_attempt"; then',
+    '              mv -- "$versions_attempt" "$versions"',
+    '              break',
+    '            fi',
+    '            if [[ "$attempt" == 4 ]]; then',
+    '              echo "npm registry authority readback failed after 4 bounded attempts" >&2',
+    '              exit 1',
+    '            fi',
+    '            sleep 5',
+    '          done',
+    '          node scripts/check-npm-version-availability.mjs \\',
+    '            --version "$version" \\',
+    '            --versions-file "$versions" \\',
+    '            --github-output "$GITHUB_OUTPUT"',
+  ].join('\n')
+  if (
+    npmPreflight.split(npmAuthorityStep).length !== 2
+    || npmPreflight.split('timeout 30s npm whoami --registry=https://registry.npmjs.org/').length !== 2
+    || npmPreflight.split('timeout 30s npm view zigcss versions --json --registry=https://registry.npmjs.org/').length !== 2
+    || npmPreflight.split('          for attempt in 1 2 3 4; do').length !== 3
+    || npmPreflight.split('            sleep 5').length !== 3
+  ) {
+    fail('release.yml npm authority must use private-output credential proof and exact bounded registry retries')
+  }
+  const npmPublishCommand = 'timeout 300s npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance'
+  if (
+    publishNpm.split(npmPublishCommand).length !== 2
+    || releaseWorkflow.split(npmPublishCommand).length !== 2
+  ) {
+    fail('release.yml npm publication must bind the canonical registry, channel, provenance, and hard timeout')
+  }
+
   const versionGate = npmPreflight.indexOf('- name: Verify synchronized release version for publication')
   const evidenceGate = npmPreflight.indexOf(evidenceStep)
+  const codeScanningGate = npmPreflight.indexOf(codeScanningStep)
   const admissionGate = npmPreflight.indexOf(admissionStep)
-  const npmAuthority = npmPreflight.indexOf('- name: Verify npm publication authority')
+  const npmAuthority = npmPreflight.indexOf(npmAuthorityStep)
   const npmPack = npmPreflight.indexOf('- name: Pack exact npm package')
   if (
     versionGate < 0
     || evidenceGate <= versionGate
-    || admissionGate <= evidenceGate
+    || codeScanningGate <= evidenceGate
+    || admissionGate <= codeScanningGate
     || npmAuthority <= admissionGate
     || npmPack <= npmAuthority
   ) {
@@ -829,9 +935,149 @@ export function validateReleaseBuildEvidenceWorkflowContract(releaseWorkflow) {
   }
   return {
     branch: 'main',
+    codeScanningCategories: 3,
     event: 'push',
-    permission: 'actions: read',
+    permissions: ['actions: read', 'security-events: read'],
     workflow: 'Build',
+  }
+}
+
+export function validateImmutableReleaseWorkflowContract(releaseWorkflow) {
+  if (typeof releaseWorkflow !== 'string') fail('release workflow source is unavailable')
+  const createRelease = splitJobs(releaseWorkflow, 'release.yml').get('create-release')?.join('\n')
+  if (typeof createRelease !== 'string') fail('release.yml create-release job is unavailable')
+
+  const releaseAction = actionPins['softprops/action-gh-release']
+  const setupNode = actionPins['actions/setup-node']
+  const setupNodeStep = [
+    '      - name: Setup Node.js',
+    `        uses: actions/setup-node@${setupNode.sha} # ${setupNode.version}`,
+    '        with:',
+    "          node-version: '24.20.0'",
+  ].join('\n')
+  const approvalEnvironment = [
+    '    environment:',
+    '      name: immutable-release',
+  ].join('\n')
+  const actionHeader = [
+    '      - name: Create verified draft release',
+    '        id: github-release',
+    "        if: steps.github-release-state.outputs.release-mode != 'published'",
+    `        uses: softprops/action-gh-release@${releaseAction.sha} # ${releaseAction.version}`,
+    '        with:',
+    '          tag_name: ${{ github.ref_name }}',
+    '          target_commitish: ${{ github.sha }}',
+    '          files: artifacts/**/*',
+  ].join('\n')
+  const exactLiterals = [
+    [setupNodeStep, 'pinned Node runtime for the release verifier'],
+    [approvalEnvironment, 'mandatory immutable-release approval environment'],
+    [actionHeader, 'one exact pinned draft release action'],
+    ['          draft: true', 'draft-first release creation'],
+    ['          prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}', 'SemVer prerelease routing'],
+    ['          make_latest: false', 'draft latest exclusion'],
+    ['          overwrite_files: true', 'controlled draft asset reconciliation'],
+    ['          fail_on_unmatched_files: true', 'fail-closed release asset glob'],
+    ['          timeout 60s gh api graphql \\', 'bounded exact release discovery'],
+    ["            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){databaseId,isDraft,isPrerelease,tagName}}}' \\", 'exact draft-aware release selector'],
+    ['            --github-output "$GITHUB_OUTPUT" \\', 'closed release discovery output'],
+    ['          if [[ "$RELEASE_MODE" == draft && "$release_id" != "$DISCOVERED_RELEASE_ID" ]]; then', 'reconciled draft release ID'],
+    ['          if ! timeout 30s gh api --method PATCH \\', 'single ambiguity-safe release publication'],
+    ['              -F draft=false \\', 'single release point of no return'],
+    ['              -F "prerelease=$GITHUB_PRERELEASE" \\', 'preserved published prerelease mode'],
+    ['              -f "make_latest=$GITHUB_MAKE_LATEST" \\', 'channel-aware published latest routing'],
+    ['            echo "GitHub release publication response was inconclusive; continuing to authoritative readback" >&2', 'ambiguous publication recovery'],
+    ['            --phase tag', 'exact lightweight tag binding before publication'],
+    ['              --phase published; then', 'exact immutable tag and asset binding after publication'],
+    ["        if: needs.npm-preflight.outputs.github-make-latest == 'true'", 'stable-only Latest readback'],
+    ['              "repos/$GITHUB_REPOSITORY/releases/latest" > "$release_latest" && \\', 'exact Latest release endpoint'],
+    ['                --phase latest; then', 'exact Latest release identity verification'],
+    ['            if timeout 30s gh release verify "$GITHUB_REF_NAME" \\', 'bounded immutable release attestation verification'],
+    ['              --repo "$GITHUB_REPOSITORY" \\', 'release attestation repository binding'],
+    ['              --format json > "$release_attestation" && \\', 'signature-verified release attestation evidence'],
+    ['                --attestation-json "$release_attestation" \\', 'bounded release attestation payload'],
+    ['                --repository "$GITHUB_REPOSITORY" \\\n                --release-id "$RELEASE_ID" \\', 'attested repository and release ID binding'],
+    ['                --phase attestation; then', 'exact release attestation asset subjects'],
+  ]
+  for (const [literal, label] of exactLiterals) {
+    if (createRelease.split(literal).length !== 2) {
+      fail(`release.yml create-release must retain ${label}`)
+    }
+  }
+
+  if (
+    releaseWorkflow.split(approvalEnvironment).length !== 2
+    || createRelease.includes('${{ secrets.')
+    || releaseWorkflow.includes('IMMUTABLE_RELEASES_READ_TOKEN')
+  ) {
+    fail('release.yml immutable-release approval must be unique and must not depend on a stored administration credential')
+  }
+
+  if (createRelease.includes('          draft: false')) {
+    fail('release.yml must never publish before draft asset verification')
+  }
+  if (createRelease.split('node scripts/verify-github-release-assets.mjs').length !== 8) {
+    fail('release.yml must run exactly seven closed GitHub release integrity checks')
+  }
+  for (const phase of ['local', 'discovery', 'draft', 'tag', 'published', 'latest', 'attestation']) {
+    if (createRelease.split(`--phase ${phase}`).length !== 2) {
+      fail(`release.yml must run exactly one ${phase} GitHub release integrity check`)
+    }
+  }
+  if (createRelease.includes('--phase absent')) {
+    fail('release.yml must use exact GraphQL discovery instead of unbounded release enumeration')
+  }
+  if (
+    createRelease.split('          for attempt in 1 2 3 4 5 6; do').length !== 5
+    || createRelease.split('            sleep 10').length !== 5
+    || createRelease.split('timeout 30s gh release verify').length !== 2
+  ) {
+    fail('release.yml draft, immutable, Latest, and attestation readbacks must use four exact bounded retry loops')
+  }
+  if (
+    createRelease.split('timeout 30s gh api').length !== 7
+    || createRelease.split('          RELEASE_ID: ${{ steps.release-identity.outputs.release-id }}').length !== 6
+    || createRelease.includes('\n          RELEASE_ID: ${{ steps.github-release.outputs.id }}\n')
+  ) {
+    fail('release.yml must time-bound every GitHub API transition and bind the resolved release ID')
+  }
+  if (createRelease.split('"repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" > "$tag_ref"').length !== 3) {
+    fail('release.yml must bind the exact lightweight tag immediately before and after publication')
+  }
+  if (createRelease.split("        if: steps.github-release-state.outputs.release-mode != 'published'").length !== 4) {
+    fail('release.yml must reconcile create and partial-draft modes while resuming immutable publications')
+  }
+
+  const ordered = [
+    '- name: Setup Node.js',
+    '- name: Download All Artifacts',
+    '- name: Verify exact local release inventory',
+    '- name: Discover resumable GitHub release state',
+    '- name: Create verified draft release',
+    '- name: Resolve exact GitHub release ID',
+    '- name: Verify draft release identity and assets',
+    '- name: Publish immutable GitHub release',
+    '- name: Verify immutable release readback',
+    '- name: Verify stable Latest release identity',
+    '- name: Verify immutable release attestation',
+  ]
+  let cursor = -1
+  for (const marker of ordered) {
+    const position = createRelease.indexOf(marker, cursor + 1)
+    if (position <= cursor) fail(`release.yml create-release is missing or reorders ${marker}`)
+    cursor = position
+  }
+  return {
+    assets: 25,
+    approvalEnvironment: 'immutable-release',
+    draftFirst: true,
+    immutableReadback: true,
+    lightweightTagBinding: true,
+    resumable: true,
+    releaseAttestation: true,
+    attestedAssets: 25,
+    stableLatestReadback: true,
+    retryAttempts: 6,
   }
 }
 
@@ -1685,6 +1931,7 @@ export function validateWorkflowSources(sources) {
   validateDocumentationBuildCoverage(sources.get('build.yml'))
   validateDocumentationWorkflowContract(sources.get('docs.yml'), sources.get('build.yml'))
   validateReleaseBuildEvidenceWorkflowContract(sources.get('release.yml'))
+  validateImmutableReleaseWorkflowContract(sources.get('release.yml'))
   validateTerminalWorkflowTimeouts(sources)
   validatePublicDeliveryWorkflowContract(sources.get('release.yml'))
   validateNixFlakeWorkflowContract(sources.get('build.yml'))

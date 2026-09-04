@@ -12,7 +12,7 @@ const documentationDockerignore = fs.readFileSync(path.resolve(import.meta.dirna
 const releaseDockerignore = fs.readFileSync(path.resolve(import.meta.dirname, '../../Dockerfile.release.dockerignore'), 'utf8')
 const developmentDockerfile = fs.readFileSync(path.resolve(import.meta.dirname, '../../Dockerfile'), 'utf8')
 const zigSetup = fs.readFileSync(path.resolve(import.meta.dirname, '../../.github/actions/setup-zig/setup-zig.mjs'), 'utf8')
-const nodeImage = 'node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34'
+const nodeImage = 'node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf'
 const dockerfileFrontend = '# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e'
 
 function runtimeStage(): string {

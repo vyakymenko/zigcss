@@ -26,6 +26,7 @@ import {
   validatePackageManagerWorkflowContract,
   validatePublicDeliveryWorkflowContract,
   validateReleaseBuildEvidenceWorkflowContract,
+  validateImmutableReleaseWorkflowContract,
   validateSetupZigAction,
   validateSetupZigWorkflowContract,
   validateSveltekitWorkflowContract,
@@ -42,8 +43,19 @@ function cloneSources() {
   return new Map(readWorkflowSources())
 }
 
+function replaceWorkflowJobText(source, jobName, current, replacement) {
+  const marker = `  ${jobName}:\n`
+  const start = source.indexOf(marker)
+  assert.notEqual(start, -1, `missing workflow job ${jobName}`)
+  const nextJob = source.slice(start + marker.length).search(/^  [a-zA-Z0-9_-]+:\n/m)
+  const end = nextJob === -1 ? source.length : start + marker.length + nextJob
+  const job = source.slice(start, end)
+  assert.ok(job.includes(current), `${jobName} does not contain ${current}`)
+  return `${source.slice(0, start)}${job.replace(current, replacement)}${source.slice(end)}`
+}
+
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
-  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 12, actions: 46 })
+  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 12, actions: 47 })
   assert.deepEqual(validateZigTestSuiteRunner(), {
     failureHeadBytes: 3 * 1024,
     modes: ['Debug', 'ReleaseSafe'],
@@ -66,6 +78,15 @@ test('build-system CI makes every advertised toolchain mandatory', () => {
       /require all four toolchains|mandatory-toolchain/,
     )
   }
+  const ambientPublishRegistry = sources.get('release.yml').replace(
+    ' --registry=https://registry.npmjs.org/ --provenance; then',
+    ' --provenance; then',
+  )
+  assert.notEqual(ambientPublishRegistry, sources.get('release.yml'))
+  assert.throws(
+    () => validateReleaseBuildEvidenceWorkflowContract(ambientPublishRegistry),
+    /bind the canonical registry, channel, provenance, and hard timeout/,
+  )
 })
 
 test('workflow display names remain exact and unique', () => {
@@ -98,6 +119,14 @@ test('Windows checkout preserves the finite native conformance text-fixture surf
     },
   })
 
+  assert.throws(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace('VERSION text eol=lf\n', '')),
+    /canonical release checkout attribute changed/,
+  )
+  assert.throws(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace('native-integrity.json text eol=lf\n', '')),
+    /canonical release checkout attribute changed/,
+  )
   assert.throws(
     () => validateNativeCorpusCheckoutAttributes(attributes.replace(
       'tests/preprocessors/sass/corpus/cases/**/*.scss text eol=lf\n',
@@ -137,7 +166,7 @@ test('Windows checkout preserves the finite native conformance text-fixture surf
 
 test('the hosted action runtime migration has a finite reviewed terminal', () => {
   assert.deepEqual(validateActionRuntimeMigration(), {
-    actions: 8,
+    actions: 9,
     node24Actions: [
       'actions/checkout',
       'actions/setup-node',
@@ -146,6 +175,7 @@ test('the hosted action runtime migration has a finite reviewed terminal', () =>
       'actions/upload-pages-artifact',
       'actions/deploy-pages',
       'oven-sh/setup-bun',
+      'softprops/action-gh-release',
     ],
     replacedActions: ['mlugg/setup-zig'],
     pendingActions: [],
@@ -308,7 +338,7 @@ test('Next.js Webpack CI owns one exact post-Turbopack pre-SvelteKit current-nat
     gate: 'npm run test:next-webpack-example',
     host: 'Next.js 16.3.4 with Webpack 5.110.2',
     nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
-    nodeVersion: '22.22.0',
+    nodeVersion: '24.20.0',
   })
 
   const missingGate = cloneSources()
@@ -329,13 +359,15 @@ test('Next.js Webpack CI owns one exact post-Turbopack pre-SvelteKit current-nat
   )
 
   const mutableNode = cloneSources()
-  mutableNode.set('build.yml', mutableNode.get('build.yml').replace(
-    "node-version: '22.22.0'",
-    'node-version: 22',
+  mutableNode.set('build.yml', replaceWorkflowJobText(
+    mutableNode.get('build.yml'),
+    'test',
+    "node-version: '24.20.0'",
+    'node-version: 24',
   ))
   assert.throws(
     () => validateNextWebpackWorkflowContract(mutableNode.get('build.yml')),
-    /Next\.js Webpack gate must run on exact Node 22\.22\.0/,
+    /Next\.js Webpack gate must run on exact Node 24\.20\.0/,
   )
 
   const gateBlock = [
@@ -428,8 +460,13 @@ test('Astro CI owns one post-Debug current-native host gate', () => {
   )
 
   const mutableNode = cloneSources()
-  mutableNode.set('build.yml', mutableNode.get('build.yml').replace("node-version: '22.22.0'", 'node-version: 22'))
-  assert.throws(() => validateWorkflowSources(mutableNode), /Astro gate must run on exact Node 22\.22\.0/)
+  mutableNode.set('build.yml', replaceWorkflowJobText(
+    mutableNode.get('build.yml'),
+    'test',
+    "node-version: '24.20.0'",
+    'node-version: 24',
+  ))
+  assert.throws(() => validateWorkflowSources(mutableNode), /Astro gate must run on exact Node 24\.20\.0/)
 
   const removedGate = cloneSources()
   removedGate.set('build.yml', removedGate.get('build.yml').replace(
@@ -474,10 +511,15 @@ test('Nuxt CI owns one post-Debug current-native host gate', () => {
   )
 
   const unsupportedNode = cloneSources()
-  unsupportedNode.set('build.yml', unsupportedNode.get('build.yml').replace("node-version: '22.22.0'", "node-version: '20.19.0'"))
+  unsupportedNode.set('build.yml', replaceWorkflowJobText(
+    unsupportedNode.get('build.yml'),
+    'test',
+    "node-version: '24.20.0'",
+    "node-version: '20.19.0'",
+  ))
   assert.throws(
     () => validateNuxtWorkflowContract(unsupportedNode.get('build.yml')),
-    /Nuxt gate must run on exact Node 22\.22\.0/,
+    /Nuxt gate must run on exact Node 24\.20\.0/,
   )
 
   const removedGate = cloneSources()
@@ -711,21 +753,21 @@ test('documentation deployment requires one successful same-repository main Buil
     "github.event.workflow_run.head_branch == 'main'",
     "github.event.workflow_run.head_branch == 'development'",
   ))
-  assert.throws(() => validateWorkflowSources(development), /exact successful same-repository main Build file and SHA/)
+  assert.throws(() => validateWorkflowSources(development), /reject untrusted workflow_run|exact successful same-repository main Build file and SHA/)
 
   const wrongWorkflowPath = cloneSources()
   wrongWorkflowPath.set('docs.yml', wrongWorkflowPath.get('docs.yml').replace(
     "github.event.workflow_run.path == '.github/workflows/build.yml'",
     "github.event.workflow_run.path == '.github/workflows/benchmarks.yml'",
   ))
-  assert.throws(() => validateWorkflowSources(wrongWorkflowPath), /exact successful same-repository main Build file and SHA/)
+  assert.throws(() => validateWorkflowSources(wrongWorkflowPath), /reject untrusted workflow_run|exact successful same-repository main Build file and SHA/)
 
   const missingWorkflowName = cloneSources()
   missingWorkflowName.set('docs.yml', missingWorkflowName.get('docs.yml').replace(
     "      github.event.workflow_run.name == 'Build' &&\n",
     '',
   ))
-  assert.throws(() => validateWorkflowSources(missingWorkflowName), /exact successful same-repository main Build file and SHA/)
+  assert.throws(() => validateWorkflowSources(missingWorkflowName), /reject untrusted workflow_run|exact successful same-repository main Build file and SHA/)
 
   const manual = cloneSources()
   manual.set('docs.yml', manual.get('docs.yml').replace(
@@ -741,12 +783,19 @@ test('documentation deployment requires one successful same-repository main Buil
   ))
   assert.throws(() => validateWorkflowSources(wrongCommit), /exact successful Build commit/)
 
+  const credentialedCheckout = cloneSources()
+  credentialedCheckout.set('docs.yml', credentialedCheckout.get('docs.yml').replace(
+    '          persist-credentials: false',
+    '          persist-credentials: true',
+  ))
+  assert.throws(() => validateWorkflowSources(credentialedCheckout), /must not persist repository credentials/)
+
   const missingRepositoryBoundary = cloneSources()
   missingRepositoryBoundary.set('docs.yml', missingRepositoryBoundary.get('docs.yml').replace(
     '      github.event.workflow_run.repository.full_name == github.repository &&\n',
     '',
   ))
-  assert.throws(() => validateWorkflowSources(missingRepositoryBoundary), /exact successful same-repository main Build file and SHA/)
+  assert.throws(() => validateWorkflowSources(missingRepositoryBoundary), /reject untrusted workflow_run|exact successful same-repository main Build file and SHA/)
 
   const missingSourceIdentity = cloneSources()
   missingSourceIdentity.set('docs.yml', missingSourceIdentity.get('docs.yml').replace(
@@ -892,10 +941,26 @@ test('release publication requires one exact-SHA successful same-repository main
   const sources = cloneSources()
   assert.deepEqual(validateReleaseBuildEvidenceWorkflowContract(sources.get('release.yml')), {
     branch: 'main',
+    codeScanningCategories: 3,
     event: 'push',
-    permission: 'actions: read',
+    permissions: ['actions: read', 'security-events: read'],
     workflow: 'Build',
   })
+
+  for (const [current, replacement] of [
+    ['timeout 30s npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1', 'timeout 30s npm whoami >/dev/null 2>&1'],
+    ['timeout 30s npm view zigcss versions --json --registry=https://registry.npmjs.org/', 'timeout 30s npm view zigcss versions --json'],
+    ['          for attempt in 1 2 3 4; do', '          for attempt in 1 2 3; do'],
+    ['            sleep 5', '            sleep 30'],
+    ['>/dev/null 2>&1', ''],
+  ]) {
+    const changed = sources.get('release.yml').replace(current, replacement)
+    assert.notEqual(changed, sources.get('release.yml'), current)
+    assert.throws(
+      () => validateReleaseBuildEvidenceWorkflowContract(changed),
+      /private-output credential proof and exact bounded registry retries/,
+    )
+  }
 
   const admissionStep = [
     '      - name: Verify release candidate admission',
@@ -994,12 +1059,73 @@ test('release publication requires one exact-SHA successful same-repository main
 
   const noActionsRead = cloneSources()
   noActionsRead.set('release.yml', noActionsRead.get('release.yml').replace(
-    '    permissions:\n      actions: read\n      contents: read',
-    '    permissions:\n      contents: read',
+    '    permissions:\n      actions: read\n      contents: read\n      security-events: read',
+    '    permissions:\n      contents: read\n      security-events: read',
   ))
   assert.throws(
     () => validateWorkflowSources(noActionsRead),
     /job npm-preflight permissions changed/,
+  )
+
+  const noSecurityEventsRead = cloneSources()
+  noSecurityEventsRead.set('release.yml', noSecurityEventsRead.get('release.yml').replace(
+    '    permissions:\n      actions: read\n      contents: read\n      security-events: read',
+    '    permissions:\n      actions: read\n      contents: read',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(noSecurityEventsRead),
+    /job npm-preflight permissions changed/,
+  )
+})
+
+test('GitHub release publication is draft-first, exact-asset verified, and immutable', () => {
+  const source = cloneSources().get('release.yml')
+  assert.deepEqual(validateImmutableReleaseWorkflowContract(source), {
+    assets: 25,
+    approvalEnvironment: 'immutable-release',
+    draftFirst: true,
+    immutableReadback: true,
+    lightweightTagBinding: true,
+    resumable: true,
+    releaseAttestation: true,
+    attestedAssets: 25,
+    stableLatestReadback: true,
+    retryAttempts: 6,
+  })
+
+  for (const [current, replacement] of [
+    ['    environment:\n      name: immutable-release', '    environment:\n      name: release'],
+    ['    environment:\n      name: immutable-release', '    environment:\n      name: immutable-release\n    env:\n      ADMIN_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}'],
+    ['          draft: true', '          draft: false'],
+    ['          overwrite_files: true', '          overwrite_files: false'],
+    ['          fail_on_unmatched_files: true', '          fail_on_unmatched_files: false'],
+    ['          target_commitish: ${{ github.sha }}', '          target_commitish: main'],
+    ['              -F draft=false \\', '              -F draft=true \\'],
+    ['--phase published', '--phase draft'],
+    ['--phase tag', '--phase draft'],
+    ['--phase attestation', '--phase latest'],
+    ["        if: needs.npm-preflight.outputs.github-make-latest == 'true'", "        if: needs.npm-preflight.outputs.github-make-latest == 'false'"],
+    ['              "repos/$GITHUB_REPOSITORY/releases/latest" > "$release_latest" && \\', '              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$release_latest" && \\'],
+    ["        if: steps.github-release-state.outputs.release-mode != 'published'", "        if: steps.github-release-state.outputs.release-mode == 'create'"],
+    ['          timeout 60s gh api graphql \\', '          gh api graphql \\'],
+    ['timeout 30s gh release verify', 'gh release verify'],
+    ['          for attempt in 1 2 3 4 5 6; do', '          for attempt in 1 2 3; do'],
+  ]) {
+    const changed = source.replace(current, replacement)
+    assert.notEqual(changed, source, current)
+    assert.throws(
+      () => validateImmutableReleaseWorkflowContract(changed),
+      /draft|release|immutable|bounded|integrity|transition|point of no return/i,
+    )
+  }
+
+  const reordered = source
+    .replace('      - name: Verify immutable release readback', '      - name: TEMP immutable release readback')
+    .replace('      - name: Verify immutable release attestation', '      - name: Verify immutable release readback')
+    .replace('      - name: TEMP immutable release readback', '      - name: Verify immutable release attestation')
+  assert.throws(
+    () => validateImmutableReleaseWorkflowContract(reordered),
+    /missing or reorders/,
   )
 })
 
@@ -1051,8 +1177,8 @@ test('release ends with one bounded credential-free anonymous public delivery sm
     [
       'registry credential setup',
       mutateDelivery(job => job.replace(
-        "          node-version: '20.19.0'",
-        "          node-version: '20.19.0'\n          registry-url: 'https://registry.npmjs.org'",
+        "          node-version: '24.20.0'",
+        "          node-version: '24.20.0'\n          registry-url: 'https://registry.npmjs.org'",
       )),
       /must not receive npm, GitHub, OIDC, or registry credentials/,
     ],
@@ -1150,7 +1276,7 @@ test('the workflow security gate runs before dependency installation', () => {
 
 test('the build workflow preserves one complete aggregate suite within a bounded queue', () => {
   const sources = cloneSources()
-  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 12, actions: 46 })
+  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 12, actions: 47 })
 
   const unconstrained = cloneSources()
   unconstrained.set('build.yml', unconstrained.get('build.yml').replace(

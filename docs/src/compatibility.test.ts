@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
+import { readStableRegularFile } from '../../scripts/bounded-filesystem.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const matrix = JSON.parse(fs.readFileSync(path.join(repoRoot, 'tests/compatibility/matrix.json'), 'utf8'))
@@ -32,8 +33,11 @@ describe('published CSS compatibility matrix', () => {
     for (const testCase of matrix.cases) {
       const fixture = path.resolve(repoRoot, 'tests/compatibility', testCase.fixture)
       expect(fixture.startsWith(path.resolve(repoRoot, 'tests/compatibility/fixtures') + path.sep)).toBe(true)
-      expect(fs.statSync(fixture).isFile()).toBe(true)
-      expect(fs.readFileSync(fixture).length).toBeGreaterThan(0)
+      const fixtureBytes = readStableRegularFile(fixture, {
+        label: `compatibility fixture ${testCase.fixture}`,
+        maximumBytes: 1024 * 1024,
+      })
+      expect(fixtureBytes.length).toBeGreaterThan(0)
       expect(testCase.modes).toEqual(['pretty', 'minified'])
     }
   })

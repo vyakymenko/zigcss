@@ -15,21 +15,28 @@ test('absent canonical prerelease and stable versions select distinct channels',
     publishedVersions: 2,
     channel: 'next',
     githubPrerelease: true,
+    githubMakeLatest: false,
+    alreadyPublished: false,
   })
   assert.deepEqual(checkNpmVersionAvailability('0.6.0', '["0.3.0","0.6.0-rc.2"]\n'), {
     version: '0.6.0',
     publishedVersions: 2,
     channel: 'latest',
     githubPrerelease: false,
+    githubMakeLatest: true,
+    alreadyPublished: false,
+  })
+  assert.deepEqual(checkNpmVersionAvailability('0.6.0-rc.2', '["0.3.0","0.6.0-rc.2"]'), {
+    version: '0.6.0-rc.2',
+    publishedVersions: 2,
+    channel: 'next',
+    githubPrerelease: true,
+    githubMakeLatest: false,
+    alreadyPublished: true,
   })
 })
 
-test('published, malformed, duplicate, and unbounded inventories fail closed', () => {
-  assert.throws(
-    () => checkNpmVersionAvailability('0.6.0-rc.2', '["0.3.0","0.6.0-rc.2"]'),
-    /already published and immutable/,
-  )
-  assert.throws(() => checkNpmVersionAvailability('0.6.0', '["0.3.0","0.6.0"]'), /already published and immutable/)
+test('malformed, duplicate, and unbounded inventories fail closed', () => {
   assert.throws(() => checkNpmVersionAvailability('0.6.0-rc.2', '{'), /not JSON/)
   assert.throws(() => checkNpmVersionAvailability('0.6.0-rc.2', '[]'), /non-empty array/)
   assert.throws(() => checkNpmVersionAvailability('0.6.0-rc.2', '["0.3.0","0.3.0"]'), /repeats/)
@@ -52,7 +59,10 @@ test('the CLI accepts only an absolute bounded regular inventory file', t => {
     '--github-output', githubOutput,
   ], { encoding: 'utf8' })
   assert.match(output, /0\.6\.0-rc\.2 is absent from 2 immutable versions and will use next/)
-  assert.equal(fs.readFileSync(githubOutput, 'utf8'), 'channel=next\ngithub_prerelease=true\n')
+  assert.equal(
+    fs.readFileSync(githubOutput, 'utf8'),
+    'channel=next\ngithub_prerelease=true\ngithub_make_latest=false\nalready_published=false\n',
+  )
 
   const symlink = path.join(temporary, 'versions-link.json')
   fs.symlinkSync(inventory, symlink)

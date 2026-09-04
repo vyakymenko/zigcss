@@ -283,7 +283,7 @@ describe('consumer package website', () => {
       'test:types',
     ]) expect(builderGuide).toContain(command)
     expect(builderGuide).toContain('npm ci --ignore-scripts')
-    expect(builderGuide).toContain('exact Node.js 22.22.0')
+    expect(builderGuide).toContain('exact Node.js 24.20.0 LTS')
     expect(builderGuide).toMatch(/published `zigcss@0\.6\.0` binary predates/i)
     expect(builderGuide.replace(/\s+/g, ' ')).toContain('This build-system primitive is implemented only in the current `Unreleased` checkout')
     expect(builderGuide).not.toContain('build-system primitive currently shipped')

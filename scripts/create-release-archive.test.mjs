@@ -14,6 +14,7 @@ import {
   maximumSourceDateEpoch,
   parseArchiveArguments,
 } from './create-release-archive.mjs'
+import { readStableRegularFile } from './bounded-filesystem.mjs'
 
 const scriptPath = fileURLToPath(new URL('./create-release-archive.mjs', import.meta.url))
 const sourceDateEpoch = 1_700_000_001
@@ -195,17 +196,27 @@ test('tar.gz bytes are repeatable despite source metadata and contain one normal
   fs.utimesSync(binary, new Date(3_000_000), new Date(4_000_000))
   if (process.platform !== 'win32') fs.chmodSync(binary, 0o777)
   const secondResult = createReleaseArchive({ binary, archive: second, sourceDateEpoch })
+  const firstBytes = readStableRegularFile(first, {
+    label: 'first tar archive',
+    maximumBytes: maximumArchiveBytes,
+    reject: assert.fail,
+  })
+  const secondBytes = readStableRegularFile(second, {
+    label: 'second tar archive',
+    maximumBytes: maximumArchiveBytes,
+    reject: assert.fail,
+  })
 
   assert.deepEqual(firstResult, {
     archive: first,
-    bytes: fs.statSync(first).size,
+    bytes: firstBytes.length,
     entry: 'zigcss',
     format: 'tar.gz',
     sourceDateEpoch,
   })
   assert.equal(secondResult.bytes, firstResult.bytes)
-  assert.deepEqual(fs.readFileSync(first), fs.readFileSync(second))
-  const entry = parseTarGzip(fs.readFileSync(first))
+  assert.deepEqual(firstBytes, secondBytes)
+  const entry = parseTarGzip(firstBytes)
   assert.equal(entry.name, 'zigcss')
   assert.equal(entry.mode, 0o755)
   assert.equal(entry.uid, 0)
@@ -232,12 +243,22 @@ test('zip bytes are repeatable despite source metadata and contain one normalize
   fs.utimesSync(binary, new Date(30_000_000), new Date(40_000_000))
   if (process.platform !== 'win32') fs.chmodSync(binary, 0o600)
   const secondResult = createReleaseArchive({ binary, archive: second, sourceDateEpoch })
+  const firstBytes = readStableRegularFile(first, {
+    label: 'first ZIP archive',
+    maximumBytes: maximumArchiveBytes,
+    reject: assert.fail,
+  })
+  const secondBytes = readStableRegularFile(second, {
+    label: 'second ZIP archive',
+    maximumBytes: maximumArchiveBytes,
+    reject: assert.fail,
+  })
 
   assert.equal(firstResult.entry, 'zigcss.exe')
   assert.equal(firstResult.format, 'zip')
   assert.equal(secondResult.bytes, firstResult.bytes)
-  assert.deepEqual(fs.readFileSync(first), fs.readFileSync(second))
-  const entry = parseZip(fs.readFileSync(first))
+  assert.deepEqual(firstBytes, secondBytes)
+  const entry = parseZip(firstBytes)
   assert.equal(entry.name, 'zigcss.exe')
   assert.deepEqual(entry.bytes, binaryFixture)
   assertNormalizedExtraFields(entry.extra)

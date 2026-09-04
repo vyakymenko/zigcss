@@ -13,6 +13,7 @@ import {
 } from '../../../preprocessor/providers/dart-sass.mjs'
 import { ProviderFailure } from '../../../preprocessor/metadata.mjs'
 import { makeRequest } from '../protocol/helpers.mjs'
+import { readStableRegularFile } from '../../../scripts/bounded-filesystem.mjs'
 
 const require = createRequire(import.meta.url)
 const { transform } = require('lightningcss')
@@ -258,24 +259,44 @@ test('pins, license-reviews, and checksum-verifies the official Sass-spec corpus
   assert.match(license.toString('utf8'), /The MIT License \(MIT\)/)
   assert.match(license.toString('utf8'), /Copyright \(c\) 2007-2014 The Sass Authors/)
 
-  const groups = {}
+  const groups = {
+    'scss-success': 0,
+    'sass-success': 0,
+    'scss-error': 0,
+    'sass-error': 0,
+  }
   const features = new Set()
   const expectedInventory = []
   assert.deepEqual(manifest.cases.map(specCase => specCase.id), selection.cases.map(specCase => specCase.id))
   for (const specCase of manifest.cases) {
-    groups[`${specCase.syntax}-${specCase.outcome}`] = (
-      groups[`${specCase.syntax}-${specCase.outcome}`] ?? 0
-    ) + 1
+    const group = `${specCase.syntax}-${specCase.outcome}`
+    switch (group) {
+      case 'scss-success':
+        groups['scss-success'] += 1
+        break
+      case 'sass-success':
+        groups['sass-success'] += 1
+        break
+      case 'scss-error':
+        groups['scss-error'] += 1
+        break
+      case 'sass-error':
+        groups['sass-error'] += 1
+        break
+      default: assert.fail(`unknown Sass corpus group ${JSON.stringify(group)}`)
+    }
     features.add(specCase.feature)
     const names = new Set()
     for (const file of specCase.files) {
       assert.equal(names.has(file.path), false, `${specCase.id}: duplicate file ${file.path}`)
       names.add(file.path)
       const filename = path.join(casesRoot, specCase.id, ...file.path.split('/'))
-      const stat = fs.lstatSync(filename)
-      assert.equal(stat.isFile(), true, `${specCase.id}: ${file.path}`)
-      assert.equal(stat.isSymbolicLink(), false, `${specCase.id}: ${file.path}`)
-      const bytes = fs.readFileSync(filename)
+      const bytes = readStableRegularFile(filename, {
+        allowEmpty: true,
+        label: `${specCase.id}: ${file.path}`,
+        maximumBytes: Math.max(file.bytes, 1),
+        reject: assert.fail,
+      })
       assert.equal(bytes.length, file.bytes, `${specCase.id}: ${file.path} size`)
       assert.equal(sha256(bytes), file.sha256, `${specCase.id}: ${file.path} checksum`)
       expectedInventory.push(`${specCase.id}/${file.path}`)

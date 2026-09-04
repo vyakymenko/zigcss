@@ -2,7 +2,7 @@
 
 The ZigCSS 0.7.0-rc.1 source candidate compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths; this candidate is not published. CSS enters the verified core directly. Each preprocessor frontend evaluates to complete CSS, which is then parsed with recovery disabled before output can be returned or committed.
 
-Stable 0.6.0 contains the self-contained native five-language surface and is published on npm `latest` by the exact stable promotion workflow; immutable `0.6.0-rc.2` remains available on `next`.
+Stable 0.6.0 contains the self-contained native five-language surface and is published on npm `latest` by the exact stable promotion workflow; historical `0.6.0-rc.2` remains available as an immutable npm version on `next`. Their GitHub releases predate Immutable Releases and read back `immutable: false`.
 
 The four preprocessor rows are `native-graduated` on the published stable release: their pinned corpora, strict negative/resource cases, deterministic reruns, generated-CSS validation, product routing, zero-dependency package, five-target, artifact, provenance, consumer, documentation, and publication gates pass. Executable plugin parity remains separate.
 

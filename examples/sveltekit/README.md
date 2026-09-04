@@ -2,7 +2,7 @@
 
 This pinned example proves one deliberately narrow integration: SvelteKit 2.70.3 loads an external `card.module.scss` file through `zigcss/vite`, compiles its native `_tokens.scss` dependency with the freshly built binary from the same ZigCSS checkout, and carries the result through Vite 8.2.2 client, SSR, and static-prerender builds with source maps enabled.
 
-Run the maintained proof from the repository root with Zig 0.15.2 and Node 22.22.0:
+Run the maintained proof from the repository root with Zig 0.15.2 and Node 24.20.0 LTS:
 
 ```bash
 zig build -Doptimize=ReleaseFast

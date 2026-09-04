@@ -59,7 +59,7 @@ test('closed publication evidence permits a newer active source but rejects roll
   )
   assert.throws(
     () => validateStableReleaseContract(readStableReleaseContract(), activeVersionSources('0.5.9')),
-    /active source version 0\.5\.9 is older than immutable published stable 0\.6\.0/,
+    /active source version 0\.5\.9 is older than published stable 0\.6\.0/,
   )
 })
 
@@ -133,11 +133,31 @@ test('binds native prerelease, zero-dependency, benchmark, policy, and workflow 
     () => validateStableReleaseContract(
       readStableReleaseContract(),
       changedSources('.github/workflows/release.yml', source => source.replace(
-        'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+        'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance',
         'npm publish "$NPM_PACKAGE_ARCHIVE" --provenance',
       )),
     ),
     /channel-aware npm publication/,
+  )
+  assert.throws(
+    () => validateStableReleaseContract(
+      readStableReleaseContract(),
+      changedSources('.github/workflows/release.yml', source => source.replace(
+        'github-make-latest: ${{ steps.npm-policy.outputs.github_make_latest }}',
+        'github-make-latest: false',
+      )),
+    ),
+    /GitHub latest-mode job output/,
+  )
+  assert.throws(
+    () => validateStableReleaseContract(
+      readStableReleaseContract(),
+      changedSources('.github/workflows/release.yml', source => source.replace(
+        '-f "make_latest=$GITHUB_MAKE_LATEST"',
+        '-f make_latest=false',
+      )),
+    ),
+    /channel-aware GitHub latest publication/,
   )
   assert.throws(
     () => validateStableReleaseContract(

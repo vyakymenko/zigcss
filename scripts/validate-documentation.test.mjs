@@ -15,10 +15,13 @@ import {
 } from './validate-documentation.mjs'
 
 test('fence parser handles marker length, indentation, and unterminated input', () => {
-  const fences = extractFences('  ~~~~json\n{"ok":true}\n  ~~~~\n\n```bash\nprintf ok\n```', 'fixture.md')
+  const fences = extractFences(
+    '  ~~~~json\n{"ok":true}\n  ~~~~\n\n```bash\nprintf ok\n``suffix\n````',
+    'fixture.md',
+  )
   assert.deepEqual(fences.map(fence => [fence.language, fence.content, fence.startLine]), [
     ['json', '{"ok":true}', 1],
-    ['bash', 'printf ok', 5],
+    ['bash', 'printf ok\n``suffix', 5],
   ])
   assert.throws(() => extractFences('```css\na{}', 'broken.md'), /unterminated fence/)
 })
@@ -49,12 +52,14 @@ test('internal link validation rejects missing targets, bad fragments, and symli
   fs.mkdirSync(path.join(root, 'docs'))
   fs.mkdirSync(path.join(root, 'docs', 'src', 'app', 'components'), { recursive: true })
   fs.writeFileSync(path.join(root, 'docs', 'page.md'), '# Real heading\n')
+  fs.writeFileSync(path.join(root, 'docs', 'nested-tag.md'), '# <<em>Safe>\n')
   fs.writeFileSync(path.join(root, 'docs', 'component.tsx'), '<section id="real-panel" />\n')
   fs.writeFileSync(path.join(root, 'docs', 'src', 'app', 'components', 'Home.tsx'), '<section id="site-panel" />\n')
   fs.writeFileSync(path.join(outside, 'secret.md'), '# Secret\n')
   fs.symlinkSync(outside, path.join(root, 'docs', 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
 
   assert.equal(validateInternalLink({ source: 'docs/source.md', line: 1, destination: 'page.md#real-heading' }, root), true)
+  assert.equal(validateInternalLink({ source: 'docs/source.md', line: 1, destination: 'nested-tag.md#safe' }, root), true)
   assert.throws(() => validateInternalLink({ source: 'docs/source.md', line: 2, destination: 'missing.md' }, root), /missing target/)
   assert.throws(() => validateInternalLink({ source: 'docs/source.md', line: 3, destination: 'page.md#invented' }, root), /missing heading/)
   assert.throws(() => validateInternalLink({ source: 'docs/source.md', line: 4, destination: 'escape/secret.md' }, root), /escapes the repository/)
@@ -115,6 +120,28 @@ test('executable fence validation fails closed on invalid shell, JSON, CSS, SCSS
   assert.throws(() => validateExecutableFences([fence('scss', '$accent: ;\n.a { color: $accent; }')], policy, repositoryRoot), /SCSS example exited/)
   assert.throws(() => validateExecutableFences([fence('lua', 'local =')], policy, repositoryRoot), /Lua syntax exited/)
   assert.throws(() => validateExecutableFences([fence('vim', ':definitely-not-a-command')], policy, repositoryRoot), /Vim command syntax exited/)
+})
+
+test('documentation syntax tools cannot be redirected to attacker-controlled executables', t => {
+  const originalBash = process.env.BASH
+  const originalNvim = process.env.NVIM
+  t.after(() => {
+    if (originalBash === undefined) delete process.env.BASH
+    else process.env.BASH = originalBash
+    if (originalNvim === undefined) delete process.env.NVIM
+    else process.env.NVIM = originalNvim
+  })
+  const fence = language => ({ source: 'fixture.md', startLine: 1, language, content: 'true' })
+  process.env.BASH = path.join(os.tmpdir(), 'attacker-controlled-bash')
+  assert.throws(
+    () => validateExecutableFences([fence('bash')], { cssModuleDocuments: [] }, repositoryRoot),
+    /finite admitted executable locations/,
+  )
+  process.env.NVIM = path.join(os.tmpdir(), 'attacker-controlled-nvim')
+  assert.throws(
+    () => validateExecutableFences([fence('lua')], { cssModuleDocuments: [] }, repositoryRoot),
+    /finite admitted executable locations/,
+  )
 })
 
 test('every executable documentation fence passes its real syntax or compiler gate', () => {

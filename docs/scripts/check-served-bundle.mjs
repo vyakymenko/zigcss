@@ -63,7 +63,7 @@ try {
       assert(!metaPolicies[0][1].includes('frame-ancestors'), `${relative} claims a response-only CSP directive in meta`)
       assert(!/\sstyle\s*=/i.test(html), `${relative} contains an inline style attribute`)
       assert(!/<style(?:\s|>)/i.test(html), `${relative} contains an inline style element`)
-      for (const match of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+      for (const match of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script\s*>/gi)) {
         if (/\bsrc\s*=/i.test(match[0])) continue
         const hash = `sha256-${crypto.createHash('sha256').update(match[1]).digest('base64')}`
         assert(policy.includes(`'${hash}'`), `${relative} contains an unhashed inline script`)

@@ -790,6 +790,7 @@ export const expectedReleaseGraduation = Object.freeze({
     githubReleaseId: 369856953,
     githubPrerelease: true,
     githubDraft: false,
+    githubImmutable: false,
     githubPublishedAt: '2026-08-13T11:13:25Z',
     githubAssetCount: 25,
     assetsPerTarget: 5,
@@ -826,14 +827,14 @@ export const expectedReleaseGraduation = Object.freeze({
       evidenceRequirements: Object.freeze([
         'finite local hosted release artifact provenance consumer and publication surfaces are machine-bound',
         'five native syntax and target inventories are resource-derived',
-        'candidate version and tag were bound to the release-ready interlock before immutable publication',
+        'candidate version and tag were bound to the release-ready interlock before the closed publication',
       ]),
     }),
     Object.freeze({
       id: 'immutable-candidate',
       state: 'verified',
       evidenceRequirements: Object.freeze([
-        'one unused 0.6.x native version and matching immutable v tag are selected',
+        'one unused 0.6.x native version and matching protected historical v tag are selected',
         'the provider-backed 0.5.0-rc.1 reference candidate remains ineligible',
       ]),
     }),
@@ -890,7 +891,7 @@ export const expectedReleaseGraduation = Object.freeze({
       id: 'tag-workflow-publication',
       state: 'verified',
       evidenceRequirements: Object.freeze([
-        'one immutable tag produces one GitHub prerelease with five native archives and 25 release assets',
+        'one protected historical tag produced one verified GitHub prerelease with five native archives and 25 release assets whose API now reads immutable=false',
         'npm 0.6.0-rc.2 is published on next with provenance while latest remains stable',
       ]),
     }),
@@ -2081,7 +2082,7 @@ function validateCapabilityGraduation(
   }
   requireText(
     releaseArtifacts.behavior,
-    'Immutable tag `v0.6.0-rc.2` produced one GitHub prerelease with five architecture-matched archives and 25 exact assets',
+    'Protected historical tag `v0.6.0-rc.2` produced one verified GitHub prerelease with five architecture-matched archives and 25 exact assets; that release predates Immutable Releases and reads back `immutable: false`',
     'capability metadata published release terminal',
   )
   const nodeApi = capabilities.get('node-api')
@@ -2168,7 +2169,7 @@ function validateCapabilityGraduation(
     'exact Sass 1.101.0 remains only the downstream parser',
     'repeats `npm ci` offline',
     'blocking public Node network entry points',
-    'exact Node 22.22.0 CI host',
+    'exact Node 24.20.0 LTS CI host',
     'canonical staged ZigCSS `--internal-node-v1` invocation',
     'dependency-only warm rebuild',
     'unchanged persistent-cache hit with zero native invocations',
@@ -2318,7 +2319,7 @@ function validateCapabilityGraduation(
         'seven independently locked npm surfaces',
         'The local Parcel example is an eighth exact package manifest',
         'it must stay dependency-free and script-free',
-        "The ordinary build workflow's Test job uses exact Node 22.22.0",
+        "The ordinary build workflow's Test job uses exact Node 24.20.0 LTS",
         'The explicit `zigcss.experimental_native` namespace admits exactly SCSS, indented Sass, Less, and Stylus.',
         '`NATIVE-009` published candidate `0.6.0-rc.2` is verified on the GitHub prerelease and npm `next` channels',
       ],
@@ -2347,7 +2348,7 @@ function validateCapabilityGraduation(
         'examples/native/styles.styl',
         'seven exact npm manifest/version-3-lockfile pairs',
         'one exact dependency-free and script-free manifest whose Parcel toolchain is owned by the root lockfile',
-        "The build workflow's Test job uses exact Node 22.22.0",
+        "The build workflow's Test job uses exact Node 24.20.0 LTS",
       ],
     ],
     [
@@ -2356,7 +2357,7 @@ function validateCapabilityGraduation(
       [
         '`NATIVE-008` closes the finite source-capability inventory',
         '`nativeReleaseReady` is `true` for exact candidate `0.6.0-rc.2`',
-        'one immutable tag workflow produced the verified GitHub prerelease, 25 release assets, and npm `next` package with provenance',
+        'one protected tag workflow produced the verified, historically mutable GitHub prerelease, 25 release assets, and immutable npm `next` package with provenance',
         'remain exact development-only reference oracles and do not run during compilation',
         'zero production dependencies and zero optional dependencies',
         'Add a typed zero-production-dependency Node.js API at the package root',
@@ -2392,7 +2393,7 @@ function validateReleaseGraduation(release, buildWorkflow, releaseWorkflow) {
     ['needs: npm-preflight', 'artifact dependency on npm preflight'],
     ['needs: [npm-preflight, release]', 'GitHub release dependency on preflight and artifacts'],
     ['needs: [npm-preflight, create-release]', 'npm publication dependency on preflight and GitHub release'],
-    ['npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance', 'exact channel-aware npm provenance publication'],
+    ['npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance', 'exact canonical-registry channel-aware npm provenance publication'],
     ['prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}', 'SemVer-derived GitHub release boundary'],
   ]) {
     requireText(
@@ -4008,6 +4009,7 @@ export function validateContract(
     && stablePromotion?.publicationEvidence?.npmNext === contract.releaseGraduation.candidateVersion
     && stablePromotion?.publicationEvidence?.githubPrerelease === false
     && stablePromotion?.publicationEvidence?.githubDraft === false
+    && stablePromotion?.publicationEvidence?.githubImmutable === false
     && stablePromotion?.publicationEvidence?.githubReleaseUrl === `https://github.com/vyakymenko/zigcss/releases/tag/v${publishedStableVersion.value}`
     && /^[0-9a-f]{40}$/.test(stablePromotion?.publicationEvidence?.tagCommit ?? '')
   if (!stablePromotionOwnsPublishedEvidence) {
@@ -4070,7 +4072,7 @@ export function validateContract(
   if (manifest.scripts?.['test:package-managers'] !== 'node --test scripts/verify-package-managers.test.mjs') {
     fail('package script test:package-managers is missing or changed')
   }
-  if (manifest.scripts?.['test:workflows'] !== 'node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/smoke-development-container.test.mjs scripts/test-release-container.test.mjs scripts/validate-workflows.test.mjs scripts/verify-build-workflow-run.test.mjs') {
+  if (manifest.scripts?.['test:workflows'] !== 'node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/smoke-development-container.test.mjs scripts/test-release-container.test.mjs scripts/validate-workflows.test.mjs scripts/verify-build-workflow-run.test.mjs scripts/verify-code-scanning-gate.test.mjs scripts/verify-release-controls.test.mjs') {
     fail('package script test:workflows must retain the Zig suite runner contract')
   }
 
@@ -4208,14 +4210,26 @@ export function validateContract(
   validateBuildTestGraph(buildFile)
   const candidateCommitLookup = 'git rev-parse "${GITHUB_SHA}^{commit}"'
   const originMainLookup = 'git ls-remote --exit-code --refs origin refs/heads/main'
+  const buildEvidenceGate = 'node scripts/verify-build-workflow-run.mjs \\'
+  const codeScanningGate = 'node scripts/verify-code-scanning-gate.mjs \\'
+  const candidateAdmissionGate = 'node scripts/validate-release-admission.mjs --check \\'
+  const immutableReleaseEnvironment = '    environment:\n      name: immutable-release'
   const releaseGate = '--release-tag "$GITHUB_REF_NAME"'
   requireText(
     releaseWorkflow,
-    'node scripts/validate-release-admission.mjs --check \\',
+    candidateAdmissionGate,
     'release workflow candidate admission',
   )
-  if (releaseWorkflow.split(candidateCommitLookup).length !== 3) {
-    fail('release workflow candidate commit lookup must appear exactly twice')
+  requireText(releaseWorkflow, buildEvidenceGate, 'release workflow Build evidence gate')
+  requireText(releaseWorkflow, codeScanningGate, 'release workflow CodeQL evidence gate')
+  if (
+    releaseWorkflow.split(immutableReleaseEnvironment).length !== 2
+    || releaseWorkflow.includes('IMMUTABLE_RELEASES_READ_TOKEN')
+  ) {
+    fail('release workflow must gate publication on one immutable-release approval environment without a stored administration credential')
+  }
+  if (releaseWorkflow.split(candidateCommitLookup).length !== 4) {
+    fail('release workflow candidate commit lookup must appear exactly three times')
   }
   requireText(releaseWorkflow, originMainLookup, 'release workflow exact origin main lookup')
   requireText(releaseWorkflow, releaseGate, 'release workflow')
@@ -4231,11 +4245,17 @@ export function validateContract(
   )
   requireText(
     releaseWorkflow,
-    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance',
     'release workflow exact npm archive publication',
   )
+  if (
+    releaseWorkflow.indexOf(buildEvidenceGate) >= releaseWorkflow.indexOf(codeScanningGate)
+    || releaseWorkflow.indexOf(codeScanningGate) >= releaseWorkflow.indexOf(candidateAdmissionGate)
+  ) {
+    fail('release Build and CodeQL evidence gates must run in order before candidate admission')
+  }
   if (releaseWorkflow.lastIndexOf(candidateCommitLookup) > releaseWorkflow.indexOf(releaseGate)) {
-    fail('both release candidate commit lookups must run before candidate admission')
+    fail('all three release candidate commit lookups must run before candidate admission')
   }
   if (releaseWorkflow.indexOf(originMainLookup) > releaseWorkflow.indexOf(releaseGate)) {
     fail('release exact origin main lookup must run before candidate admission')

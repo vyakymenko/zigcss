@@ -238,7 +238,9 @@ test('release workflow generates, signs, verifies, and uploads the closed five-t
     signatureVerifications: 2,
     npmPreflight: true,
     npmChannels: ['next', 'latest'],
-    githubReleaseMode: 'semver',
+    githubReleaseMode: 'immutable-semver',
+    githubApprovalEnvironment: 'immutable-release',
+    githubReleaseAttestation: true,
     npmProvenance: true,
   })
 })
@@ -254,7 +256,9 @@ test('workflow validation normalizes Windows CRLF and rejects bare carriage retu
     signatureVerifications: 2,
     npmPreflight: true,
     npmChannels: ['next', 'latest'],
-    githubReleaseMode: 'semver',
+    githubReleaseMode: 'immutable-semver',
+    githubApprovalEnvironment: 'immutable-release',
+    githubReleaseAttestation: true,
     npmProvenance: true,
   }
 
@@ -408,6 +412,17 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     () => validateReleaseWorkflowSource(workflow.replace('- name: Verify npm publication authority', '- name: Removed npm publication authority')),
     /npm publication preflight/,
   )
+  for (const [current, replacement] of [
+    ['timeout 30s npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1', 'timeout 30s npm whoami >/dev/null 2>&1'],
+    ['timeout 30s npm view zigcss versions --json --registry=https://registry.npmjs.org/', 'timeout 30s npm view zigcss versions --json'],
+    ['          for attempt in 1 2 3 4; do', '          for attempt in 1 2 3; do'],
+    ['            sleep 5', '            sleep 30'],
+    ['>/dev/null 2>&1', ''],
+  ]) {
+    const changed = workflow.replace(current, replacement)
+    assert.notEqual(changed, workflow, current)
+    assert.throws(() => validateReleaseWorkflowSource(changed), /bounded npm publication authority preflight/)
+  }
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace('npm pack --ignore-scripts --json', 'npm pack --json')),
     /single lifecycle-disabled npm pack/,
@@ -423,6 +438,26 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     () => validateReleaseWorkflowSource(workflow.replace('pattern: zigcss-*', 'pattern: *')),
     /closed GitHub release artifact selection/,
   )
+  for (const [current, replacement, expected] of [
+    ['    environment:\n      name: immutable-release', '    environment:\n      name: release', /mandatory immutable-release approval environment/],
+    ['    environment:\n      name: immutable-release', '    environment:\n      name: immutable-release\n    env:\n      ADMIN_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}', /stored immutable-releases administration credential/],
+    ['          draft: true', '          draft: false', /draft-first GitHub release/],
+    ['          overwrite_files: true', '          overwrite_files: false', /controlled draft GitHub release asset reconciliation/],
+    ['          fail_on_unmatched_files: true', '          fail_on_unmatched_files: false', /fail-closed GitHub release file glob/],
+    ['          target_commitish: ${{ github.sha }}', '          target_commitish: main', /exact GitHub release commit/],
+    ['              -F draft=false \\', '              -F draft=true \\', /point of no return/],
+    ['--phase published', '--phase draft', /GitHub release draft verification|GitHub release published verification/],
+    ['--phase tag', '--phase draft', /lightweight tag binding|GitHub release tag verification/],
+    ['--phase attestation', '--phase latest', /stable GitHub Latest identity verification|GitHub release latest verification|GitHub release attestation verification/],
+    ["        if: needs.npm-preflight.outputs.github-make-latest == 'true'", "        if: needs.npm-preflight.outputs.github-make-latest == 'false'", /stable-only GitHub Latest readback/],
+    ['          timeout 60s gh api graphql \\', '          gh api graphql \\', /bounded exact release discovery/],
+    ["        if: steps.npm-policy.outputs.already_published == 'true'", "        if: steps.npm-policy.outputs.already_published == 'false'", /npm resume gate|existing npm publication condition/],
+    ['timeout 30s gh release verify', 'gh release verify', /bounded immutable release attestation verification/],
+  ]) {
+    const changed = workflow.replace(current, replacement)
+    assert.notEqual(changed, workflow, current)
+    assert.throws(() => validateReleaseWorkflowSource(changed), expected)
+  }
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace(
       'node scripts/npm-package-artifact.mjs verify',
@@ -432,14 +467,14 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   )
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace(
-      'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+      'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance',
       'npm publish "$NPM_PACKAGE_ARCHIVE" --provenance',
     )),
     /channel-aware npm publication/,
   )
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace('node scripts/verify-npm-publication.mjs', 'node scripts/removed-readback.mjs')),
-    /bounded npm publication readback/,
+    /npm publication readbacks/,
   )
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace(

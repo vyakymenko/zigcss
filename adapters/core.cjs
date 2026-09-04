@@ -346,12 +346,6 @@ function sameDiagnosticFile(left, right) {
 function readDiagnosticSource(filename) {
   let descriptor;
   try {
-    const pathStat = fs.lstatSync(filename, { bigint: true });
-    if (
-      !pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.size < 0n ||
-      pathStat.size > BigInt(MAX_DIAGNOSTIC_SOURCE_BYTES)
-    ) return null;
-
     const flags = fs.constants.O_RDONLY |
       (fs.constants.O_NOFOLLOW ?? 0) |
       (fs.constants.O_NONBLOCK ?? 0) |
@@ -361,7 +355,6 @@ function readDiagnosticSource(filename) {
     const before = fs.fstatSync(descriptor, { bigint: true });
     const openedPathStat = fs.lstatSync(filename, { bigint: true });
     if (
-      !sameDiagnosticFile(pathStat, before) ||
       !sameDiagnosticFile(before, openedPathStat) ||
       before.size > BigInt(MAX_DIAGNOSTIC_SOURCE_BYTES)
     ) return null;

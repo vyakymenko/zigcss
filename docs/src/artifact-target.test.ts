@@ -1,10 +1,14 @@
 // @vitest-environment node
 
+import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   assertArtifactMatchesTarget,
   inspectBinary,
+  resolveArtifactTargetInvocation,
 } from '../../scripts/verify-artifact-target.mjs'
+
+const repositoryRoot = path.resolve(import.meta.dirname, '..', '..')
 
 function elf(machine: number): Buffer {
   const binary = Buffer.alloc(64)
@@ -49,5 +53,22 @@ describe('native artifact target inspection', () => {
     })
     expect(() => assertArtifactMatchesTarget(pe(0x8664), 'aarch64-windows')).toThrow(/architecture/)
     expect(() => assertArtifactMatchesTarget(elf(62), 'x86_64-macos')).toThrow(/format/)
+  })
+
+  test('accepts only the closed workflow path for each release target', () => {
+    for (const target of ['x86_64-linux', 'aarch64-linux', 'x86_64-macos', 'aarch64-macos']) {
+      expect(resolveArtifactTargetInvocation('zig-out/bin/zigcss', target)).toEqual({
+        artifactPath: path.join(repositoryRoot, 'zig-out/bin/zigcss'),
+        target,
+      })
+    }
+    expect(resolveArtifactTargetInvocation('zig-out/bin/zigcss.exe', 'x86_64-windows'))
+      .toEqual({
+        artifactPath: path.join(repositoryRoot, 'zig-out/bin/zigcss.exe'),
+        target: 'x86_64-windows',
+      })
+    expect(() => resolveArtifactTargetInvocation('/tmp/zigcss', 'x86_64-linux')).toThrow(/artifact path/)
+    expect(() => resolveArtifactTargetInvocation('../../zigcss', 'x86_64-linux')).toThrow(/artifact path/)
+    expect(() => resolveArtifactTargetInvocation('zig-out/bin/zigcss', 'riscv64-linux')).toThrow(/unsupported release target/)
   })
 })

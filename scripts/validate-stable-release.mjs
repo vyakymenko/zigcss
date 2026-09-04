@@ -57,6 +57,7 @@ const expectedPublicationEvidence = Object.freeze({
   githubReleaseUrl: 'https://github.com/vyakymenko/zigcss/releases/tag/v0.6.0',
   githubPrerelease: false,
   githubDraft: false,
+  githubImmutable: false,
   githubPublishedAt: '2026-08-18T11:23:10Z',
   githubAssetCount: 25,
   githubAssetBytes: 16374807,
@@ -154,12 +155,13 @@ function validateContractShape(contract) {
   validateReleaseTag(contract.candidateVersion, contract.candidateTag)
 
   exactKeys(contract.previousPrerelease, [
-    'version', 'tag', 'commit', 'githubReleaseId', 'npmDistTag',
+    'version', 'tag', 'commit', 'githubReleaseId', 'githubImmutable', 'npmDistTag',
   ], 'previousPrerelease')
   expectEqual(contract.previousPrerelease.version, '0.6.0-rc.2', 'previous prerelease version')
   expectEqual(contract.previousPrerelease.tag, 'v0.6.0-rc.2', 'previous prerelease tag')
   expectEqual(contract.previousPrerelease.commit, 'b63e190f7edeccd829abe34bfb96d9e1a8a320e2', 'previous prerelease commit')
   expectEqual(contract.previousPrerelease.githubReleaseId, 369856953, 'previous prerelease GitHub release')
+  expectEqual(contract.previousPrerelease.githubImmutable, false, 'previous prerelease GitHub immutability')
   expectEqual(contract.previousPrerelease.npmDistTag, 'next', 'previous prerelease npm tag')
 
   exactKeys(contract.candidateSelection, [
@@ -296,7 +298,7 @@ function validateSources(contract, gates, sources) {
   expectEqual(manifest.version, activeVersion, 'current package version')
   if (contract.state === 'closed') {
     if (compareReleaseVersionPrecedence(activeVersion, contract.candidateVersion) < 0) {
-      fail(`active source version ${activeVersion} is older than immutable published stable ${contract.candidateVersion}`)
+      fail(`active source version ${activeVersion} is older than published stable ${contract.candidateVersion}`)
     }
   } else {
     const expectedSourceVersion = localGate === 'verified' ? contract.candidateVersion : contract.previousPrerelease.version
@@ -342,13 +344,23 @@ function validateSources(contract, gates, sources) {
   requireText(workflow, '--github-output "$GITHUB_OUTPUT"', 'release channel output gate')
   requireText(workflow, 'release-channel: ${{ steps.npm-policy.outputs.channel }}', 'release channel job output')
   requireText(workflow, 'github-prerelease: ${{ steps.npm-policy.outputs.github_prerelease }}', 'GitHub prerelease job output')
+  requireText(workflow, 'github-make-latest: ${{ steps.npm-policy.outputs.github_make_latest }}', 'GitHub latest-mode job output')
+  requireText(workflow, 'npm-already-published: ${{ steps.npm-policy.outputs.already_published }}', 'resumable npm state output')
   expectLiteralCount(
     workflow,
-    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance',
     1,
     'exact channel-aware npm publication',
   )
   requireText(workflow, 'prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}', 'channel-aware GitHub release')
+  requireText(workflow, 'make_latest: false', 'draft GitHub latest exclusion')
+  requireText(workflow, 'GITHUB_MAKE_LATEST: ${{ needs.npm-preflight.outputs.github-make-latest }}', 'published GitHub latest routing')
+  requireText(workflow, '-f "make_latest=$GITHUB_MAKE_LATEST" \\', 'channel-aware GitHub latest publication')
+  expectLiteralCount(workflow, '    environment:\n      name: immutable-release', 1, 'immutable-release approval environment')
+  expectLiteralCount(workflow, 'IMMUTABLE_RELEASES_READ_TOKEN', 0, 'stored immutable-releases administration credential')
+  requireText(workflow, '- name: Verify exact resumable npm publication', 'exact existing npm publication verification')
+  requireText(workflow, "if: steps.npm-policy.outputs.already_published == 'true'", 'existing npm resume condition')
+  requireText(workflow, "if: needs.npm-preflight.outputs.npm-already-published != 'true'", 'create-only npm publish condition')
   requireText(workflow, '- name: Verify npm publication', 'generic npm publication readback')
   requireText(workflow, '--archive "$NPM_PACKAGE_ARCHIVE"', 'exact npm publication readback archive')
 }

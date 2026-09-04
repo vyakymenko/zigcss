@@ -175,11 +175,17 @@ export function validateExampleContract(contract) {
   assert.match(contract.readme, /current-source-checkout proof only/)
   assert.match(contract.readme, /native SCSS map chain is retained in Nuxt's intermediate Vite SSR output under `\.nuxt`/)
   assert.match(contract.readme, /does not claim a public production CSS map from Nuxt/)
-  assert.match(contract.readme, /nuxt\.com\/docs\/4\.x\/getting-started\/styling/)
-  assert.match(contract.readme, /nuxt\.com\/docs\/4\.x\/api\/nuxt-config/)
+  assert.equal(contract.readme.includes('nuxt.com/docs/4.x/getting-started/styling'), true)
+  assert.equal(contract.readme.includes('nuxt.com/docs/4.x/api/nuxt-config'), true)
 
   for (const anchor of [
     "ZIGCSS_NUXT_OFFLINE !== '1'",
+    "^zigcss-nuxt-(?:network-)?[A-Za-z0-9]{6}$",
+    'const traceRoot = fs.realpathSync(__dirname)',
+    'function openBoundedRegularFile(',
+    'function withTraceLock(action)',
+    'const count = fs.readSync(opened.descriptor, content, offset, bytes - offset, offset)',
+    'if (input !== expected) fail(`${label} must equal its exact staged path`)',
     'function immutable(target, name, value)',
     'enumerable: descriptor?.enumerable ?? true',
     'writable: false',
@@ -325,9 +331,11 @@ function offlineEnvironment(
   allowedBinary = undefined,
   allowedEsbuildBinary = undefined,
 ) {
+  const stagedPreload = path.join(temporary, path.basename(preload))
+  fs.copyFileSync(preload, stagedPreload)
   return {
     ...installEnv,
-    NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+    NODE_OPTIONS: `--require=${JSON.stringify(fs.realpathSync(stagedPreload))}`,
     NUXT_TELEMETRY_DISABLED: '1',
     ...(allowedEsbuildBinary === undefined ? {} : { ESBUILD_BINARY_PATH: allowedEsbuildBinary }),
     ZIGCSS_NUXT_OFFLINE: '1',
@@ -569,6 +577,35 @@ test('Nuxt offline preload blocks external and local sockets', () => {
     fs.writeFileSync(trace, '')
     fs.writeFileSync(userConfig, 'audit=false\nfund=false\nignore-scripts=true\nupdate-notifier=false\n', { mode: 0o600 })
     const env = offlineEnvironment(installEnvironment(temporary, userConfig), temporary, trace)
+    const raceProbeEnv = { ...env }
+    delete raceProbeEnv.NODE_OPTIONS
+    const raceProbe = run(process.execPath, ['-e', [
+      "const fs = require('node:fs')",
+      'const originalLstat = fs.lstatSync',
+      'let appended = false',
+      'fs.lstatSync = function injectedConcurrentAppend(filename, options) {',
+      '  if (!appended && filename === process.argv[2]) { appended = true; fs.appendFileSync(filename, " ") }',
+      '  return originalLstat(filename, options)',
+      '}',
+      "process.env.NODE_OPTIONS = '--require=' + JSON.stringify(process.argv[1])",
+      'require(process.argv[1])',
+    ].join('\n'), path.join(temporary, path.basename(preload)), trace], { env: raceProbeEnv, timeout: 5_000 })
+    requireSuccess(raceProbe, 'concurrent Nuxt trace metadata mutation probe')
+    const unadmittedTrace = path.join(temporary, 'unadmitted-trace.jsonl')
+    fs.writeFileSync(unadmittedTrace, 'sentinel\n', { mode: 0o600 })
+    const deniedTrace = run(process.execPath, ['-e', 'process.exit(0)'], {
+      env: { ...env, ZIGCSS_NUXT_TRACE: unadmittedTrace },
+      timeout: 5_000,
+    })
+    assert.equal(deniedTrace.status, 1)
+    assert.match(deniedTrace.stderr, /trace file must use the admitted fixed filename/)
+    assert.equal(fs.readFileSync(unadmittedTrace, 'utf8'), 'sentinel\n')
+    const linkedTrace = path.join(temporary, 'linked-trace.jsonl')
+    fs.linkSync(trace, linkedTrace)
+    const deniedLinkedTrace = run(process.execPath, ['-e', 'process.exit(0)'], { env, timeout: 5_000 })
+    assert.equal(deniedLinkedTrace.status, 1)
+    assert.match(deniedLinkedTrace.stderr, /bounded canonical singly-linked regular non-symlink file/)
+    fs.unlinkSync(linkedTrace)
     const denied = run(process.execPath, ['-e', "require('node:https').get('https://example.com')"], {
       env,
       timeout: 5_000,
@@ -829,6 +866,7 @@ test('current native ZigCSS completes deny-network Nuxt client Nitro prerender a
     const classMatch = clientCss.source.match(/\.([A-Za-z0-9_-]*hero[A-Za-z0-9_-]*)\s*\{[^}]*color:\s*(?:#639|rebeccapurple)/i)
     assert.notEqual(classMatch, null)
     const className = classMatch[1]
+    const escapedClassName = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
     const emittedBadges = findRegularFiles(clientRoot, '.svg')
       .filter(filename => fs.readFileSync(filename, 'utf8') === loadExampleContract().badge)
@@ -844,17 +882,17 @@ test('current native ZigCSS completes deny-network Nuxt client Nitro prerender a
 
     const prerendered = fs.readFileSync(path.join(clientRoot, 'index.html'), 'utf8')
     assert.match(prerendered, /Nuxt ZigCSS/)
-    assert.match(prerendered, new RegExp(`class=["'][^"']*${className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^"']*["']`))
+    assert.match(prerendered, new RegExp(`class=["'][^"']*${escapedClassName}[^"']*["']`))
 
     requireSingleContaining(
       findRegularFiles(clientRoot, '.js'),
-      new RegExp(`${className}.*Nuxt ZigCSS|Nuxt ZigCSS.*${className}`),
+      new RegExp(`${escapedClassName}.*Nuxt ZigCSS|Nuxt ZigCSS.*${escapedClassName}`),
       'Nuxt client CSS Module JavaScript',
     )
     const serverJavaScriptFiles = findRegularFiles(serverRoot, '.mjs')
     assert.notEqual(serverJavaScriptFiles.length, 0, 'Nitro output must contain server JavaScript')
     const serverJavaScript = serverJavaScriptFiles.map(filename => fs.readFileSync(filename, 'utf8')).join('\n')
-    assert.match(serverJavaScript, new RegExp(className), 'Nitro JavaScript must retain the CSS Module binding')
+    assert.match(serverJavaScript, new RegExp(escapedClassName), 'Nitro JavaScript must retain the CSS Module binding')
     assert.match(serverJavaScript, /Nuxt ZigCSS/, 'Nitro JavaScript must retain the rendered component')
     assert.equal(fs.existsSync(path.join(serverRoot, 'index.mjs')), true, 'Nitro server entry must be emitted')
     requireNativeSourceMap(intermediateSsrRoot, 'Nuxt intermediate Vite SSR output')

@@ -18,6 +18,9 @@ const workerThreads = require('node:worker_threads')
 
 const maximumBinaryBytes = 256 * 1024 * 1024
 const maximumTraceBytes = 256 * 1024
+const maximumManifestBytes = 64 * 1024
+const maximumTraceLockAttempts = 5_000
+const traceLockWait = new Int32Array(new SharedArrayBuffer(4))
 
 function fail(message) {
   throw new Error(`Nuxt offline preload: ${message}`)
@@ -27,36 +30,136 @@ if (process.env.ZIGCSS_NUXT_OFFLINE !== '1') {
   fail('explicit offline-test authority is required')
 }
 
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.nlink === right.nlink
+}
+
+function sameIdentity(left, right) {
+  return sameFileIdentity(left, right) && left.ctimeNs === right.ctimeNs &&
+    left.mtimeNs === right.mtimeNs && left.size === right.size
+}
+
+function openBoundedRegularFile(
+  filename,
+  label,
+  maximumBytes,
+  flags,
+  allowEmpty = false,
+  mutableMetadata = false,
+) {
+  let descriptor
+  try {
+    descriptor = fs.openSync(
+      filename,
+      flags | (fs.constants.O_CLOEXEC ?? 0) | (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0),
+    )
+  } catch {
+    fail(`${label} could not be opened safely`)
+  }
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const bound = fs.lstatSync(filename, { bigint: true })
+    if (
+      !opened.isFile() || !bound.isFile() || bound.isSymbolicLink() || opened.nlink !== 1n ||
+      bound.nlink !== 1n || (!allowEmpty && opened.size === 0n) ||
+      opened.size > BigInt(maximumBytes) || bound.size > BigInt(maximumBytes) ||
+      !(mutableMetadata ? sameFileIdentity(opened, bound) : sameIdentity(opened, bound)) ||
+      fs.realpathSync(filename) !== filename
+    ) fail(`${label} must be a bounded canonical singly-linked regular non-symlink file`)
+    return Object.freeze({ descriptor, stat: opened })
+  } catch (error) {
+    fs.closeSync(descriptor)
+    throw error
+  }
+}
+
+function readBoundedJson(filename, label) {
+  const opened = openBoundedRegularFile(
+    filename,
+    label,
+    maximumManifestBytes,
+    fs.constants.O_RDONLY,
+  )
+  try {
+    const bytes = Number(opened.stat.size)
+    const content = Buffer.alloc(bytes)
+    let offset = 0
+    while (offset < bytes) {
+      const count = fs.readSync(opened.descriptor, content, offset, bytes - offset, offset)
+      if (count === 0) fail(`${label} ended before its declared size`)
+      offset += count
+    }
+    const after = fs.fstatSync(opened.descriptor, { bigint: true })
+    if (!sameIdentity(opened.stat, after)) fail(`${label} changed while reading`)
+    return JSON.parse(content.toString('utf8'))
+  } finally {
+    fs.closeSync(opened.descriptor)
+  }
+}
+
 const traceRootInput = process.env.ZIGCSS_NUXT_TRACE_ROOT
 const traceInput = process.env.ZIGCSS_NUXT_TRACE
 if (typeof traceRootInput !== 'string' || typeof traceInput !== 'string') {
   fail('trace root and trace file are required')
 }
-const traceRootStat = fs.lstatSync(traceRootInput, { bigint: true })
-if (!traceRootStat.isDirectory() || traceRootStat.isSymbolicLink()) {
-  fail('trace root must be a regular non-symlink directory')
-}
-const traceRoot = fs.realpathSync(traceRootInput)
-const traceStat = fs.lstatSync(traceInput, { bigint: true })
+const traceRoot = fs.realpathSync(__dirname)
+const temporaryRoot = fs.realpathSync(os.tmpdir())
+const relativeTraceRoot = path.relative(temporaryRoot, traceRoot)
 if (
-  !traceStat.isFile() || traceStat.isSymbolicLink() || traceStat.nlink !== 1n ||
-  traceStat.size > BigInt(maximumTraceBytes)
-) {
-  fail('trace must be a bounded singly-linked regular non-symlink file')
-}
-const trace = fs.realpathSync(traceInput)
-if (path.dirname(trace) !== traceRoot) fail('trace file escapes its root')
-const traceFd = fs.openSync(
+  path.dirname(relativeTraceRoot) !== '.' ||
+  !/^zigcss-nuxt-(?:network-)?[A-Za-z0-9]{6}$/.test(relativeTraceRoot) ||
+  traceRootInput !== traceRoot
+) fail('trace root must be this preload\'s admitted temporary directory')
+const trace = path.join(traceRoot, 'offline-trace.jsonl')
+if (traceInput !== trace) fail('trace file must use the admitted fixed filename')
+const openedTraceFile = openBoundedRegularFile(
   trace,
-  fs.constants.O_WRONLY | fs.constants.O_APPEND | (fs.constants.O_NOFOLLOW ?? 0),
+  'trace',
+  maximumTraceBytes,
+  fs.constants.O_WRONLY | fs.constants.O_APPEND,
+  true,
+  true,
 )
-const openedTrace = fs.fstatSync(traceFd, { bigint: true })
-if (
-  !openedTrace.isFile() || openedTrace.dev !== traceStat.dev || openedTrace.ino !== traceStat.ino ||
-  openedTrace.nlink !== 1n
-) {
-  fs.closeSync(traceFd)
-  fail('trace identity changed while opening')
+const traceFd = openedTraceFile.descriptor
+const openedTrace = openedTraceFile.stat
+const traceLock = path.join(traceRoot, '.zigcss-trace.lock')
+
+function acquireTraceLock() {
+  for (let attempt = 0; attempt < maximumTraceLockAttempts; attempt += 1) {
+    let descriptor
+    try {
+      descriptor = fs.openSync(
+        traceLock,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL |
+          (fs.constants.O_CLOEXEC ?? 0) | (fs.constants.O_NOFOLLOW ?? 0),
+        0o600,
+      )
+    } catch (error) {
+      if (error?.code !== 'EEXIST') fail('trace lock could not be created safely')
+      Atomics.wait(traceLockWait, 0, 0, 1)
+      continue
+    }
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    if (!opened.isFile() || opened.nlink !== 1n) {
+      fs.closeSync(descriptor)
+      fs.unlinkSync(traceLock)
+      fail('trace lock must be a singly-linked regular file')
+    }
+    return descriptor
+  }
+  fail('trace lock acquisition timed out')
+}
+
+function withTraceLock(action) {
+  const descriptor = acquireTraceLock()
+  try {
+    return action()
+  } finally {
+    fs.closeSync(descriptor)
+    fs.unlinkSync(traceLock)
+  }
 }
 
 let networkAttempts = 0
@@ -66,32 +169,25 @@ let esbuildSpawns = 0
 
 function captureAllowedBinary(input, expectedRelative, label) {
   if (input === undefined) return null
-  if (
-    typeof input !== 'string' || input.length === 0 || !path.isAbsolute(input) ||
-    path.resolve(input) !== input || Buffer.byteLength(input) > 4096 || /[\0\r\n]/.test(input)
-  ) fail(`${label} must be a bounded normalized absolute path`)
-  if (path.relative(traceRoot, input) !== expectedRelative) {
-    fail(`${label} must use its exact path under the temporary project`)
+  const expected = path.join(traceRoot, expectedRelative)
+  if (input !== expected) fail(`${label} must equal its exact staged path`)
+  const opened = openBoundedRegularFile(expected, label, maximumBinaryBytes, fs.constants.O_RDONLY)
+  try {
+    if (process.platform !== 'win32' && (opened.stat.mode & 0o111n) === 0n) {
+      fail(`${label} must be executable`)
+    }
+    return Object.freeze({
+      path: expected,
+      dev: opened.stat.dev,
+      ino: opened.stat.ino,
+      mode: opened.stat.mode,
+      size: opened.stat.size,
+      mtimeNs: opened.stat.mtimeNs,
+      ctimeNs: opened.stat.ctimeNs,
+    })
+  } finally {
+    fs.closeSync(opened.descriptor)
   }
-  const stat = fs.lstatSync(input, { bigint: true })
-  if (
-    !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || stat.size <= 0n ||
-    stat.size > BigInt(maximumBinaryBytes) || fs.realpathSync(input) !== input
-  ) {
-    fail(`${label} must be a bounded canonical singly-linked regular non-symlink file`)
-  }
-  if (process.platform !== 'win32' && (stat.mode & 0o111n) === 0n) {
-    fail(`${label} must be executable`)
-  }
-  return Object.freeze({
-    path: input,
-    dev: stat.dev,
-    ino: stat.ino,
-    mode: stat.mode,
-    size: stat.size,
-    mtimeNs: stat.mtimeNs,
-    ctimeNs: stat.ctimeNs,
-  })
 }
 
 const allowedBinary = captureAllowedBinary(
@@ -147,12 +243,7 @@ const allowedEsbuild = allowedEsbuildInput === undefined ? null : captureAllowed
 )
 if (allowedEsbuild !== null) {
   const manifestFile = path.join(traceRoot, 'project', 'node_modules', ...esbuildPlatformPackage.split('/'), 'package.json')
-  const manifestStat = fs.lstatSync(manifestFile)
-  if (
-    !manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size < 1 ||
-    manifestStat.size > 64 * 1024 || fs.realpathSync(manifestFile) !== manifestFile
-  ) fail('esbuild platform manifest must be a bounded canonical regular file')
-  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+  const manifest = readBoundedJson(manifestFile, 'esbuild platform manifest')
   if (
     manifest.name !== esbuildPlatformPackage || manifest.version !== '0.28.2' ||
     !Array.isArray(manifest.os) || manifest.os.length !== 1 || manifest.os[0] !== process.platform ||
@@ -165,25 +256,30 @@ if (allowedEsbuild !== null) {
 }
 
 function record(event) {
-  const stat = fs.fstatSync(traceFd, { bigint: true })
-  if (
-    !stat.isFile() || stat.dev !== openedTrace.dev || stat.ino !== openedTrace.ino ||
-    stat.nlink !== 1n || stat.size > BigInt(maximumTraceBytes)
-  ) {
-    fail('trace changed identity or exceeded its byte limit')
-  }
-  const line = `${JSON.stringify({
-    deniedProcessAttempts,
-    esbuildSpawns,
-    event,
-    nativeSpawns,
-    networkAttempts,
-    pid: process.pid,
-  })}\n`
-  const bytes = Buffer.byteLength(line)
-  if (stat.size + BigInt(bytes) > BigInt(maximumTraceBytes)) fail('trace exceeds its byte limit')
-  const written = fs.writeSync(traceFd, line, null, 'utf8')
-  if (written !== bytes) fail('trace write was incomplete')
+  withTraceLock(() => {
+    const stat = fs.fstatSync(traceFd, { bigint: true })
+    if (
+      !stat.isFile() || stat.dev !== openedTrace.dev || stat.ino !== openedTrace.ino ||
+      stat.nlink !== 1n || stat.size > BigInt(maximumTraceBytes)
+    ) fail('trace changed identity or exceeded its byte limit')
+    const line = `${JSON.stringify({
+      deniedProcessAttempts,
+      esbuildSpawns,
+      event,
+      nativeSpawns,
+      networkAttempts,
+      pid: process.pid,
+    })}\n`
+    const bytes = Buffer.byteLength(line)
+    if (stat.size + BigInt(bytes) > BigInt(maximumTraceBytes)) fail('trace exceeds its byte limit')
+    const written = fs.writeSync(traceFd, line, null, 'utf8')
+    if (written !== bytes) fail('trace write was incomplete')
+    const after = fs.fstatSync(traceFd, { bigint: true })
+    if (
+      after.dev !== stat.dev || after.ino !== stat.ino || after.nlink !== 1n ||
+      after.size !== stat.size + BigInt(bytes)
+    ) fail('trace changed unexpectedly while writing')
+  })
 }
 
 function processError(operation) {

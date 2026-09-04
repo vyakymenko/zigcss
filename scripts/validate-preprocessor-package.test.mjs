@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { readBoundedDirectory, readStableRegularFile } from './bounded-filesystem.mjs'
+import { collectLessSource } from './vendor-less-corpus.mjs'
+import { collectStylusTree } from './vendor-stylus-corpus.mjs'
 import {
   canonicalProviderMetadata,
   directProductionDependencies,
@@ -27,6 +31,7 @@ import {
   validatePackageDescription,
   validatePreprocessorPackage,
   validatePreprocessorPackagingWorkflows,
+  writeGeneratedFileAtomically,
 } from './validate-preprocessor-package.mjs'
 
 function sources() {
@@ -208,6 +213,140 @@ test('owns one exact installable native binary and Node API package surface', ()
     files: runtimeSourceFiles,
     external: [],
   })
+})
+
+test('generated package metadata writes only bounded allowlisted non-symlink targets', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-package-metadata-'))
+  try {
+    assert.throws(
+      () => writeGeneratedFileAtomically(root, '../outside.txt', 'unsafe\n'),
+      /output path is not allowlisted/,
+    )
+    writeGeneratedFileAtomically(root, 'THIRD_PARTY_NOTICES.md', 'exact\n')
+    writeGeneratedFileAtomically(root, 'THIRD_PARTY_NOTICES.md', 'exact\n')
+    assert.equal(fs.readFileSync(path.join(root, 'THIRD_PARTY_NOTICES.md'), 'utf8'), 'exact\n')
+
+    if (process.platform !== 'win32') {
+      const outside = path.join(root, 'outside.txt')
+      const output = path.join(root, 'PREPROCESSOR-SBOM.spdx.json')
+      fs.writeFileSync(outside, 'do not replace\n')
+      fs.symlinkSync(outside, output)
+      assert.throws(
+        () => writeGeneratedFileAtomically(root, 'PREPROCESSOR-SBOM.spdx.json', '{}\n'),
+        /regular non-symlink file/,
+      )
+      assert.equal(fs.readFileSync(outside, 'utf8'), 'do not replace\n')
+    }
+    assert.throws(
+      () => writeGeneratedFileAtomically(root, 'THIRD_PARTY_NOTICES.md', 'x'.repeat((2 * 1024 * 1024) + 1)),
+      /outside the allowed range/,
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('bounded filesystem primitives reject symlinks, oversized files, and oversized inventories', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-bounded-filesystem-'))
+  try {
+    const file = path.join(root, 'file.txt')
+    fs.writeFileSync(file, 'safe')
+    assert.equal(readStableRegularFile(file, { maximumBytes: 4 }).toString(), 'safe')
+    assert.throws(
+      () => readStableRegularFile(file, { maximumBytes: 3 }),
+      /must contain 1 through 3 bytes/,
+    )
+
+    fs.mkdirSync(path.join(root, 'inventory'))
+    fs.writeFileSync(path.join(root, 'inventory', 'one'), '1')
+    fs.writeFileSync(path.join(root, 'inventory', 'two'), '2')
+    assert.throws(
+      () => readBoundedDirectory(path.join(root, 'inventory'), { maximumEntries: 1 }),
+      /exceeds 1 entries/,
+    )
+
+    if (process.platform !== 'win32') {
+      const link = path.join(root, 'link.txt')
+      fs.symlinkSync(file, link)
+      assert.throws(
+        () => readStableRegularFile(link, { maximumBytes: 4 }),
+        /regular non-symlink|is a symlink/,
+      )
+      const directoryLink = path.join(root, 'inventory-link')
+      fs.symlinkSync(path.join(root, 'inventory'), directoryLink, 'dir')
+      assert.throws(
+        () => readBoundedDirectory(directoryLink, { maximumEntries: 2 }),
+        /regular non-symlink directory/,
+      )
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Less and Stylus corpus collectors enforce file, symlink, and traversal bounds', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-corpus-collector-'))
+  try {
+    const lessDirectory = path.join(root, 'packages', 'test-data', 'safe')
+    fs.mkdirSync(lessDirectory, { recursive: true })
+    fs.writeFileSync(path.join(lessDirectory, 'entry.less'), '.safe { color: green; }\n')
+    const lessFiles = new Map()
+    collectLessSource(root, 'packages/test-data/safe', lessFiles)
+    assert.equal(lessFiles.get('safe/entry.less').bytes.toString(), '.safe { color: green; }\n')
+
+    const stylusDirectory = path.join(root, 'test', 'images')
+    fs.mkdirSync(stylusDirectory, { recursive: true })
+    fs.writeFileSync(path.join(stylusDirectory, 'pixel.bin'), 'pixel')
+    fs.writeFileSync(path.join(stylusDirectory, 'ignored.js'), 'throw new Error()')
+    const stylusFiles = new Map()
+    collectStylusTree(root, 'test/images', 'upstream/images', stylusFiles)
+    assert.equal(stylusFiles.get('upstream/images/pixel.bin').bytes.toString(), 'pixel')
+    assert.equal(stylusFiles.has('upstream/images/ignored.js'), false)
+
+    const largeLess = path.join(root, 'packages', 'test-data', 'oversized.less')
+    fs.writeFileSync(largeLess, '')
+    fs.truncateSync(largeLess, (16 * 1024 * 1024) + 1)
+    assert.throws(
+      () => collectLessSource(root, 'packages/test-data/oversized.less', new Map()),
+      /must contain 1 through 16777216 bytes/,
+    )
+
+    const largeStylus = path.join(root, 'test', 'oversized.styl')
+    fs.writeFileSync(largeStylus, '')
+    fs.truncateSync(largeStylus, (16 * 1024 * 1024) + 1)
+    assert.throws(
+      () => collectStylusTree(root, 'test/oversized.styl', 'upstream/oversized.styl', new Map()),
+      /must contain 1 through 16777216 bytes/,
+    )
+
+    let deepDirectory = path.join(root, 'packages', 'test-data', 'deep')
+    fs.mkdirSync(deepDirectory, { recursive: true })
+    for (let index = 0; index < 33; index += 1) {
+      deepDirectory = path.join(deepDirectory, `d${index}`)
+      fs.mkdirSync(deepDirectory)
+    }
+    assert.throws(
+      () => collectLessSource(root, 'packages/test-data/deep', new Map()),
+      /source traversal exceeds depth 32/,
+    )
+
+    if (process.platform !== 'win32') {
+      const lessLink = path.join(root, 'packages', 'test-data', 'linked.less')
+      fs.symlinkSync(path.join(lessDirectory, 'entry.less'), lessLink)
+      assert.throws(
+        () => collectLessSource(root, 'packages/test-data/linked.less', new Map()),
+        /regular non-symlink|is a symlink/,
+      )
+      const stylusLink = path.join(root, 'test', 'linked.styl')
+      fs.symlinkSync(path.join(stylusDirectory, 'pixel.bin'), stylusLink)
+      assert.throws(
+        () => collectStylusTree(root, 'test/linked.styl', 'upstream/linked.styl', new Map()),
+        /regular non-symlink|is a symlink/,
+      )
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('binds zero runtime dependencies, development oracles, Node, exports, files, and non-Cartesian targets', () => {
@@ -721,8 +860,8 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
         replaceWorkflowJobText(
           build,
           jobName,
-          "node-version: '20.19.0'",
-          "node-version: '20'",
+          "node-version: '24.20.0'",
+          "node-version: '24'",
         ),
         release,
         docs,
@@ -737,12 +876,12 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
         replaceWorkflowJobText(
           release,
           jobName,
-          "node-version: '20.19.0'",
-          "node-version: '20'",
+          "node-version: '24.20.0'",
+          "node-version: '24'",
         ),
         docs,
       ),
-      /all release npm surfaces must use exact Node 20\.19\.0/,
+      /all release npm surfaces must use exact Node 24\.20\.0 LTS/,
     )
   }
   assert.throws(
@@ -750,21 +889,21 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
       replaceWorkflowJobText(
         build,
         'test',
-        "node-version: '22.22.0'",
-        'node-version: 22',
+        "node-version: '24.20.0'",
+        'node-version: 24',
       ),
       release,
       docs,
     ),
-    /job test must use exact Node 22\.22\.0/,
+    /job test must use exact Node 24\.20\.0 LTS/,
   )
   assert.throws(
     () => validatePreprocessorPackagingWorkflows(
       replaceWorkflowJobText(
         build,
         'native-provenance-evidence',
-        "node-version: '20.19.0'",
-        "node-version: '20.19.0'\n          node-version: '20.19.0'",
+        "node-version: '24.20.0'",
+        "node-version: '24.20.0'\n          node-version: '24.20.0'",
       ),
       release,
       docs,
@@ -773,7 +912,7 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
   )
   assert.equal(
     validatePreprocessorPackagingWorkflows(
-      build.replace('name: Build\n', "name: Build\n# node-version: '20.19.0'\n"),
+      build.replace('name: Build\n', "name: Build\n# node-version: '24.20.0'\n"),
       release,
       docs,
     ),
@@ -783,7 +922,7 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
     () => validatePreprocessorPackagingWorkflows(
       build,
       release,
-      docs.replace("node-version: '22.22.0'", "node-version: '22'"),
+      docs.replace("node-version: '24.20.0'", "node-version: '24'"),
     ),
     /exact Node/,
   )
@@ -791,8 +930,8 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
     () => validatePreprocessorPackagingWorkflows(
       build,
       release.replace(
+        'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance',
         'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
-        'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL"',
       ),
       docs,
     ),

@@ -33,12 +33,14 @@ export function checkNpmVersionAvailability(version, source) {
     if (seen.has(candidate)) fail(`registry version inventory repeats ${candidate}`)
     seen.add(candidate)
   }
-  if (seen.has(version)) fail(`npm version ${version} is already published and immutable`)
+  const alreadyPublished = seen.has(version)
   return {
     version,
     publishedVersions: versions.length,
     channel,
     githubPrerelease: parsedVersion.prerelease !== null,
+    githubMakeLatest: parsedVersion.prerelease === null,
+    alreadyPublished,
   }
 }
 
@@ -73,7 +75,7 @@ function writeGithubOutput(filename, result) {
   }
   fs.appendFileSync(
     filename,
-    `channel=${result.channel}\ngithub_prerelease=${result.githubPrerelease}\n`,
+    `channel=${result.channel}\ngithub_prerelease=${result.githubPrerelease}\ngithub_make_latest=${result.githubMakeLatest}\nalready_published=${result.alreadyPublished}\n`,
     { encoding: 'utf8' },
   )
 }
@@ -82,16 +84,16 @@ function parseArgs(args) {
   if (![4, 6].includes(args.length)) {
     fail('usage: --version semver --versions-file absolute-path [--github-output absolute-path]')
   }
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
-    if (!['--version', '--versions-file', '--github-output'].includes(name) || value === undefined || Object.hasOwn(values, name)) {
+    if (!['--version', '--versions-file', '--github-output'].includes(name) || value === undefined || values.has(name)) {
       fail('usage: --version semver --versions-file absolute-path [--github-output absolute-path]')
     }
-    values[name] = value
+    values.set(name, value)
   }
-  if (values['--version'] === undefined || values['--versions-file'] === undefined) {
+  if (!values.has('--version') || !values.has('--versions-file')) {
     fail('usage: --version semver --versions-file absolute-path [--github-output absolute-path]')
   }
   return values
@@ -100,14 +102,14 @@ function parseArgs(args) {
 function main() {
   const values = parseArgs(process.argv.slice(2))
   const result = checkNpmVersionAvailability(
-    values['--version'],
-    readVersionsFile(values['--versions-file']),
+    values.get('--version'),
+    readVersionsFile(values.get('--versions-file')),
   )
-  if (values['--github-output'] !== undefined) {
-    writeGithubOutput(values['--github-output'], result)
+  if (values.has('--github-output')) {
+    writeGithubOutput(values.get('--github-output'), result)
   }
   process.stdout.write(
-    `npm publication preflight verified: ${result.version} is absent from ${result.publishedVersions} immutable versions and will use ${result.channel}.\n`,
+    `npm publication preflight verified: ${result.version} is ${result.alreadyPublished ? 'an exact-resume candidate already present in' : 'absent from'} ${result.publishedVersions} immutable versions and will use ${result.channel}.\n`,
   )
 }
 

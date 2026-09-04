@@ -19,9 +19,12 @@ jobs:
     permissions:
       actions: read
       contents: read
+      security-events: read
     outputs:
       release-channel: ${{ steps.npm-policy.outputs.channel }}
       github-prerelease: ${{ steps.npm-policy.outputs.github_prerelease }}
+      github-make-latest: ${{ steps.npm-policy.outputs.github_make_latest }}
+      npm-already-published: ${{ steps.npm-policy.outputs.already_published }}
       npm-package-archive: ${{ steps.npm-package.outputs.archive-name }}
       npm-package-shasum: ${{ steps.npm-package.outputs.archive-shasum }}
       npm-package-integrity: ${{ steps.npm-package.outputs.archive-integrity }}
@@ -32,7 +35,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20.19.0'
+          node-version: '24.20.0'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Verify native zero-dependency package
@@ -56,6 +59,16 @@ jobs:
             --repository "$GITHUB_REPOSITORY" \
             --commit "$candidate_commit"
 
+      - name: Verify clean CodeQL evidence for release commit
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          candidate_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          node scripts/verify-code-scanning-gate.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$candidate_commit"
+
       - name: Verify release candidate admission
         shell: bash
         run: |
@@ -75,10 +88,31 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           versions="$RUNNER_TEMP/zigcss-npm-versions.json"
-          npm whoami
-          npm view zigcss versions --json > "$versions"
+          versions_attempt="$versions.attempt"
+          for attempt in 1 2 3 4; do
+            if timeout 30s npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+              break
+            fi
+            if [[ "$attempt" == 4 ]]; then
+              echo "npm credential verification failed after 4 bounded attempts" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          for attempt in 1 2 3 4; do
+            if timeout 30s npm view zigcss versions --json --registry=https://registry.npmjs.org/ > "$versions_attempt"; then
+              mv -- "$versions_attempt" "$versions"
+              break
+            fi
+            if [[ "$attempt" == 4 ]]; then
+              echo "npm registry authority readback failed after 4 bounded attempts" >&2
+              exit 1
+            fi
+            sleep 5
+          done
           node scripts/check-npm-version-availability.mjs \
             --version "$version" \
             --versions-file "$versions" \
@@ -101,6 +135,13 @@ jobs:
             --version "$version" \
             --pack-description "$pack_description" \
             --github-output "$GITHUB_OUTPUT"
+
+      - name: Verify exact resumable npm publication
+        if: steps.npm-policy.outputs.already_published == 'true'
+        shell: bash
+        env:
+          NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ steps.npm-package.outputs.archive-name }}
+        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}" --archive "$NPM_PACKAGE_ARCHIVE"
 
       - name: Upload exact npm package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -161,7 +202,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20.19.0'
+          node-version: '24.20.0'
 
       - name: Download exact npm package for smoke
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -322,11 +363,19 @@ jobs:
     needs: [npm-preflight, release]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment:
+      name: immutable-release
     permissions:
+      attestations: read
       contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.20.0'
 
       - name: Download All Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -334,17 +383,49 @@ jobs:
           path: artifacts
           pattern: zigcss-*
 
+      - name: Verify exact local release inventory
+        shell: bash
+        run: |
+          node scripts/verify-github-release-assets.mjs \
+            --assets-directory artifacts \
+            --version "${GITHUB_REF_NAME#v}" \
+            --phase local
+
+      - name: Discover resumable GitHub release state
+        id: github-release-state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_discovery="$RUNNER_TEMP/zigcss-release-discovery.json"
+          repository_owner="${GITHUB_REPOSITORY%%/*}"
+          repository_name="${GITHUB_REPOSITORY#*/}"
+          timeout 60s gh api graphql \
+            -f query='query($owner:String!,$name:String!,$tag:String!){repository(owner:$owner,name:$name){release(tagName:$tag){databaseId,isDraft,isPrerelease,tagName}}}' \
+            -f owner="$repository_owner" \
+            -f name="$repository_name" \
+            -f tag="$GITHUB_REF_NAME" > "$release_discovery"
+          node scripts/verify-github-release-assets.mjs \
+            --release-json "$release_discovery" \
+            --github-output "$GITHUB_OUTPUT" \
+            --version "${GITHUB_REF_NAME#v}" \
+            --phase discovery
+
       - name: Get Version
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+      - name: Create verified draft release
+        id: github-release
+        if: steps.github-release-state.outputs.release-mode != 'published'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: artifacts/**/*
           body: |
-            ## zigcss ${{ steps.version.outputs.VERSION }}
+            ## zigcss v${{ steps.version.outputs.VERSION }}
 
             Self-contained native ZigCSS binaries for CSS, SCSS, indented Sass, Less, and Stylus.
 
@@ -362,14 +443,181 @@ jobs:
 
             The same closed verified optimizer runs directly for CSS and after native frontend evaluation for SCSS, indented Sass, Less, and Stylus. It remains incompatible with source maps, and profiling remains CSS-only. The verified eight-feature target-prefix pass runs after frontend evaluation and any optimizer fixed point for all five syntaxes, requires a strict explicit six-browser minimum query, and does not claim general autoprefixing or Browserslist behavior. Executable preprocessor plugins and project code remain outside the native product contract. Broader compatibility data, alternate ecosystem adapters, and the public compile service retain their documented experimental or unavailable boundaries. Public performance comparisons are withdrawn until a controlled scheduled archive is selected and reproduced by the BENCH-007 publication gate.
 
-          draft: false
+          draft: true
           prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}
+          make_latest: false
+          overwrite_files: true
+          fail_on_unmatched_files: true
+
+      - name: Resolve exact GitHub release ID
+        id: release-identity
+        shell: bash
+        env:
+          CREATED_RELEASE_ID: ${{ steps.github-release.outputs.id }}
+          DISCOVERED_RELEASE_ID: ${{ steps.github-release-state.outputs.release-id }}
+          RELEASE_MODE: ${{ steps.github-release-state.outputs.release-mode }}
+        run: |
+          if [[ "$RELEASE_MODE" == published ]]; then
+            release_id="$DISCOVERED_RELEASE_ID"
+          else
+            release_id="$CREATED_RELEASE_ID"
+          fi
+          if [[ ! "$release_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "GitHub release state returned an invalid release ID" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_MODE" == draft && "$release_id" != "$DISCOVERED_RELEASE_ID" ]]; then
+            echo "GitHub release action did not reconcile the discovered draft ID" >&2
+            exit 1
+          fi
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify draft release identity and assets
+        if: steps.github-release-state.outputs.release-mode != 'published'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release-identity.outputs.release-id }}
+        run: |
+          release_draft="$RUNNER_TEMP/zigcss-release-draft.json"
+          for attempt in 1 2 3 4 5 6; do
+            if timeout 30s gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$release_draft" && \
+              node scripts/verify-github-release-assets.mjs \
+                --release-json "$release_draft" \
+                --assets-directory artifacts \
+                --version "${GITHUB_REF_NAME#v}" \
+                --phase draft; then
+              break
+            fi
+            if [[ "$attempt" == 6 ]]; then
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Publish immutable GitHub release
+        if: steps.github-release-state.outputs.release-mode != 'published'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_MAKE_LATEST: ${{ needs.npm-preflight.outputs.github-make-latest }}
+          GITHUB_PRERELEASE: ${{ needs.npm-preflight.outputs.github-prerelease }}
+          RELEASE_ID: ${{ steps.release-identity.outputs.release-id }}
+        run: |
+          tag_ref="$RUNNER_TEMP/zigcss-release-tag-ref.json"
+          timeout 30s gh api \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" > "$tag_ref"
+          node scripts/verify-github-release-assets.mjs \
+            --tag-ref-json "$tag_ref" \
+            --version "${GITHUB_REF_NAME#v}" \
+            --commit "$GITHUB_SHA" \
+            --phase tag
+          if ! timeout 30s gh api --method PATCH \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+              -F draft=false \
+              -F "prerelease=$GITHUB_PRERELEASE" \
+              -f "make_latest=$GITHUB_MAKE_LATEST" \
+              > "$RUNNER_TEMP/zigcss-release-publish-response.json"; then
+            echo "GitHub release publication response was inconclusive; continuing to authoritative readback" >&2
+          fi
+
+      - name: Verify immutable release readback
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release-identity.outputs.release-id }}
+        run: |
+          release_published="$RUNNER_TEMP/zigcss-release-published.json"
+          tag_ref="$RUNNER_TEMP/zigcss-release-published-tag-ref.json"
+          for attempt in 1 2 3 4 5 6; do
+            if timeout 30s gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" > "$tag_ref" && \
+              timeout 30s gh api \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" > "$release_published" && \
+              node scripts/verify-github-release-assets.mjs \
+                --release-json "$release_published" \
+                --assets-directory artifacts \
+                --tag-ref-json "$tag_ref" \
+                --version "${GITHUB_REF_NAME#v}" \
+                --commit "$GITHUB_SHA" \
+                --phase published; then
+              break
+            fi
+            if [[ "$attempt" == 6 ]]; then
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Verify stable Latest release identity
+        if: needs.npm-preflight.outputs.github-make-latest == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release-identity.outputs.release-id }}
+        run: |
+          release_latest="$RUNNER_TEMP/zigcss-release-latest.json"
+          for attempt in 1 2 3 4 5 6; do
+            if timeout 30s gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/releases/latest" > "$release_latest" && \
+              node scripts/verify-github-release-assets.mjs \
+                --release-json "$release_latest" \
+                --release-id "$RELEASE_ID" \
+                --version "${GITHUB_REF_NAME#v}" \
+                --phase latest; then
+              break
+            fi
+            if [[ "$attempt" == 6 ]]; then
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Verify immutable release attestation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release-identity.outputs.release-id }}
+        run: |
+          release_attestation="$RUNNER_TEMP/zigcss-release-attestation.json"
+          for attempt in 1 2 3 4 5 6; do
+            if timeout 30s gh release verify "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --format json > "$release_attestation" && \
+              node scripts/verify-github-release-assets.mjs \
+                --attestation-json "$release_attestation" \
+                --assets-directory artifacts \
+                --repository "$GITHUB_REPOSITORY" \
+                --release-id "$RELEASE_ID" \
+                --version "${GITHUB_REF_NAME#v}" \
+                --commit "$GITHUB_SHA" \
+                --phase attestation; then
+              exit 0
+            fi
+            if [[ "$attempt" == 6 ]]; then
+              exit 1
+            fi
+            sleep 10
+          done
 
   publish-npm:
     name: Publish to npm
     needs: [npm-preflight, create-release]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -380,7 +628,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20.19.0'
+          node-version: '24.20.0'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Download exact npm package
@@ -401,7 +649,12 @@ jobs:
           NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}
 
       - name: Publish to npm
-        run: npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance
+        if: needs.npm-preflight.outputs.npm-already-published != 'true'
+        shell: bash
+        run: |
+          if ! timeout 300s npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance; then
+            echo "npm publication response was inconclusive; continuing to authoritative readback" >&2
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}
@@ -428,7 +681,7 @@ jobs:
       - name: Setup exact Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20.19.0'
+          node-version: '24.20.0'
 
       - name: Smoke anonymous canonical npm delivery
         run: node scripts/smoke-public-delivery.mjs --version "${GITHUB_REF_NAME#v}"

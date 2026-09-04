@@ -92,7 +92,38 @@ export function resolveArchiveCommand(platform, environment = process.env) {
   ) {
     fail('SystemRoot must be an absolute local drive path without control characters')
   }
-  return path.win32.join(path.win32.normalize(systemRoot), 'System32', 'tar.exe')
+  const normalized = path.win32.normalize(systemRoot).replace(/[\\/]$/, '').toLowerCase()
+  // Convert the environment value to one of a finite set of literal Windows
+  // roots. The spawned command never contains bytes supplied by the runner.
+  switch (normalized) {
+    case 'a:\\windows': return 'A:\\Windows\\System32\\tar.exe'
+    case 'b:\\windows': return 'B:\\Windows\\System32\\tar.exe'
+    case 'c:\\windows': return 'C:\\Windows\\System32\\tar.exe'
+    case 'd:\\windows': return 'D:\\Windows\\System32\\tar.exe'
+    case 'e:\\windows': return 'E:\\Windows\\System32\\tar.exe'
+    case 'f:\\windows': return 'F:\\Windows\\System32\\tar.exe'
+    case 'g:\\windows': return 'G:\\Windows\\System32\\tar.exe'
+    case 'h:\\windows': return 'H:\\Windows\\System32\\tar.exe'
+    case 'i:\\windows': return 'I:\\Windows\\System32\\tar.exe'
+    case 'j:\\windows': return 'J:\\Windows\\System32\\tar.exe'
+    case 'k:\\windows': return 'K:\\Windows\\System32\\tar.exe'
+    case 'l:\\windows': return 'L:\\Windows\\System32\\tar.exe'
+    case 'm:\\windows': return 'M:\\Windows\\System32\\tar.exe'
+    case 'n:\\windows': return 'N:\\Windows\\System32\\tar.exe'
+    case 'o:\\windows': return 'O:\\Windows\\System32\\tar.exe'
+    case 'p:\\windows': return 'P:\\Windows\\System32\\tar.exe'
+    case 'q:\\windows': return 'Q:\\Windows\\System32\\tar.exe'
+    case 'r:\\windows': return 'R:\\Windows\\System32\\tar.exe'
+    case 's:\\windows': return 'S:\\Windows\\System32\\tar.exe'
+    case 't:\\windows': return 'T:\\Windows\\System32\\tar.exe'
+    case 'u:\\windows': return 'U:\\Windows\\System32\\tar.exe'
+    case 'v:\\windows': return 'V:\\Windows\\System32\\tar.exe'
+    case 'w:\\windows': return 'W:\\Windows\\System32\\tar.exe'
+    case 'x:\\windows': return 'X:\\Windows\\System32\\tar.exe'
+    case 'y:\\windows': return 'Y:\\Windows\\System32\\tar.exe'
+    case 'z:\\windows': return 'Z:\\Windows\\System32\\tar.exe'
+    default: fail('SystemRoot must identify a drive-root Windows directory')
+  }
 }
 
 export function resolveArtifact(platform, arch, version) {

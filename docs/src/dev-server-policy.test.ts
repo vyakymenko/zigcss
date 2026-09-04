@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
+import { resolveZigBinaryDirectory } from '../vite.config'
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
 const read = (file: string) => fs.readFileSync(path.join(repoRoot, file), 'utf8')
@@ -37,6 +38,14 @@ function runDevelopmentFixture(root: string, args: string[] = []) {
 }
 
 describe('documentation development server policy', () => {
+  it('allows only the repository and Docker binary directories', () => {
+    expect(resolveZigBinaryDirectory(undefined)).toBe(path.join(repoRoot, 'bin'))
+    expect(resolveZigBinaryDirectory(path.join(repoRoot, 'bin'))).toBe(path.join(repoRoot, 'bin'))
+    expect(resolveZigBinaryDirectory('/app/bin')).toBe('/app/bin')
+    expect(() => resolveZigBinaryDirectory('/tmp/untrusted-bin')).toThrow(/repository bin directory/)
+    expect(() => resolveZigBinaryDirectory('../bin')).toThrow(/repository bin directory/)
+  })
+
   it('has no compiler HTTP middleware and binds to loopback by default', () => {
     const config = read('docs/vite.config.ts')
 
@@ -136,7 +145,9 @@ describe('documentation development server policy', () => {
     expect(source).toContain('fs.unwatchFile(inputPath, listener)')
     const vite = read('docs/vite.config.ts')
     expect(vite).toContain("const binaryName = process.platform === 'win32' ? 'zigcss.exe' : 'zigcss'")
-    expect(vite).toContain('ZIGCSS_DEV_BIN_DIRECTORY must be an absolute normalized path')
+    expect(vite).toContain('if (configured === dockerBinDirectory) return dockerBinDirectory')
+    expect(vite).toContain('ZIGCSS_DEV_BIN_DIRECTORY must be ${dockerBinDirectory} or the repository bin directory')
+    expect(vite).not.toContain('fs.watch(configuredBinDirectory')
     expect(vite).toContain('preserveSymlinks: true')
     expect(vite).toContain("error.code === 'ENOENT') return")
     expect(vite).toContain('zigcss binary directory must be a real directory')

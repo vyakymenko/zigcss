@@ -3,7 +3,7 @@
 This pinned example proves one deliberately narrow integration: Nuxt 4.5.2 loads an external `card.module.scss` file through its Vite builder and `zigcss/vite`, compiles a native `_tokens.scss` dependency with the freshly built binary from the same ZigCSS checkout, rebases a local SVG asset, and carries the CSS Module binding through the production client, Nitro SSR, and prerender builds with source maps enabled.
 
 Run the maintained proof from the repository root with Zig 0.15.2 and Node
-22.22.0:
+24.20.0 LTS:
 
 ```bash
 zig build -Doptimize=ReleaseFast

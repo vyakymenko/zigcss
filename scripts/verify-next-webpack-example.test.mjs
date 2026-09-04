@@ -144,6 +144,12 @@ export function validateExampleContract(contract) {
   assert.match(contract.readme, /does not\s+cover custom Webpack configuration under semver/)
   assert.match(contract.readme, /does not claim\s+development HMR or watch invalidation, a `zigcss\/next` export, stable 0\.6\.0\s+delivery, or compatibility with other Next\.js or Webpack versions/)
   assert.match(contract.preload, /isExactNativeSpawn\(command, args, options\)/)
+  assert.match(contract.preload, /\^zigcss-next-webpack-\(\?:boundary-\)\?\[A-Za-z0-9\]\{6\}\$/)
+  assert.match(contract.preload, /const traceRoot = fs\.realpathSync\(__dirname\)/)
+  assert.match(contract.preload, /function openBoundedRegularFile\(/)
+  assert.match(contract.preload, /function withTraceLock\(action\)/)
+  assert.match(contract.preload, /if \(input !== expected\) fail\(`\$\{label\} must equal its exact staged path`\)/)
+  assert.match(contract.preload, /requiredPreload !== __filename/)
   assert.match(contract.preload, /exactDataArray\(args, \['--internal-node-v1'\]\)/)
   assert.match(contract.preload, /record\('native-spawn'/)
   assert.match(contract.preload, /if \(blockedProcessBindings\.has\(name\)\)/)
@@ -277,9 +283,11 @@ function installEnvironment(temporary, userConfig, inherited = process.env) {
 }
 
 function buildEnvironment(installEnv, temporary, trace, allowedBinary, buildId) {
+  const stagedPreload = path.join(temporary, path.basename(preload))
+  fs.copyFileSync(preload, stagedPreload)
   return {
     ...installEnv,
-    NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+    NODE_OPTIONS: `--require=${JSON.stringify(fs.realpathSync(stagedPreload))}`,
     ZIGCSS_NEXT_WEBPACK_ALLOWED_BINARY: allowedBinary,
     ZIGCSS_NEXT_WEBPACK_BUILD_ID: buildId,
     ZIGCSS_NEXT_WEBPACK_OFFLINE: '1',
@@ -397,12 +405,29 @@ function requireBuildTrace(trace, buildId, buildPid, allowedBinary, requireNativ
 }
 
 function clearTrace(trace) {
-  const before = fs.lstatSync(trace, { bigint: true })
-  fs.writeFileSync(trace, '')
-  const after = fs.lstatSync(trace, { bigint: true })
-  assert.equal(after.dev, before.dev)
-  assert.equal(after.ino, before.ino)
-  assert.equal(after.size, 0n)
+  const descriptor = fs.openSync(
+    trace,
+    fs.constants.O_WRONLY | (fs.constants.O_CLOEXEC ?? 0) |
+      (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  )
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const bound = fs.lstatSync(trace, { bigint: true })
+    assert.equal(opened.isFile(), true)
+    assert.equal(bound.isFile(), true)
+    assert.equal(bound.isSymbolicLink(), false)
+    assert.equal(opened.nlink, 1n)
+    assert.equal(bound.nlink, 1n)
+    assert.equal(opened.dev, bound.dev)
+    assert.equal(opened.ino, bound.ino)
+    fs.ftruncateSync(descriptor, 0)
+    const cleared = fs.fstatSync(descriptor, { bigint: true })
+    assert.equal(cleared.dev, opened.dev)
+    assert.equal(cleared.ino, opened.ino)
+    assert.equal(cleared.size, 0n)
+  } finally {
+    fs.closeSync(descriptor)
+  }
 }
 
 function digestFiles(root, files) {
@@ -484,6 +509,35 @@ test('Next Webpack preload blocks network child-process escapes and wrong native
   fs.writeFileSync(trace, '')
   const buildId = crypto.randomBytes(16).toString('hex')
   const env = buildEnvironment(installEnvironment(temporary, path.join(temporary, 'npmrc')), temporary, trace, binary, buildId)
+  const raceProbeEnv = { ...env }
+  delete raceProbeEnv.NODE_OPTIONS
+  const raceProbe = run(process.execPath, ['-e', [
+    "const fs = require('node:fs')",
+    'const originalLstat = fs.lstatSync',
+    'let appended = false',
+    'fs.lstatSync = function injectedConcurrentAppend(filename, options) {',
+    '  if (!appended && filename === process.argv[2]) { appended = true; fs.appendFileSync(filename, " ") }',
+    '  return originalLstat(filename, options)',
+    '}',
+    "process.env.NODE_OPTIONS = '--require=' + JSON.stringify(process.argv[1])",
+    'require(process.argv[1])',
+  ].join('\n'), path.join(temporary, path.basename(preload)), trace], { env: raceProbeEnv, timeout: 5_000 })
+  requireSuccess(raceProbe, 'concurrent Next Webpack trace metadata mutation probe')
+  const unadmittedTrace = path.join(temporary, 'unadmitted-trace.jsonl')
+  fs.writeFileSync(unadmittedTrace, 'sentinel\n')
+  const deniedTrace = run(process.execPath, ['-e', 'process.exit(0)'], {
+    env: { ...env, ZIGCSS_NEXT_WEBPACK_TRACE: unadmittedTrace },
+    timeout: 5_000,
+  })
+  assert.equal(deniedTrace.status, 1)
+  assert.match(deniedTrace.stderr, /trace file must use an admitted fixed filename/)
+  assert.equal(fs.readFileSync(unadmittedTrace, 'utf8'), 'sentinel\n')
+  const linkedTrace = path.join(temporary, 'linked-trace.jsonl')
+  fs.linkSync(trace, linkedTrace)
+  const deniedLinkedTrace = run(process.execPath, ['-e', 'process.exit(0)'], { env, timeout: 5_000 })
+  assert.equal(deniedLinkedTrace.status, 1)
+  assert.match(deniedLinkedTrace.stderr, /bounded canonical singly-linked regular non-symlink file/)
+  fs.unlinkSync(linkedTrace)
 
   const network = run(process.execPath, ['-e', "require('node:https').get('https://example.com')"], { env, timeout: 5_000 })
   assert.equal(network.status, 1)

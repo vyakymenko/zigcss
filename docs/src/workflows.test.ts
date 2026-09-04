@@ -118,23 +118,23 @@ describe('native artifact workflows', () => {
     expect(workflows.match(/^permissions: \{\}$/gm)).toHaveLength(4)
     expect(buildWorkflow).toMatch(/^name: Build$/m)
     expect(releaseWorkflow).toMatch(/^name: Release$/m)
-    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(46)
+    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(47)
     expect(workflows).not.toMatch(/\n\s+uses: [^\n]+@(?![0-9a-f]{40} # v)/)
     expect(buildWorkflow).toContain(
       'uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31',
     )
     expect(buildWorkflow).toContain('install_url: https://releases.nixos.org/nix/nix-2.35.2/install')
     expect(statusGuide).toContain('Their twelve jobs declare only the access they use')
-    expect(statusGuide).toContain('All 46 action references are pinned')
+    expect(statusGuide).toContain('All 47 action references are pinned')
     expect(statusGuide).toContain('release build job receives attestation and OIDC write access')
   })
 
   test('bounds every release job with an explicit hard timeout', () => {
-    expect(releaseWorkflow.match(/^    timeout-minutes: (?:15|30|45|120)$/gm)).toEqual([
+    expect(releaseWorkflow.match(/^    timeout-minutes: (?:15|30|45|60|120)$/gm)).toEqual([
       '    timeout-minutes: 45',
       '    timeout-minutes: 120',
       '    timeout-minutes: 30',
-      '    timeout-minutes: 30',
+      '    timeout-minutes: 60',
       '    timeout-minutes: 15',
     ])
   })
@@ -183,7 +183,7 @@ describe('native artifact workflows', () => {
   })
 
   test('audits every production graph, the full root development graph, and pinned host locks before native integration', () => {
-    const exactNode = buildWorkflow.indexOf("node-version: '22.22.0'")
+    const exactNode = buildWorkflow.indexOf("node-version: '24.20.0'")
     const extensionInstall = buildWorkflow.indexOf('Install VS Code extension dependencies')
     const policy = buildWorkflow.indexOf('npm run test:dependencies', extensionInstall)
     const audit = buildWorkflow.indexOf('npm run audit:production', policy)
@@ -264,7 +264,7 @@ describe('native artifact workflows', () => {
     expect(realBinary).toBeGreaterThan(buildSystemsStep)
     expect(requiredBuildSystems).toBeGreaterThan(realBinary)
     expect(buildSystems).toBeGreaterThan(requiredBuildSystems)
-    expect(statusGuide).toContain("The ordinary build workflow's Test job uses exact Node 22.22.0")
+    expect(statusGuide).toContain("The ordinary build workflow's Test job uses exact Node 24.20.0 LTS")
     expect(statusGuide).toContain('the seven owned production dependency audits, one complete root development audit, the complete documentation and VS Code build-graph audits, and the four full pinned Next.js, SvelteKit, Astro, and Nuxt host-lock audits')
     expect(statusGuide).toContain('The audit order is production graphs, root development graph, documentation and VS Code build graphs, then the four host locks')
     expect(statusGuide).toContain('the four full pinned Next.js, SvelteKit, Astro, and Nuxt host-lock audits')
@@ -378,7 +378,7 @@ describe('native artifact workflows', () => {
     const tagInterlock = releaseWorkflow.indexOf('- name: Verify release candidate admission')
     const npmAuthority = releaseWorkflow.indexOf('npm whoami')
     const npmPublish = releaseWorkflow.indexOf(
-      'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+      'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --registry=https://registry.npmjs.org/ --provenance',
     )
 
     expect(nativeContract).toBeGreaterThan(releaseMetadata)

@@ -14,6 +14,7 @@ const scriptPath = fileURLToPath(import.meta.url)
 const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 const version = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
 const maximumOutputBytes = 8 * 1024 * 1024
+const maximumToolBytes = 512 * 1024 * 1024
 const defaultTimeoutMs = 5 * 60 * 1000
 
 function run(command, args, options = {}) {
@@ -60,34 +61,78 @@ function copyContextFile(context, relativePath) {
   fs.copyFileSync(path.join(repositoryRoot, relativePath), destination, fs.constants.COPYFILE_EXCL)
 }
 
-function executable(filename) {
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs
+}
+
+function validatedExecutable(filename) {
+  let descriptor
   try {
-    const stat = fs.lstatSync(filename)
-    fs.accessSync(filename, fs.constants.X_OK)
-    return stat.isFile() && !stat.isSymbolicLink()
+    const canonical = fs.realpathSync(filename)
+    descriptor = fs.openSync(
+      canonical,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(canonical, { bigint: true })
+    if (
+      !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      !sameFileIdentity(opened, pathStat) || opened.size <= 0n ||
+      opened.size > BigInt(maximumToolBytes)
+    ) return undefined
+    if (process.platform !== 'win32' && (opened.mode & 0o111n) === 0n) return undefined
+    return canonical
   } catch {
-    return false
+    return undefined
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
   }
 }
 
-function findZig() {
-  const pathEntries = (process.env.PATH ?? '').split(path.delimiter)
-  for (const entry of pathEntries.slice(0, 1024)) {
-    if (entry.length === 0 || !path.isAbsolute(entry)) continue
-    const candidate = path.join(entry, process.platform === 'win32' ? 'zig.exe' : 'zig')
-    if (executable(candidate)) return candidate
-  }
-
-  const localRoot = path.join(os.homedir(), '.local', 'share', 'zig')
+export function releaseContainerZigCandidates(home = os.homedir()) {
+  const binaryName = process.platform === 'win32' ? 'zig.exe' : 'zig'
+  const candidates = [
+    '/usr/bin/zig',
+    '/usr/local/bin/zig',
+    '/opt/homebrew/bin/zig',
+    '/opt/local/bin/zig',
+    '/nix/var/nix/profiles/default/bin/zig',
+    path.join(home, '.local', 'bin', binaryName),
+    path.join(home, '.nix-profile', 'bin', binaryName),
+    'C:\\Program Files\\zig\\zig.exe',
+    'C:\\ProgramData\\chocolatey\\bin\\zig.exe',
+    '/home/runner/work/_temp/zigcss-zig-tool/zig-x86_64-linux-0.15.2/zig',
+    '/home/runner/work/_temp/zigcss-zig-tool/zig-aarch64-linux-0.15.2/zig',
+    '/Users/runner/work/_temp/zigcss-zig-tool/zig-x86_64-macos-0.15.2/zig',
+    '/Users/runner/work/_temp/zigcss-zig-tool/zig-aarch64-macos-0.15.2/zig',
+    'D:\\a\\_temp\\zigcss-zig-tool\\zig-x86_64-windows-0.15.2\\zig.exe',
+  ]
+  const localRoot = path.join(home, '.local', 'share', 'zig')
   let entries = []
   try {
     entries = fs.readdirSync(localRoot, { withFileTypes: true })
   } catch {
-    // The required tool error below is more useful than an optional fallback error.
+    // The caller reports the required tool after all deterministic candidates are exhausted.
   }
-  for (const entry of entries.filter(item => item.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))) {
-    const candidate = path.join(localRoot, entry.name, process.platform === 'win32' ? 'zig.exe' : 'zig')
-    if (executable(candidate) && run(candidate, ['version']).trim() === '0.15.2') return candidate
+  for (const entry of entries
+    .filter(item => item.isDirectory() && !item.isSymbolicLink())
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    candidates.push(path.join(localRoot, entry.name, binaryName))
+  }
+  return [...new Set(candidates.filter(candidate => path.isAbsolute(candidate)))]
+}
+
+export function findZig(candidates = releaseContainerZigCandidates()) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || !path.isAbsolute(candidate)) continue
+    const executable = validatedExecutable(candidate)
+    if (executable !== undefined && run(executable, ['version']).trim() === '0.15.2') {
+      return executable
+    }
   }
   throw new Error('tested Zig 0.15.2 executable is unavailable')
 }
@@ -108,7 +153,7 @@ function findBuildxPlugin() {
     } catch {
       continue
     }
-    if (executable(canonical)) return canonical
+    if (validatedExecutable(canonical) !== undefined) return canonical
   }
   throw new Error('Docker Buildx plugin is unavailable')
 }

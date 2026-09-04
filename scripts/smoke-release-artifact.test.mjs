@@ -23,22 +23,70 @@ import { expectedPackedFiles } from './validate-preprocessor-package.mjs'
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const repositoryInstaller = createRequire(import.meta.url)(path.join(repositoryRoot, 'install.js'))
 
+function fixtureWindowsSystemRoot(configured = process.env.SystemRoot) {
+  const normalized = typeof configured === 'string'
+    ? path.win32.normalize(configured).replace(/[\\/]$/, '').toLowerCase()
+    : ''
+  switch (normalized) {
+    case 'a:\\windows': return 'A:\\Windows'
+    case 'b:\\windows': return 'B:\\Windows'
+    case 'c:\\windows': return 'C:\\Windows'
+    case 'd:\\windows': return 'D:\\Windows'
+    case 'e:\\windows': return 'E:\\Windows'
+    case 'f:\\windows': return 'F:\\Windows'
+    case 'g:\\windows': return 'G:\\Windows'
+    case 'h:\\windows': return 'H:\\Windows'
+    case 'i:\\windows': return 'I:\\Windows'
+    case 'j:\\windows': return 'J:\\Windows'
+    case 'k:\\windows': return 'K:\\Windows'
+    case 'l:\\windows': return 'L:\\Windows'
+    case 'm:\\windows': return 'M:\\Windows'
+    case 'n:\\windows': return 'N:\\Windows'
+    case 'o:\\windows': return 'O:\\Windows'
+    case 'p:\\windows': return 'P:\\Windows'
+    case 'q:\\windows': return 'Q:\\Windows'
+    case 'r:\\windows': return 'R:\\Windows'
+    case 's:\\windows': return 'S:\\Windows'
+    case 't:\\windows': return 'T:\\Windows'
+    case 'u:\\windows': return 'U:\\Windows'
+    case 'v:\\windows': return 'V:\\Windows'
+    case 'w:\\windows': return 'W:\\Windows'
+    case 'x:\\windows': return 'X:\\Windows'
+    case 'y:\\windows': return 'Y:\\Windows'
+    case 'z:\\windows': return 'Z:\\Windows'
+    default: throw new Error('test fixture requires the finite Windows system directory')
+  }
+}
+
 function localNpmCliPath() {
   const executableDirectory = path.dirname(process.execPath)
   const candidates = [
-    process.env.npm_execpath,
     path.resolve(executableDirectory, '../lib/node_modules/npm/bin/npm-cli.js'),
     path.resolve(executableDirectory, '../node_modules/npm/bin/npm-cli.js'),
     path.resolve(executableDirectory, 'node_modules/npm/bin/npm-cli.js'),
-  ].filter(candidate => typeof candidate === 'string' && candidate.length > 0)
+  ]
   for (const candidate of candidates) {
+    let descriptor
     try {
-      const stat = fs.lstatSync(candidate)
-      if ((stat.isFile() || stat.isSymbolicLink()) && fs.statSync(candidate).isFile()) {
-        return fs.realpathSync(candidate)
-      }
+      const canonical = fs.realpathSync(candidate)
+      descriptor = fs.openSync(
+        canonical,
+        fs.constants.O_RDONLY |
+          (fs.constants.O_NOFOLLOW ?? 0) |
+          (fs.constants.O_NONBLOCK ?? 0) |
+          (fs.constants.O_CLOEXEC ?? 0),
+      )
+      const opened = fs.fstatSync(descriptor, { bigint: true })
+      const pathStat = fs.lstatSync(canonical, { bigint: true })
+      if (
+        opened.isFile() && pathStat.isFile() && !pathStat.isSymbolicLink() &&
+        opened.dev === pathStat.dev && opened.ino === pathStat.ino &&
+        opened.size === pathStat.size && opened.size > 0n && opened.size <= 16n * 1024n * 1024n
+      ) return canonical
     } catch {
       // Try only the next path adjacent to the already-running Node executable.
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor)
     }
   }
   throw new Error('npm CLI is unavailable beside the active Node executable')
@@ -60,11 +108,10 @@ function runtimeTraceFixture(temporary) {
   fs.writeFileSync(path.join(temporary, checksums), 'manifest fixture')
   fs.writeFileSync(trace, '')
   const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
-  const nativeInput = process.platform === 'win32'
-    ? process.env.ComSpec
-    : '/bin/sh'
-  assert.equal(typeof nativeInput, 'string')
-  const nativeSource = fs.realpathSync(nativeInput)
+  const nativeSource = fs.realpathSync(lifecycleShellExecutable(
+    process.platform,
+    process.platform === 'win32' ? fixtureWindowsSystemRoot() : undefined,
+  ))
   // Apple platform binaries retain an arm64e signature that the kernel kills
   // after copying. The system shell is already a regular non-symlink file on
   // macOS; hosted release smokes still exercise the real extracted Zig binary.
@@ -100,6 +147,26 @@ function runtimeTraceFixture(temporary) {
     },
   }
 }
+
+test('release smoke preload rejects asset roots outside its finite fixture roots', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-root-denial-'))
+  try {
+    const fixture = runtimeTraceFixture(temporary)
+    const result = spawnSync(process.execPath, ['-e', "process.stdout.write('unexpected')"], {
+      encoding: 'utf8',
+      env: {
+        ...fixture.env,
+        ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: path.parse(repositoryRoot).root,
+      },
+    })
+    assert.equal(result.error, undefined)
+    assert.notEqual(result.status, 0)
+    assert.equal(result.stdout, '')
+    assert.match(result.stderr, /asset root must be the repository assets or remain inside the smoke temporary root/)
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})
 
 function archiveFilesystem({
   mode = 0o100755,
@@ -187,7 +254,7 @@ function windowsSystemFilesystem({
       if (name === undefined) throw new Error(`unexpected lstat ${candidate}`)
       const calls = (lstatCalls.get(name) ?? 0) + 1
       lstatCalls.set(name, calls)
-      return identity(name, replaced === name && calls > 1)
+      return identity(name, replaced === name && (name === 'file' || calls > 1))
     },
     openSync(candidate) {
       assert.equal(classify(candidate), 'file')
@@ -206,7 +273,9 @@ function windowsSystemFilesystem({
 
 test('release smoke selects only finite verified absolute system archive readers', () => {
   if (process.platform === 'linux' || process.platform === 'darwin') {
-    const executable = archiveExecutable(process.platform)
+    const executable = process.platform === 'linux'
+      ? archiveExecutable('linux', undefined)
+      : archiveExecutable('darwin', undefined)
     assert.equal(path.posix.isAbsolute(executable), true)
     assert.notEqual(executable, 'tar')
     const resolved = fs.realpathSync(executable)
@@ -730,6 +799,44 @@ test('npm lifecycle preload serves only the two exact local release URLs', () =>
   }
 })
 
+test('npm lifecycle preload serves descriptor-admitted assets through Yarn PnP fs interposition', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-preload-pnp-'))
+  try {
+    const archive = 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz'
+    const checksums = 'zigcss-v0.6.0-rc.2-aarch64-macos.sha256'
+    fs.writeFileSync(path.join(temporary, archive), 'archive fixture')
+    fs.writeFileSync(path.join(temporary, checksums), 'manifest fixture')
+    const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
+    const result = spawnSync(process.execPath, ['-e', [
+      "const fs = require('node:fs')",
+      "const https = require('node:https')",
+      "fs.createReadStream = pathValue => { throw new Error(pathValue === undefined ? 'Unsupported path type' : 'unexpected path reopen') }",
+      `https.get('https://github.com/vyakymenko/zigcss/releases/download/v0.6.0-rc.2/${archive}', response => {`,
+      "  let text = ''",
+      "  response.setEncoding('utf8')",
+      "  response.on('data', chunk => { text += chunk })",
+      "  response.on('end', () => process.stdout.write(text))",
+      "}).on('error', error => { throw error })",
+    ].join('\n')], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require="${preload}"`,
+        ZIGCSS_RELEASE_SMOKE: '1',
+        ZIGCSS_RELEASE_SMOKE_ARCHIVE: archive,
+        ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: temporary,
+        ZIGCSS_RELEASE_SMOKE_CHECKSUMS: checksums,
+        ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.2',
+      },
+    })
+    assert.equal(result.error, undefined)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, 'archive fixture')
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})
+
 test('npm lifecycle preload admits only one exact installer and its two trusted archive operations', t => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-lifecycle-'))
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
@@ -1014,15 +1121,17 @@ test('offline installed native package runtime trace admits one native child and
       "const workerThreads = require('node:worker_threads')",
       'const codes = []',
       'const networkCodes = []',
+      'const native = process.env.ZIGCSS_RELEASE_SMOKE_RUNTIME_BINARY',
+      "const nativeArgs = process.platform === 'win32' ? ['/d', '/s', '/c', 'exit 0'] : ['-c', 'exit 0']",
       "const capture = (target, operation) => { try { operation(); target.push('unexpected') } catch (error) { target.push(error.code) } }",
       "const nonCanonicalStdio = ['pipe', 'pipe', 'pipe']",
       'nonCanonicalStdio.extra = true',
       "capture(codes, () => childProcess.spawnSync(process.execPath, ['--version']))",
-      `capture(codes, () => new childProcess.ChildProcess().spawn({ file: ${JSON.stringify(fixture.native)}, args: ${JSON.stringify([fixture.native, ...fixture.nativeArgs])}, cwd: process.cwd(), stdio: 'inherit' }))`,
-      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ${JSON.stringify(fixture.nativeArgs)}, { stdio: 'inherit', cwd: process.cwd(), shell: ${JSON.stringify(fixture.native)} }))`,
-      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ['--internal-node-v1', 'extra'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }))`,
-      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ['--internal-node-v1'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], cwd: process.cwd() }))`,
-      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ['--internal-node-v1'], { shell: false, windowsHide: true, stdio: nonCanonicalStdio }))`,
+      "capture(codes, () => new childProcess.ChildProcess().spawn({ file: native, args: [native, ...nativeArgs], cwd: process.cwd(), stdio: 'inherit' }))",
+      "capture(codes, () => childProcess.spawn(native, nativeArgs, { stdio: 'inherit', cwd: process.cwd(), shell: native }))",
+      "capture(codes, () => childProcess.spawn(native, ['--internal-node-v1', 'extra'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }))",
+      "capture(codes, () => childProcess.spawn(native, ['--internal-node-v1'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], cwd: process.cwd() }))",
+      "capture(codes, () => childProcess.spawn(native, ['--internal-node-v1'], { shell: false, windowsHide: true, stdio: nonCanonicalStdio }))",
       "capture(codes, () => new workerThreads.Worker('require(\\\"node:net\\\").createServer().listen(0)', { eval: true, execArgv: [], env: {} }))",
       "capture(codes, () => cluster.fork())",
       "capture(codes, () => process.binding('spawn_sync'))",

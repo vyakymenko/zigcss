@@ -378,12 +378,13 @@ test('diagnostic locations reject unsafe files without exposing partial source t
   const originalOpenSync = fs.openSync
   let swapped = false
   fs.openSync = function hardenedDiagnosticRace(filename, ...args) {
+    const descriptor = originalOpenSync.call(this, filename, ...args)
     if (!swapped && filename === raced) {
       swapped = true
       fs.renameSync(raced, displaced)
       fs.renameSync(replacement, raced)
     }
-    return originalOpenSync.call(this, filename, ...args)
+    return descriptor
   }
   try {
     assert.equal(await locationFor(raced), null)

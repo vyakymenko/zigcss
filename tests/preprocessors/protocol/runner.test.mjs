@@ -8,6 +8,7 @@ import {
   runPreprocessorHost,
   sanitizedHostEnvironment,
 } from '../../../preprocessor/runner.mjs'
+import { sanitizeRuntimeEnvironment } from '../../../preprocessor/environment.mjs'
 import { parseSourceMap } from '../../../preprocessor/source-map.mjs'
 import { makeRequest } from './helpers.mjs'
 
@@ -183,6 +184,20 @@ test('process supervisor cancellation kills the owned provider process', async (
 })
 
 test('host environment is deterministic and strips Node injection surfaces', async () => {
+  const hostileEnvironment = {
+    HOME: '/secret/home',
+    NODE_OPTIONS: '--require=/tmp/inject.cjs',
+    PATH: '/untrusted/bin',
+    TMPDIR: '/private/tmp',
+  }
+  assert.deepEqual(sanitizeRuntimeEnvironment(hostileEnvironment), {
+    LANG: 'C',
+    LC_ALL: 'C',
+    TZ: 'UTC',
+    TMPDIR: '/private/tmp',
+  })
+  assert.equal(hostileEnvironment.NODE_OPTIONS, '--require=/tmp/inject.cjs')
+
   assert.deepEqual(
     sanitizedHostEnvironment({
       HOME: '/secret/home',

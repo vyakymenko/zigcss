@@ -71,7 +71,11 @@ test('validation fails closed on content drift, extra files, and symlinks', () =
     fs.rmSync(path.join(root, 'benchmarks/corpora/v1/unowned.css'))
     fs.rmSync(small)
     fs.symlinkSync(path.join(root, 'benchmarks/corpora/v1/medium.css'), small)
-    assert.throws(() => validateRepository(root), /corpus entry must be a regular non-symlink file/)
+    assert.throws(() => validateRepository(root), /corpus entry .* must be a regular non-symlink file/)
+
+    fs.rmSync(small)
+    fs.writeFileSync(small, Buffer.alloc((1024 * 1024) + 1))
+    assert.throws(() => validateRepository(root), /must contain 1 through 1048576 bytes/)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

@@ -61,8 +61,13 @@ test('build-system examples expose four bounded depfile integrations', () => {
   assert.match(meson, /depfile: 'styles\.css\.d'/)
   assert.match(meson, /input: 'styles\.scss'/)
 
-  for (const host of ['GNU Make', 'Ninja', 'CMake 3.20+', 'Meson 0.47+']) {
-    assert.match(guide, new RegExp(host.replace(/[+.]/g, '\\$&')))
+  for (const expression of [
+    /GNU Make/,
+    /Ninja/,
+    /CMake 3\.20\+/,
+    /Meson 0\.47\+/,
+  ]) {
+    assert.match(guide, expression)
   }
   assert.match(guide, /unchanged second build is a no-op/)
   assert.match(guide, /reports unavailable builders as explicit skips/)
@@ -158,6 +163,30 @@ function firstAvailable(candidates) {
   return null
 }
 
+function makeCandidates(configured = process.env.MAKE) {
+  switch (configured) {
+    case undefined:
+    case '':
+      return ['gmake', 'make']
+    case 'gmake':
+      return ['gmake']
+    case 'make':
+      return ['make']
+    case '/usr/bin/make':
+      return ['/usr/bin/make']
+    case '/usr/local/bin/gmake':
+      return ['/usr/local/bin/gmake']
+    case '/opt/homebrew/bin/gmake':
+      return ['/opt/homebrew/bin/gmake']
+    case '/opt/local/bin/gmake':
+      return ['/opt/local/bin/gmake']
+    case 'C:\\ProgramData\\chocolatey\\bin\\make.exe':
+      return ['C:\\ProgramData\\chocolatey\\bin\\make.exe']
+    default:
+      throw new Error('MAKE must select a finite reviewed GNU Make command')
+  }
+}
+
 function versionAtLeast(value, minimum) {
   const actual = value.split('.').map(part => Number.parseInt(part, 10))
   for (let index = 0; index < minimum.length; index += 1) {
@@ -174,7 +203,7 @@ function versionedTool(command, args, pattern, minimum) {
   return match && versionAtLeast(match[1], minimum) ? command : null
 }
 
-const makeTool = firstAvailable([process.env.MAKE, 'gmake', 'make'])
+const makeTool = firstAvailable(makeCandidates())
 const ninjaTool = versionedTool('ninja', ['--version'], /(\d+(?:\.\d+)+)/, [1, 3])
 const cmakeTool = versionedTool('cmake', ['--version'], /cmake version (\d+(?:\.\d+)+)/i, [3, 20])
 const mesonTool = versionedTool('meson', ['--version'], /(\d+(?:\.\d+)+)/, [0, 47])
@@ -257,8 +286,42 @@ function runChecked(command, args, cwd, env) {
 }
 
 function invocationCount(log) {
-  if (!fs.existsSync(log)) return 0
-  return fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).length
+  try {
+    return stableFileSnapshot(log).bytes.toString('utf8').trim().split('\n').filter(Boolean).length
+  } catch (error) {
+    if (error.code === 'ENOENT') return 0
+    throw error
+  }
+}
+
+function stableFileSnapshot(filename) {
+  let descriptor
+  try {
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const before = fs.fstatSync(descriptor, { bigint: true })
+    if (!before.isFile() || before.size > 256n * 1024n * 1024n) {
+      throw new Error(`fixture output is not a bounded regular file: ${filename}`)
+    }
+    const bytes = fs.readFileSync(descriptor)
+    const after = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(filename, { bigint: true })
+    if (
+      !after.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs ||
+      after.dev !== pathStat.dev || after.ino !== pathStat.ino ||
+      after.size !== pathStat.size || BigInt(bytes.length) !== after.size
+    ) throw new Error(`fixture output changed while it was being read: ${filename}`)
+    return { bytes, mtimeNs: after.mtimeNs }
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+  }
 }
 
 function prepareMake(fixture) {
@@ -316,20 +379,20 @@ function exerciseIncrementalBuild(name, prepare) {
     const build = prepare(fixture)
     build.run()
     assert.equal(invocationCount(fixture.log), 1)
-    assert.equal(fs.readFileSync(build.output, 'utf8'), '.card{color:rebeccapurple}\n')
+    assert.equal(stableFileSnapshot(build.output).bytes.toString('utf8'), '.card{color:rebeccapurple}\n')
 
     build.run()
     assert.equal(invocationCount(fixture.log), 1, 'an unchanged build must be a no-op')
 
     const dependency = path.join(fixture.workspace, '_tokens.scss')
     fs.writeFileSync(dependency, '$accent: hotpink;\n')
-    const outputMtime = fs.statSync(build.output).mtimeMs
+    const outputMtime = Number(stableFileSnapshot(build.output).mtimeNs / 1_000_000n)
     const changedMtime = Math.max(Date.now(), outputMtime) + 5_000
     fs.utimesSync(dependency, changedMtime / 1_000, changedMtime / 1_000)
 
     build.run()
     assert.equal(invocationCount(fixture.log), 2, 'a native dependency change must rebuild')
-    assert.equal(fs.readFileSync(build.output, 'utf8'), '.card{color:hotpink}\n')
+    assert.equal(stableFileSnapshot(build.output).bytes.toString('utf8'), '.card{color:hotpink}\n')
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }
@@ -340,14 +403,16 @@ function exerciseRealIncrementalBuild(name, prepare) {
   try {
     const build = prepare(fixture)
     build.run()
-    const firstCss = fs.readFileSync(build.output)
+    const firstSnapshot = stableFileSnapshot(build.output)
+    const firstCss = firstSnapshot.bytes
     assert.match(firstCss.toString(), /\.card\{color:/)
-    const firstMtime = fs.statSync(build.output, { bigint: true }).mtimeNs
+    const firstMtime = firstSnapshot.mtimeNs
 
     build.run()
-    assert.deepEqual(fs.readFileSync(build.output), firstCss, 'an unchanged real build must preserve CSS bytes')
+    const unchangedSnapshot = stableFileSnapshot(build.output)
+    assert.deepEqual(unchangedSnapshot.bytes, firstCss, 'an unchanged real build must preserve CSS bytes')
     assert.equal(
-      fs.statSync(build.output, { bigint: true }).mtimeNs,
+      unchangedSnapshot.mtimeNs,
       firstMtime,
       'an unchanged real build must not rewrite the output',
     )
@@ -357,7 +422,11 @@ function exerciseRealIncrementalBuild(name, prepare) {
     const changedMtime = Math.max(Date.now(), Number(firstMtime / 1_000_000n)) + 5_000
     fs.utimesSync(dependency, changedMtime / 1_000, changedMtime / 1_000)
     build.run()
-    assert.notDeepEqual(fs.readFileSync(build.output), firstCss, 'a real native dependency rebuild must change CSS bytes')
+    assert.notDeepEqual(
+      stableFileSnapshot(build.output).bytes,
+      firstCss,
+      'a real native dependency rebuild must change CSS bytes',
+    )
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }
@@ -367,19 +436,63 @@ test('GNU Make consumes the emitted native dependency graph', {
   skip: makeTool ? false : 'GNU Make is not installed',
 }, () => exerciseIncrementalBuild('make', prepareMake))
 
-const configuredRealCompiler = process.env.ZIGCSS_REAL_BINARY || null
+function admittedRealCompiler(configured = process.env.ZIGCSS_REAL_BINARY) {
+  if (configured === undefined || configured === '') return null
+  const expected = path.join(
+    repositoryRoot,
+    'zig-out',
+    'bin',
+    process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
+  )
+  if (configured !== expected) {
+    throw new Error('ZIGCSS_REAL_BINARY must identify the repository ReleaseFast binary')
+  }
+  let descriptor
+  try {
+    const canonical = fs.realpathSync(expected)
+    if (canonical !== expected) throw new Error('ZIGCSS_REAL_BINARY cannot resolve through a symlink')
+    descriptor = fs.openSync(
+      expected,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const pathStat = fs.lstatSync(expected, { bigint: true })
+    if (
+      !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
+      opened.dev !== pathStat.dev || opened.ino !== pathStat.ino ||
+      opened.size !== pathStat.size || opened.mtimeNs !== pathStat.mtimeNs ||
+      opened.ctimeNs !== pathStat.ctimeNs || opened.size <= 0n || opened.size > 256n * 1024n * 1024n
+    ) throw new Error('ZIGCSS_REAL_BINARY must be a bounded stable regular file')
+    if (process.platform !== 'win32' && (opened.mode & 0o111n) === 0n) {
+      throw new Error('ZIGCSS_REAL_BINARY must be executable')
+    }
+    return expected
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
+  }
+}
+
+const configuredRealCompiler = admittedRealCompiler()
+
+test('build harness admits only reviewed executable overrides', () => {
+  assert.deepEqual(makeCandidates('/usr/bin/make'), ['/usr/bin/make'])
+  assert.throws(
+    () => makeCandidates(path.join(os.tmpdir(), 'attacker-controlled-make')),
+    /finite reviewed GNU Make command/,
+  )
+  assert.throws(
+    () => admittedRealCompiler(path.join(os.tmpdir(), 'attacker-controlled-zigcss')),
+    /repository ReleaseFast binary/,
+  )
+})
 
 test('real ZigCSS depfile drives GNU Make incremental rebuild', {
   skip: configuredRealCompiler ? false : 'ZIGCSS_REAL_BINARY is not configured',
 }, () => {
   assert.notEqual(makeTool, null, 'GNU Make is required when ZIGCSS_REAL_BINARY is configured')
-  assert.equal(path.isAbsolute(configuredRealCompiler), true, 'ZIGCSS_REAL_BINARY must be absolute')
-  const compilerStat = fs.lstatSync(configuredRealCompiler)
-  assert.equal(compilerStat.isFile(), true, 'ZIGCSS_REAL_BINARY must be a regular file')
-  assert.equal(compilerStat.isSymbolicLink(), false, 'ZIGCSS_REAL_BINARY cannot be a symlink')
-  if (process.platform !== 'win32') {
-    assert.notEqual(compilerStat.mode & 0o111, 0, 'ZIGCSS_REAL_BINARY must be executable')
-  }
 
   const fixture = createFixture('real-make')
   try {

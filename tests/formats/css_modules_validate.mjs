@@ -4,11 +4,21 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const { transform } = require('lightningcss')
 const validatorPackage = JSON.parse(
   fs.readFileSync(path.join(path.dirname(require.resolve('lightningcss')), '..', 'package.json'), 'utf8'),
+)
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const exactDriver = path.join(
+  repositoryRoot,
+  'zig-out',
+  'bin',
+  process.platform === 'win32'
+    ? 'zigcss-css-modules-test-driver.exe'
+    : 'zigcss-css-modules-test-driver',
 )
 
 function fail(message) {
@@ -46,9 +56,10 @@ function expectedName(sourceName, className) {
 }
 
 function runDriver(driver, input, sourceName, minified) {
+  if (driver !== exactDriver) fail('CSS Modules driver escaped the exact repository test binary')
   const args = [input, sourceName]
   if (minified) args.push('--minify')
-  const result = spawnSync(driver, args, {
+  const result = spawnSync(exactDriver, args, {
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024,
   })

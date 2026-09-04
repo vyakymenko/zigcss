@@ -209,16 +209,16 @@ export async function verifyBuildWorkflowRun({ repository, commit, token }, opti
 
 function parseArgs(args) {
   if (args.length !== 4) fail('usage: --repository owner/name --commit exact-sha')
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
-    if (!['--repository', '--commit'].includes(name) || value === undefined || Object.hasOwn(values, name)) {
+    if (!['--repository', '--commit'].includes(name) || value === undefined || values.has(name)) {
       fail('usage: --repository owner/name --commit exact-sha')
     }
-    values[name] = value
+    values.set(name, value)
   }
-  if (values['--repository'] === undefined || values['--commit'] === undefined) {
+  if (!values.has('--repository') || !values.has('--commit')) {
     fail('usage: --repository owner/name --commit exact-sha')
   }
   return values
@@ -227,8 +227,8 @@ function parseArgs(args) {
 async function main() {
   const values = parseArgs(process.argv.slice(2))
   const result = await verifyBuildWorkflowRun({
-    repository: values['--repository'],
-    commit: values['--commit'],
+    repository: values.get('--repository'),
+    commit: values.get('--commit'),
     token: process.env.GITHUB_TOKEN,
   })
   process.stdout.write(

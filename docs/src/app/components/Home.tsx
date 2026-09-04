@@ -13,7 +13,7 @@ const deploymentModes = [
     id: "npm",
     label: "npm",
     code: `${installCommand}\nnpx zigcss input.css -o output.css --minify`,
-    note: "Stable 0.6.0 is published on npm latest from the exact immutable release workflow.",
+    note: "Stable 0.6.0 is published on npm latest from the exact verified promotion workflow.",
   },
   {
     id: "source",
@@ -299,7 +299,7 @@ export function Home() {
             <div>
               <p className="max-w-3xl text-xl leading-8 text-[#cdd6cb] sm:text-2xl">Compile CSS. Keep the meaning.</p>
               <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#81907f] sm:text-sm">
-                A self-contained five-language compiler written in Zig. Stable 0.6.0 is published from one immutable release workflow; all five source inputs run through native Zig frontends. Comparative speed claims remain locked until controlled Linux x64 evidence exists.
+                A self-contained five-language compiler written in Zig. Stable 0.6.0 is published from one verified promotion workflow; all five source inputs run through native Zig frontends. Comparative speed claims remain locked until controlled Linux x64 evidence exists.
               </p>
             </div>
             <a href="#convergence" className="terminal-link justify-self-start font-mono text-sm uppercase tracking-[0.16em] text-[#b7f34a] lg:justify-self-end">five inputs converge ↓</a>

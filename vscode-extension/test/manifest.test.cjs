@@ -27,7 +27,7 @@ test('extension identity and dependency versions are synchronized and exact', ()
   assert.equal(manifest.version, rootManifest.version.split('-')[0])
   assert.equal(manifest.preview, true)
   assert.match(read('scripts/verify-package.mjs'), /'--pre-release'/)
-  assert.match(zigManifest, new RegExp(`\\.version = "${rootManifest.version.replaceAll('.', '\\.')}"`))
+  assert.equal(/\.version\s*=\s*"([^"]+)"/.exec(zigManifest)?.[1], rootManifest.version)
   assert.equal(lock.packages[''].version, manifest.version)
   assert.equal(manifest.engines.vscode, languageClient.engines.vscode)
   for (const version of [
@@ -85,8 +85,9 @@ test('compile, test, bundle, package, and clean scripts are explicit', () => {
   assert.match(manifest.scripts.clean, /clean\.mjs/)
 
   const ignored = read('.vscodeignore')
+  const ignoredLines = ignored.split(/\r?\n/)
   for (const excluded of ['src/**', 'test/**', 'scripts/**', 'out/**', 'node_modules/**']) {
-    assert.match(ignored, new RegExp(`^${excluded.replaceAll('*', '\\*')}$`, 'm'))
+    assert.equal(ignoredLines.includes(excluded), true, `missing exact ignore entry ${excluded}`)
   }
   assert.match(ignored, /!dist\/extension\.js/)
 })

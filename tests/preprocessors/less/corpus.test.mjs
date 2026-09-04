@@ -13,6 +13,7 @@ import {
   createLessProvider,
 } from '../../../preprocessor/providers/less.mjs'
 import { makeRequest } from '../protocol/helpers.mjs'
+import { readStableRegularFile } from '../../../scripts/bounded-filesystem.mjs'
 
 const require = createRequire(import.meta.url)
 const { transform } = require('lightningcss')
@@ -323,10 +324,12 @@ test('runs exact Less 4.9.0 against the frozen official Less 4.6.7 corpus', () =
     assert.equal(file.source, `packages/test-data/${file.path}`)
     assert.doesNotMatch(file.path, /(?:^|\/)\.\.(?:\/|$)|\\|[\u0000\r\n]/)
     const filename = path.join(filesRoot, ...file.path.split('/'))
-    const stat = fs.lstatSync(filename)
-    assert.equal(stat.isFile(), true, file.path)
-    assert.equal(stat.isSymbolicLink(), false, file.path)
-    const bytes = fs.readFileSync(filename)
+    const bytes = readStableRegularFile(filename, {
+      allowEmpty: true,
+      label: file.path,
+      maximumBytes: Math.max(file.bytes, 1),
+      reject: assert.fail,
+    })
     assert.equal(bytes.length, file.bytes, `${file.path}: size`)
     assert.equal(sha256(bytes), file.sha256, `${file.path}: checksum`)
     expectedInventory.push(file.path)
@@ -335,10 +338,12 @@ test('runs exact Less 4.9.0 against the frozen official Less 4.6.7 corpus', () =
   assert.equal(manifest.files.some(file => /\.(?:c?js|mjs)$/.test(file.path)), false)
 
   const features = new Set()
-  const groups = {}
+  const groups = { success: 0, error: 0 }
   for (const specCase of manifest.cases) {
     features.add(specCase.feature)
-    groups[specCase.outcome] = (groups[specCase.outcome] ?? 0) + 1
+    if (specCase.outcome === 'success') groups.success += 1
+    else if (specCase.outcome === 'error') groups.error += 1
+    else assert.fail(`unknown Less corpus outcome ${JSON.stringify(specCase.outcome)}`)
     assert.equal(names.has(specCase.entry), true, `${specCase.id}: entry inventory`)
     assert.equal(names.has(specCase.expected), true, `${specCase.id}: expectation inventory`)
     assert.equal(Array.isArray(specCase.dependencies), true, `${specCase.id}: dependencies`)

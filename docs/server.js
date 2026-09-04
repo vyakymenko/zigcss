@@ -56,15 +56,6 @@ class StaticRequestError extends Error {
   }
 }
 
-function isWithinRoot(root, candidate) {
-  const relative = path.relative(root, candidate)
-  return relative === '' || (
-    relative !== '..' &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  )
-}
-
 export function resolveStaticFile(distDir, urlPath) {
   let decodedPath
   try {
@@ -85,7 +76,12 @@ export function resolveStaticFile(distDir, urlPath) {
   const portablePath = mountedPath.replace(/\\/g, '/').replace(/^\/+/, '')
   let candidate = path.resolve(root, portablePath)
 
-  if (!isWithinRoot(root, candidate))
+  const candidateRelative = path.relative(root, candidate)
+  if (
+    candidateRelative === '..' ||
+    candidateRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(candidateRelative)
+  )
     throw new StaticRequestError(403, 'Forbidden')
 
   if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory())
@@ -102,7 +98,12 @@ export function resolveStaticFile(distDir, urlPath) {
     throw new StaticRequestError(404, 'Not found')
 
   const realCandidate = fs.realpathSync(candidate)
-  if (!isWithinRoot(root, realCandidate))
+  const realRelative = path.relative(root, realCandidate)
+  if (
+    realRelative === '..' ||
+    realRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(realRelative)
+  )
     throw new StaticRequestError(403, 'Forbidden')
 
   if (!fs.statSync(realCandidate).isFile())

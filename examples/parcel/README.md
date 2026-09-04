@@ -6,7 +6,7 @@ its complete toolchain are pinned by the root lock; this example manifest stays
 dependency-free and script-free so it cannot pretend to be a published Parcel
 package.
 
-Run the maintained proof from the repository root with Zig 0.15.2 and Node 22.22.0:
+Run the maintained proof from the repository root with Zig 0.15.2 and Node 24.20.0 LTS:
 
 ```bash
 zig build -Doptimize=ReleaseFast

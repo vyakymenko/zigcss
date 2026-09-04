@@ -12,6 +12,10 @@ import {
   validatePackDescription,
 } from './npm-package-artifact.mjs'
 import { createReleaseArchive } from './create-release-archive.mjs'
+import {
+  hashStableRegularFile,
+  readStableUtf8File,
+} from './bounded-filesystem.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const rootManifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
@@ -400,30 +404,53 @@ function verifyGitHubActionsToolchain(candidates, enabled = process.env.GITHUB_A
 }
 
 function regularFile(filename, label, maximumBytes) {
-  let stat
+  let descriptor
   try {
-    stat = fs.lstatSync(filename)
+    descriptor = fs.openSync(
+      filename,
+      fs.constants.O_RDONLY |
+        (fs.constants.O_NOFOLLOW ?? 0) |
+        (fs.constants.O_NONBLOCK ?? 0) |
+        (fs.constants.O_CLOEXEC ?? 0),
+    )
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const current = fs.lstatSync(filename, { bigint: true })
+    assert.equal(opened.isFile(), true, `${label} must be a regular file`)
+    assert.equal(current.isFile() && !current.isSymbolicLink(), true, `${label} path must remain a regular file`)
+    assert.equal(opened.dev, current.dev, `${label} device changed`)
+    assert.equal(opened.ino, current.ino, `${label} inode changed`)
+    assert.equal(opened.size, current.size, `${label} size changed`)
+    assert.equal(opened.mtimeNs, current.mtimeNs, `${label} modification time changed`)
+    assert.equal(opened.ctimeNs, current.ctimeNs, `${label} metadata time changed`)
+    assert.equal(opened.size > 0n && opened.size <= BigInt(maximumBytes), true, `${label} size must be bounded`)
   } catch (error) {
-    assert.fail(`${label} is unavailable: ${error.message}`)
+    if (error?.code === 'ELOOP') assert.fail(`${label} must not be a symlink`)
+    throw error
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor)
   }
-  assert.equal(stat.isFile() || stat.isSymbolicLink(), true, `${label} must be a file or file symlink`)
-  assert.equal(stat.size > 0 && stat.size <= maximumBytes, true, `${label} size must be bounded`)
-  assert.equal(fs.statSync(filename).isFile(), true, `${label} must resolve to a file`)
   return filename
 }
 
 function verifyShim(consumer, installedRoot, name, target) {
   const basename = path.join(consumer, 'node_modules', '.bin', name)
   const filename = process.platform === 'win32' ? `${basename}.cmd` : basename
-  regularFile(filename, `${name} bin shim`, maximumShimBytes)
-  const stat = fs.lstatSync(filename)
   const expected = fs.realpathSync(path.join(installedRoot, target))
-  if (stat.isSymbolicLink()) {
+  let source
+  try {
+    source = readStableUtf8File(filename, {
+      label: `${name} bin shim`,
+      maximumBytes: maximumShimBytes,
+    })
+  } catch (regularFileError) {
+    const stat = fs.lstatSync(filename)
+    if (!stat.isSymbolicLink()) throw regularFileError
+    assert.equal(stat.size > 0 && stat.size <= maximumShimBytes, true, `${name} bin shim size must be bounded`)
     assert.equal(fs.realpathSync(filename), expected, `${name} bin shim target changed`)
-  } else {
-    const source = fs.readFileSync(filename, 'utf8')
-    assert.equal(source.includes(target), true, `${name} bin shim does not reference ${target}`)
+    regularFile(expected, `${name} bin shim target`, maximumCommandOutputBytes)
+    return
   }
+  assert.equal(source.includes(target), true, `${name} bin shim does not reference ${target}`)
 }
 
 function verifyResolvedTarget(resolved, installedRoot, target, label) {
@@ -516,12 +543,11 @@ function verifyTypedPackageSurface(consumer, environment, managerLabel) {
 }
 
 function verifyNativeIntegritySurface(installedRoot, manifest) {
-  const filename = regularFile(
-    path.join(installedRoot, 'native-integrity.json'),
-    'installed native integrity manifest',
-    maximumCommandOutputBytes,
-  )
-  const source = fs.readFileSync(filename, 'utf8')
+  const source = readStableUtf8File(path.join(installedRoot, 'native-integrity.json'), {
+    label: 'installed native integrity manifest',
+    maximumBytes: maximumCommandOutputBytes,
+    reject: assert.fail,
+  })
   const installedInstaller = repositoryRequire(path.join(installedRoot, 'install.js'))
   for (const target of manifest.zigcss.nativeTargets) {
     const descriptor = installedInstaller.releaseDescriptor(
@@ -535,23 +561,11 @@ function verifyNativeIntegritySurface(installedRoot, manifest) {
 }
 
 function hashFileSha256(filename, maximumBytes) {
-  const stat = fs.lstatSync(filename)
-  assert.equal(stat.isFile(), true, 'preloaded release archive must be a regular file')
-  assert.equal(stat.isSymbolicLink(), false, 'preloaded release archive must not be a symlink')
-  assert.equal(stat.size > 0 && stat.size <= maximumBytes, true, 'preloaded release archive size must be bounded')
-  const digest = crypto.createHash('sha256')
-  const descriptor = fs.openSync(filename, 'r')
-  const chunk = Buffer.allocUnsafe(64 * 1024)
-  try {
-    while (true) {
-      const length = fs.readSync(descriptor, chunk, 0, chunk.length, null)
-      if (length === 0) break
-      digest.update(chunk.subarray(0, length))
-    }
-  } finally {
-    fs.closeSync(descriptor)
-  }
-  return digest.digest('hex')
+  return hashStableRegularFile(filename, {
+    label: 'preloaded release archive',
+    maximumBytes,
+    reject: assert.fail,
+  })
 }
 
 function createLocalReleaseFixture() {

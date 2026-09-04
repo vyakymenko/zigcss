@@ -24,7 +24,7 @@ async function readBoundedInput() {
 }
 
 export async function main() {
-  sanitizeRuntimeEnvironment()
+  process.env = sanitizeRuntimeEnvironment()
   disableNetworkAccess()
   const input = await readBoundedInput()
   const output = await processHostInput(input, {

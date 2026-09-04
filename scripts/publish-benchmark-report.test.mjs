@@ -103,7 +103,7 @@ function completeReport() {
       cpuModel: 'Controlled Benchmark CPU',
       logicalCpuCount: 8,
       totalMemoryBytes: '17179869184',
-      nodeVersion: 'v22.22.0',
+      nodeVersion: 'v24.20.0',
       zigVersion: '0.15.2',
       optimizationMode: 'ReleaseFast',
       hostAttestation: {

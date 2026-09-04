@@ -415,7 +415,7 @@ function parseCommand(argumentsList) {
   if (argumentsList.length !== 7 || argumentsList[0] !== '--write') {
     fail('usage: node scripts/publish-benchmark-report.mjs --check|--write --directory absolute-path --artifact-url url --output absolute-path')
   }
-  const result = { mode: 'write' }
+  const values = new Map()
   const seen = new Set()
   for (let index = 1; index < argumentsList.length; index += 2) {
     const name = argumentsList[index]
@@ -424,15 +424,22 @@ function parseCommand(argumentsList) {
       fail('publication command arguments are invalid or duplicated')
     }
     seen.add(name)
-    result[name.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value
+    values.set(name, value)
   }
   if (!same([...seen].sort(), ['--artifact-url', '--directory', '--output'])) {
     fail('publication command is missing a required argument')
   }
-  if (!path.isAbsolute(result.directory) || !path.isAbsolute(result.output)) {
+  const directory = values.get('--directory')
+  const output = values.get('--output')
+  if (!path.isAbsolute(directory) || !path.isAbsolute(output)) {
     fail('publication directory and output arguments must be absolute')
   }
-  return result
+  return {
+    mode: 'write',
+    directory,
+    artifactUrl: values.get('--artifact-url'),
+    output,
+  }
 }
 
 function main() {

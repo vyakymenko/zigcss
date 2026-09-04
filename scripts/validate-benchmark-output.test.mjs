@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import {
   admitTimingSample,
+  benchmarkCompilerPath,
   renderZigCssStderr,
   repositoryRoot,
   validateBenchmarkOutputContract,
@@ -40,6 +41,21 @@ test('benchmark output validation accepts only recovery-free semantic equivalenc
   assert.equal(report.inputBytes, Buffer.byteLength(input))
   assert.equal(report.outputBytes, Buffer.byteLength(equivalentOutput))
   assert.match(report.canonicalSha256, /^[0-9a-f]{64}$/)
+})
+
+test('benchmark compiler selection is pinned to the repository ReleaseFast binary', () => {
+  const expected = path.join(
+    repositoryRoot,
+    'zig-out',
+    'bin',
+    process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
+  )
+  assert.equal(benchmarkCompilerPath(repositoryRoot, undefined), expected)
+  assert.equal(benchmarkCompilerPath(repositoryRoot, expected), expected)
+  assert.throws(
+    () => benchmarkCompilerPath(repositoryRoot, path.join(repositoryRoot, 'attacker-controlled')),
+    /repository ReleaseFast binary/,
+  )
 })
 
 test('invalid output cannot enter a timing sample collection', () => {

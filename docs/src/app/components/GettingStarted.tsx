@@ -18,7 +18,7 @@ export function GettingStarted() {
         <div className="mb-10 flex gap-4 border border-[#79a633] bg-[#e8f5cd] p-5 text-[#263d0d]">
           <CheckCircle2 className="mt-0.5 size-5 flex-shrink-0" />
           <p className="leading-7">
-            ZigCSS 0.6.0 is published on npm latest and as a non-prerelease GitHub Release after its immutable artifact, provenance, Pages, registry, and anonymous-consumer gates passed. The published RC remains unchanged on next.
+            ZigCSS 0.6.0 is published on npm latest and as a non-prerelease GitHub Release after its verified artifact, provenance, Pages, registry, and anonymous-consumer gates passed. That historical GitHub Release reads back immutable: false; the published RC remains unchanged on next.
           </p>
         </div>
 

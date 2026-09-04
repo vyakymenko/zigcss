@@ -259,7 +259,12 @@ test('denies unauthorized project reads, file helpers, and executable plugins', 
     ))
     fs.writeFileSync(
       plugin,
-      `module.exports = () => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'x')\n`,
+      [
+        "const fs = require('node:fs')",
+        "const path = require('node:path')",
+        "module.exports = () => fs.writeFileSync(path.join(__dirname, 'executed'), 'x')",
+        '',
+      ].join('\n'),
     )
     const sourceUrl = pathToFileURL(entry).href
 

@@ -13,6 +13,20 @@ const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf
 const expectedCliStderr = /^[0-9]+\.[0-9]+\.[0-9]+-/.test(activeVersion)
   ? `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\n`
   : ''
+const exactCompiler = path.join(
+  repositoryRoot,
+  'zig-out',
+  'bin',
+  process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
+)
+const exactModuleDriver = path.join(
+  repositoryRoot,
+  'zig-out',
+  'bin',
+  process.platform === 'win32'
+    ? 'zigcss-css-modules-test-driver.exe'
+    : 'zigcss-css-modules-test-driver',
+)
 const strategyPaths = [
   path.join(repositoryRoot, 'docs/adr/ADR-005-preprocessor-strategy.md'),
   path.join(repositoryRoot, 'docs/adr/ADR-012-canonical-preprocessor-host.md'),
@@ -67,31 +81,22 @@ function fail(message) {
 }
 
 function binariesFromArguments(argumentsList) {
-  let compiler = path.join(
-    repositoryRoot,
-    'zig-out',
-    'bin',
-    process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
-  )
-  let moduleDriver = path.join(
-    repositoryRoot,
-    'zig-out',
-    'bin',
-    process.platform === 'win32'
-      ? 'zigcss-css-modules-test-driver.exe'
-      : 'zigcss-css-modules-test-driver',
-  )
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index]
     if (argument !== '--compiler' && argument !== '--module-driver') {
       fail(`unknown argument: ${argument}`)
     }
-    if (index + 1 >= argumentsList.length) fail('--compiler requires a path')
-    if (argument === '--compiler') compiler = path.resolve(argumentsList[index + 1])
-    else moduleDriver = path.resolve(argumentsList[index + 1])
+    if (index + 1 >= argumentsList.length) fail(`${argument} requires a path`)
+    const supplied = path.resolve(argumentsList[index + 1])
+    if (argument === '--compiler' && supplied !== exactCompiler) {
+      fail('--compiler must identify the repository ZigCSS test binary')
+    }
+    if (argument === '--module-driver' && supplied !== exactModuleDriver) {
+      fail('--module-driver must identify the repository CSS Modules test binary')
+    }
     index += 1
   }
-  return { compiler, moduleDriver }
+  return { compiler: exactCompiler, moduleDriver: exactModuleDriver }
 }
 
 function sorted(values) {
@@ -462,7 +467,8 @@ function validateEvidence(adapterId, evidence) {
 }
 
 async function validateCliProbes(compiler, matrix) {
-  fs.accessSync(compiler, fs.constants.X_OK)
+  if (compiler !== exactCompiler) fail('compiler escaped the exact repository test binary')
+  fs.accessSync(exactCompiler, fs.constants.X_OK)
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-format-matrix-'))
   let rejectionCount = 0
   let nativeCount = 0
@@ -474,7 +480,7 @@ async function validateCliProbes(compiler, matrix) {
         const output = path.join(temporary, `${stem}-${rejectionCount}.css`)
         fs.writeFileSync(input, adapter.probe)
         if (adapter.implementation === 'NativeFrontend') {
-          const result = spawnSync(compiler, ['-', '--syntax', adapter.nativeSyntax, '--minify'], {
+          const result = spawnSync(exactCompiler, ['-', '--syntax', adapter.nativeSyntax, '--minify'], {
             cwd: temporary,
             encoding: 'utf8',
             input: adapter.probe,
@@ -493,7 +499,7 @@ async function validateCliProbes(compiler, matrix) {
           nativeCount += 1
           continue
         }
-        const result = spawnSync(compiler, [input, '-o', output], {
+        const result = spawnSync(exactCompiler, [input, '-o', output], {
           cwd: repositoryRoot,
           encoding: 'utf8',
           maxBuffer: 1024 * 1024,

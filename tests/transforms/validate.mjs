@@ -12,6 +12,12 @@ const validatorPackage = JSON.parse(
 )
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = path.resolve(scriptDirectory, '../..')
+const exactDriver = path.join(
+  repositoryRoot,
+  'zig-out',
+  'bin',
+  process.platform === 'win32' ? 'zigcss-transform-test-driver.exe' : 'zigcss-transform-test-driver',
+)
 const fixtures = [
   {
     label: 'empty-rule-cleanup',
@@ -160,19 +166,15 @@ function fail(message) {
 }
 
 function driverFromArguments(argumentsList) {
-  let driver = path.join(
-    repositoryRoot,
-    'zig-out',
-    'bin',
-    process.platform === 'win32' ? 'zigcss-transform-test-driver.exe' : 'zigcss-transform-test-driver',
-  )
   for (let index = 0; index < argumentsList.length; index += 1) {
     if (argumentsList[index] !== '--driver') fail(`unknown argument: ${argumentsList[index]}`)
     if (index + 1 >= argumentsList.length) fail('--driver requires a path')
-    driver = path.resolve(argumentsList[index + 1])
+    if (path.resolve(argumentsList[index + 1]) !== exactDriver) {
+      fail('--driver must identify the repository transform test binary')
+    }
     index += 1
   }
-  return driver
+  return exactDriver
 }
 
 function runDriver(
@@ -183,10 +185,11 @@ function runDriver(
   passId = fixture.passId,
   driverArgs = passId === fixture.passId ? fixture.driverArgs : undefined,
 ) {
+  if (driver !== exactDriver) fail('transform driver escaped the exact repository test binary')
   const argumentsList = [input, '--pass', passId]
   if (driverArgs) argumentsList.push(...driverArgs)
   if (mode === 'minified') argumentsList.push('--minify')
-  const result = spawnSync(driver, argumentsList, {
+  const result = spawnSync(exactDriver, argumentsList, {
     cwd: repositoryRoot,
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024,
@@ -201,8 +204,9 @@ function runDriver(
 }
 
 function validateInvalidTargetQuery(driver, input) {
+  if (driver !== exactDriver) fail('transform driver escaped the exact repository test binary')
   const result = spawnSync(
-    driver,
+    exactDriver,
     [input, '--pass', 'target-prefix-rewrite', '--targets', 'defaults'],
     {
       cwd: repositoryRoot,
@@ -220,6 +224,7 @@ function validateInvalidTargetQuery(driver, input) {
 }
 
 function validateInvalidExtractionInventories(driver, input) {
+  if (driver !== exactDriver) fail('transform driver escaped the exact repository test binary')
   const cases = [
     {
       label: 'incomplete-category',
@@ -234,7 +239,7 @@ function validateInvalidExtractionInventories(driver, input) {
   ]
   for (const testCase of cases) {
     const result = spawnSync(
-      driver,
+      exactDriver,
       [input, '--pass', 'conservative-critical-css-extraction', ...testCase.args],
       {
         cwd: repositoryRoot,

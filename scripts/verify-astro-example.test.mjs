@@ -182,7 +182,7 @@ export function validateExampleContract(contract) {
   assert.match(contract.readme, /ZIGCSS_ASTRO_NATIVE_BINARY="\$PWD\/zig-out\/bin\/zigcss" npm run test:astro-example/)
   assert.match(contract.readme, /pins Astro 7\.2\.10 exactly/)
   assert.match(contract.readme, /Astro 7\.2\.10 requires Node `>=22\.12\.0`/)
-  assert.match(contract.readme, /CI host is pinned to Node 22\.22\.0/)
+  assert.match(contract.readme, /CI host is pinned to Node 24\.20\.0 LTS/)
   assert.match(contract.readme, /external `card\.module\.scss`/)
   assert.match(contract.readme, /same CSS Module binding in rendered static HTML and emitted JavaScript/)
   assert.match(contract.readme, /fingerprinted SVG asset/)
@@ -199,6 +199,12 @@ export function validateExampleContract(contract) {
 
   for (const anchor of [
     "ZIGCSS_ASTRO_OFFLINE !== '1'",
+    "^zigcss-astro-(?:boundary-)?[A-Za-z0-9]{6}$",
+    'const traceRoot = fs.realpathSync(__dirname)',
+    'function openBoundedRegularFile(',
+    'function withTraceLock(action)',
+    'const count = fs.readSync(opened.descriptor, content, offset, bytes - offset, offset)',
+    'if (input !== expected) fail(`${label} must equal its exact staged path`)',
     'function immutable(target, name, value)',
     'enumerable: descriptor?.enumerable ?? true',
     'writable: false',
@@ -340,11 +346,13 @@ function offlineEnvironment(
   allowedBinary = undefined,
   allowedEsbuildBinary = undefined,
 ) {
+  const stagedPreload = path.join(temporary, path.basename(preload))
+  fs.copyFileSync(preload, stagedPreload)
   const env = {
     ...installEnv,
     ASTRO_TELEMETRY_DISABLED: '1',
     ESBUILD_BINARY_PATH: allowedEsbuildBinary ?? '',
-    NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+    NODE_OPTIONS: `--require=${JSON.stringify(fs.realpathSync(stagedPreload))}`,
     ZIGCSS_ASTRO_OFFLINE: '1',
     ZIGCSS_ASTRO_TRACE: trace,
     ZIGCSS_ASTRO_TRACE_ROOT: temporary,
@@ -357,6 +365,32 @@ function offlineEnvironment(
     env.ZIGCSS_ASTRO_ALLOWED_ESBUILD_BINARY = allowedEsbuildBinary
   }
   return env
+}
+
+function clearRegularTrace(trace) {
+  const descriptor = fs.openSync(
+    trace,
+    fs.constants.O_WRONLY | (fs.constants.O_CLOEXEC ?? 0) |
+      (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0),
+  )
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    const bound = fs.lstatSync(trace, { bigint: true })
+    assert.equal(opened.isFile(), true)
+    assert.equal(bound.isFile(), true)
+    assert.equal(bound.isSymbolicLink(), false)
+    assert.equal(opened.nlink, 1n)
+    assert.equal(bound.nlink, 1n)
+    assert.equal(opened.dev, bound.dev)
+    assert.equal(opened.ino, bound.ino)
+    fs.ftruncateSync(descriptor, 0)
+    const cleared = fs.fstatSync(descriptor, { bigint: true })
+    assert.equal(cleared.dev, opened.dev)
+    assert.equal(cleared.ino, opened.ino)
+    assert.equal(cleared.size, 0n)
+  } finally {
+    fs.closeSync(descriptor)
+  }
 }
 
 function resolveEsbuildBinary(project) {
@@ -504,6 +538,36 @@ test('Astro offline preload behaviorally blocks network sockets and child-proces
     fs.writeFileSync(trace, '', { mode: 0o600 })
     fs.writeFileSync(userConfig, 'audit=false\nfund=false\nignore-scripts=true\nupdate-notifier=false\n', { mode: 0o600 })
     const env = offlineEnvironment(installEnvironment(temporary, userConfig), temporary, trace)
+    const raceProbeEnv = { ...env }
+    delete raceProbeEnv.NODE_OPTIONS
+    const raceProbe = run(process.execPath, ['-e', [
+      "const fs = require('node:fs')",
+      'const originalLstat = fs.lstatSync',
+      'let appended = false',
+      'fs.lstatSync = function injectedConcurrentAppend(filename, options) {',
+      '  if (!appended && filename === process.argv[2]) { appended = true; fs.appendFileSync(filename, " ") }',
+      '  return originalLstat(filename, options)',
+      '}',
+      "process.env.NODE_OPTIONS = '--require=' + JSON.stringify(process.argv[1])",
+      'require(process.argv[1])',
+    ].join('\n'), path.join(temporary, path.basename(preload)), trace], { env: raceProbeEnv, timeout: 5_000 })
+    requireSuccess(raceProbe, 'concurrent Astro trace metadata mutation probe')
+
+    const unadmittedTrace = path.join(temporary, 'unadmitted-trace.jsonl')
+    fs.writeFileSync(unadmittedTrace, 'sentinel\n', { mode: 0o600 })
+    const deniedTrace = run(process.execPath, ['-e', 'process.exit(0)'], {
+      env: { ...env, ZIGCSS_ASTRO_TRACE: unadmittedTrace },
+      timeout: 5_000,
+    })
+    assert.equal(deniedTrace.status, 1)
+    assert.match(deniedTrace.stderr, /trace file must use the admitted fixed filename/)
+    assert.equal(fs.readFileSync(unadmittedTrace, 'utf8'), 'sentinel\n')
+    const linkedTrace = path.join(temporary, 'linked-trace.jsonl')
+    fs.linkSync(trace, linkedTrace)
+    const deniedLinkedTrace = run(process.execPath, ['-e', 'process.exit(0)'], { env, timeout: 5_000 })
+    assert.equal(deniedLinkedTrace.status, 1)
+    assert.match(deniedLinkedTrace.stderr, /bounded canonical singly-linked regular non-symlink file/)
+    fs.unlinkSync(linkedTrace)
 
     const deniedHttps = run(process.execPath, ['-e', "require('node:https').get('https://example.com')"], {
       env,
@@ -777,12 +841,7 @@ test('current native ZigCSS completes cached-offline deny-network Astro producti
     assert.equal(resolutionRecords.filter(record => record.event === 'runtime-start').length, 1)
     assert.equal(resolutionRecords.filter(record => record.event === 'runtime-summary').length, 1)
     assert.equal(resolutionRecords.every(record => record.nativeSpawns === 0), true)
-    const traceBeforeClear = fs.lstatSync(trace, { bigint: true })
-    fs.writeFileSync(trace, '')
-    const traceAfterClear = fs.lstatSync(trace, { bigint: true })
-    assert.equal(traceAfterClear.dev, traceBeforeClear.dev)
-    assert.equal(traceAfterClear.ino, traceBeforeClear.ino)
-    assert.equal(traceAfterClear.size, 0n)
+    clearRegularTrace(trace)
 
     const astroManifest = readJson(path.join(project, 'node_modules', 'astro', 'package.json'))
     assert.equal(typeof astroManifest.bin.astro, 'string')
@@ -799,7 +858,8 @@ test('current native ZigCSS completes cached-offline deny-network Astro producti
     assert.match(css, /color:\s*(?:#639|rebeccapurple)/i)
     const classMatch = css.match(/\.(_hero_[A-Za-z0-9_-]+)\s*\{/)
     assert.notEqual(classMatch, null, 'Astro CSS must contain a scoped CSS Module class')
-    assert.match(html, new RegExp(`class=["']${classMatch[1]}["']`))
+    const escapedClassName = classMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(html, new RegExp(`class=["']${escapedClassName}["']`))
     const clientModules = findRegularFiles(outputRoot, '.js')
       .map(filename => fs.readFileSync(filename, 'utf8'))
       .filter(source => source.includes(classMatch[1]) && source.includes('zigcssClass'))

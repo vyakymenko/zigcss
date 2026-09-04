@@ -135,7 +135,7 @@ export function validateExampleContract(contract) {
   assert.equal(contract.pageOptions, 'export const prerender = true\n')
   assert.doesNotMatch(contract.page, /<style|lang=["'](?:scss|sass|less|stylus?)/i)
   assert.match(contract.readme, /one deliberately narrow integration/)
-  assert.match(contract.readme, /Zig 0\.15\.2 and Node 22\.22\.0/)
+  assert.match(contract.readme, /Zig 0\.15\.2 and Node 24\.20\.0 LTS/)
   assert.match(contract.readme, /zig build -Doptimize=ReleaseFast/)
   assert.match(contract.readme, /npm ci --ignore-scripts/)
   assert.match(contract.readme, /ZIGCSS_SVELTEKIT_NATIVE_BINARY="\$PWD\/zig-out\/bin\/zigcss" npm run test:sveltekit-example/)
@@ -154,6 +154,12 @@ export function validateExampleContract(contract) {
 
   for (const anchor of [
     "ZIGCSS_SVELTEKIT_OFFLINE !== '1'",
+    "^zigcss-sveltekit-(?:boundary-)?[A-Za-z0-9]{6}$",
+    'const traceRoot = fs.realpathSync(__dirname)',
+    'function openBoundedRegularFile(',
+    'function withTraceLock(action)',
+    'const count = fs.readSync(opened.descriptor, content, offset, bytes - offset, offset)',
+    "if (input !== expected) fail('allowed ZigCSS binary must equal its exact staged path')",
     'captureAllowedBinary(process.env.ZIGCSS_SVELTEKIT_ALLOWED_BINARY)',
     "immutable(workerThreads, 'Worker'",
     "immutable(cluster, 'fork'",
@@ -218,9 +224,11 @@ function installEnvironment(temporary, userConfig) {
 }
 
 function offlineEnvironment(installEnv, temporary, trace, allowedBinary) {
+  const stagedPreload = path.join(temporary, path.basename(preload))
+  fs.copyFileSync(preload, stagedPreload)
   return {
     ...installEnv,
-    NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+    NODE_OPTIONS: `--require=${JSON.stringify(fs.realpathSync(stagedPreload))}`,
     ZIGCSS_SVELTEKIT_OFFLINE: '1',
     ZIGCSS_SVELTEKIT_TRACE: trace,
     ZIGCSS_SVELTEKIT_TRACE_ROOT: temporary,
@@ -354,6 +362,35 @@ test('SvelteKit preload denies and traces worker process and network escape surf
   const trace = path.join(temporary, 'trace.jsonl')
   fs.writeFileSync(trace, '')
   const env = offlineEnvironment(process.env, temporary, trace, binary)
+  const raceProbeEnv = { ...env }
+  delete raceProbeEnv.NODE_OPTIONS
+  const raceProbe = run(process.execPath, ['-e', [
+    "const fs = require('node:fs')",
+    'const originalLstat = fs.lstatSync',
+    'let appended = false',
+    'fs.lstatSync = function injectedConcurrentAppend(filename, options) {',
+    '  if (!appended && filename === process.argv[2]) { appended = true; fs.appendFileSync(filename, " ") }',
+    '  return originalLstat(filename, options)',
+    '}',
+    "process.env.NODE_OPTIONS = '--require=' + JSON.stringify(process.argv[1])",
+    'require(process.argv[1])',
+  ].join('\n'), path.join(temporary, path.basename(preload)), trace], { env: raceProbeEnv, timeout: 5_000 })
+  requireSuccess(raceProbe, 'concurrent SvelteKit trace metadata mutation probe')
+  const unadmittedTrace = path.join(temporary, 'unadmitted-trace.jsonl')
+  fs.writeFileSync(unadmittedTrace, 'sentinel\n')
+  const deniedTrace = run(process.execPath, ['-e', 'process.exit(0)'], {
+    env: { ...env, ZIGCSS_SVELTEKIT_TRACE: unadmittedTrace },
+    timeout: 5_000,
+  })
+  assert.equal(deniedTrace.status, 1)
+  assert.match(deniedTrace.stderr, /trace file must use an admitted fixed filename/)
+  assert.equal(fs.readFileSync(unadmittedTrace, 'utf8'), 'sentinel\n')
+  const linkedTrace = path.join(temporary, 'linked-trace.jsonl')
+  fs.linkSync(trace, linkedTrace)
+  const deniedLinkedTrace = run(process.execPath, ['-e', 'process.exit(0)'], { env, timeout: 5_000 })
+  assert.equal(deniedLinkedTrace.status, 1)
+  assert.match(deniedLinkedTrace.stderr, /bounded canonical singly-linked regular non-symlink file/)
+  fs.unlinkSync(linkedTrace)
   const probe = run(process.execPath, ['-e', [
     "const cp = require('node:child_process')",
     "const cluster = require('node:cluster')",
@@ -507,9 +544,10 @@ test('current native ZigCSS completes deny-network SvelteKit client SSR prerende
     const classMatch = clientCss.source.match(/\.(_hero_[A-Za-z0-9_-]+)\s*\{[^}]*color:\s*(?:#639|rebeccapurple)/i)
     assert.notEqual(classMatch, null)
     const className = classMatch[1]
+    const escapedClassName = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const serverCss = requireSingleContaining(
       findRegularFiles(serverRoot, '.css'),
-      new RegExp(`\\.${className}\\s*\\{[^}]*color:\\s*(?:#639|rebeccapurple)`, 'i'),
+      new RegExp(`\\.${escapedClassName}\\s*\\{[^}]*color:\\s*(?:#639|rebeccapurple)`, 'i'),
       'SSR CSS',
     )
     assert.notEqual(serverCss.filename, clientCss.filename)
@@ -517,11 +555,11 @@ test('current native ZigCSS completes deny-network SvelteKit client SSR prerende
     for (const filename of [prerendered, staticPage]) {
       const html = fs.readFileSync(filename, 'utf8')
       assert.match(html, /SvelteKit ZigCSS/)
-      assert.match(html, new RegExp(`class=["']${className}["']`))
+      assert.match(html, new RegExp(`class=["']${escapedClassName}["']`))
     }
     requireSingleContaining(
       findRegularFiles(clientRoot, '.js'),
-      new RegExp(`${className}.*SvelteKit ZigCSS|SvelteKit ZigCSS.*${className}`),
+      new RegExp(`${escapedClassName}.*SvelteKit ZigCSS|SvelteKit ZigCSS.*${escapedClassName}`),
       'client CSS Module JavaScript',
     )
     const serverJavaScriptFiles = findRegularFiles(serverRoot, '.js')
@@ -529,7 +567,7 @@ test('current native ZigCSS completes deny-network SvelteKit client SSR prerende
     const serverJavaScript = serverJavaScriptFiles
       .map(filename => fs.readFileSync(filename, 'utf8'))
       .join('\n')
-    assert.match(serverJavaScript, new RegExp(className), 'SSR JavaScript must retain the CSS Module binding')
+    assert.match(serverJavaScript, new RegExp(escapedClassName), 'SSR JavaScript must retain the CSS Module binding')
     assert.match(serverJavaScript, /SvelteKit ZigCSS/, 'SSR JavaScript must retain the rendered component')
     requireNativeSourceMap(clientRoot, 'client output')
     requireNativeSourceMap(serverRoot, 'SSR output')
