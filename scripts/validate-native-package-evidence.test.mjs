@@ -58,6 +58,14 @@ function makeFixture() {
         networkAttempts: 0,
         deniedProcessAttempts: 0,
       },
+      offlineNodeApiSmokes: 2,
+      offlineNodeApiOptionRejections: 1,
+      offlineNodeApiRuntimeTrace: {
+        invocations: 3,
+        nativeSpawns: 3,
+        networkAttempts: 0,
+        deniedProcessAttempts: 0,
+      },
     }, {
       commit,
       version,
@@ -183,6 +191,12 @@ test('native package evidence rejects lower, over-limit, drifted, and substitute
     fixture => {
       const filename = receiptPath(fixture, nativeSmokeTargets[2].target)
       fs.writeFileSync(filename, ` ${fs.readFileSync(filename, 'utf8')}`)
+    },
+    fixture => {
+      const filename = receiptPath(fixture, nativeSmokeTargets[3].target)
+      const evidence = JSON.parse(fs.readFileSync(filename, 'utf8'))
+      evidence.offlineInstalledPackage.nodeApi.optionRejections = 0
+      fs.writeFileSync(filename, `${JSON.stringify(evidence, null, 2)}\n`)
     },
   ]) {
     const fixture = makeFixture()

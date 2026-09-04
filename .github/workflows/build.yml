@@ -64,6 +64,44 @@ jobs:
         with:
           node-version: '20.19.0'
 
+      - name: Validate Nix flake contract
+        if: runner.os != 'Windows'
+        run: node scripts/validate-nix-flake.mjs --check
+
+      - name: Install exact Nix
+        if: runner.os != 'Windows'
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.35.2/install
+          enable_kvm: false
+          set_as_trusted_user: false
+          extra_nix_config: |
+            sandbox = true
+
+      - name: Verify native Nix flake
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          test "$(nix --version)" = "nix (Nix) 2.35.2"
+          nix flake check \
+            --no-update-lock-file \
+            --no-write-lock-file \
+            --no-use-registries \
+            .
+          nix build \
+            --no-link \
+            --no-update-lock-file \
+            --no-write-lock-file \
+            --no-use-registries \
+            .#default
+          actual="$(nix run \
+            --no-update-lock-file \
+            --no-write-lock-file \
+            --no-use-registries \
+            .#default -- --version)"
+          test "$actual" = "zigcss $(tr -d '\r\n' < VERSION)"
+          git diff --exit-code -- flake.nix flake.lock
+
       - name: Setup Zig
         uses: ./.github/actions/setup-zig
         with:
@@ -88,29 +126,23 @@ jobs:
         shell: bash
         run: |
           version="$(cat VERSION)"
+          epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"
           base="zigcss-v${version}-${{ matrix.target }}"
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"
           echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"
           echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"
           echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"
-          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
 
       - name: Create Native Smoke Archive
         shell: bash
         run: |
-          mkdir -p release-assets/staging
-          cp "zig-out/bin/${{ matrix.binary-name }}" release-assets/staging/
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            (
-              cd release-assets/staging
-              powershell -NoProfile -Command "Compress-Archive -LiteralPath '${{ matrix.binary-name }}' -DestinationPath '../$RELEASE_ARCHIVE' -Force"
-            )
-          else
-            COPYFILE_DISABLE=1 tar -czf "release-assets/$RELEASE_ARCHIVE" \
-              -C release-assets/staging "${{ matrix.binary-name }}"
-          fi
-          rm -rf release-assets/staging
+          mkdir -p release-assets
+          node scripts/create-release-archive.mjs \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
 
       - name: Generate Native Smoke Metadata
         shell: bash
@@ -219,13 +251,14 @@ jobs:
         shell: bash
         run: |
           version="$(cat VERSION)"
+          epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"
           base="zigcss-v${version}-${{ matrix.target }}"
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"
           echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"
           echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"
           echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"
-          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
 
       - name: Verify Native Release Inputs
         shell: bash
@@ -361,10 +394,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: '22.22.0'
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            docs/package-lock.json
+            examples/next-turbopack/package-lock.json
+            examples/sveltekit/package-lock.json
+            examples/astro/package-lock.json
+            examples/nuxt/package-lock.json
             vscode-extension/package-lock.json
 
       - name: Setup Zig
@@ -375,11 +413,20 @@ jobs:
       - name: Verify workflow security policy
         run: npm run test:workflows && npm run check:workflows
 
+      - name: Verify repository-local Nix flake
+        run: npm run test:nix-flake && npm run check:nix-flake
+
       - name: Verify release version policy
         run: npm run test:version && npm run check:version
 
+      - name: Verify release admission policy
+        run: npm run test:release-admission && npm run check:release-admission
+
+      - name: Verify native integrity contract
+        run: npm run test:native-integrity && npm run check:native-integrity
+
       - name: Verify release artifact metadata policy
-        run: npm run test:release-metadata && npm run check:release-metadata && npm run test:npm-publication
+        run: npm run test:release-metadata && node --test scripts/validate-native-integrity.test.mjs && npm run check:release-metadata && node scripts/validate-native-integrity.mjs --check && npm run test:npm-publication
 
       - name: Verify native zero-dependency migration contract
         run: npm run test:native-contract && npm run test:native-package-evidence && npm run check:native-contract
@@ -402,15 +449,39 @@ jobs:
       - name: Verify native zero-dependency package
         run: npm run test:preprocessor-package && npm run check:preprocessor-package
 
+      - name: Verify packaged Node API
+        run: npm run test:node-api
+
       - name: Install independent validator
         run: npm ci --ignore-scripts
+
+      - name: Install documentation dependencies
+        working-directory: docs
+        run: npm ci --ignore-scripts
+
+      - name: Test documentation site
+        run: npm --prefix docs run test:run
+
+      - name: Build and smoke-test development container
+        run: npm run test:dev-container
 
       - name: Install VS Code extension dependencies
         working-directory: vscode-extension
         run: npm ci --ignore-scripts
 
       - name: Verify dependency policy and production audits
-        run: npm run test:dependencies && npm run audit:production
+        run: npm run test:dependencies && npm run audit:production && npm run audit:development && npm run audit:documentation && npm run audit:vscode && npm run audit:turbopack-example && npm run audit:sveltekit-example && npm run audit:astro-example && npm run audit:nuxt-example
+
+      - name: Setup Bun for package-manager matrix
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.0'
+
+      - name: Verify package-manager lifecycle recovery
+        run: npm run test:package-managers
+
+      - name: Verify TypeScript package surfaces
+        run: npm run test:types
 
       - name: Test and package VS Code extension
         working-directory: vscode-extension
@@ -427,6 +498,47 @@ jobs:
 
       - name: Run Tests
         run: node scripts/run-zig-test-suite.mjs --mode Debug
+
+      - name: Verify build-tool adapters
+        env:
+          ZIGCSS_ADAPTER_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+        run: npm run test:bundler-adapters
+
+      - name: Verify Next.js Turbopack global SCSS integration
+        env:
+          ZIGCSS_TURBOPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+        run: npm run test:turbopack-example
+
+      - name: Verify Next.js Webpack global SCSS integration
+        env:
+          ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+        run: npm run test:next-webpack-example
+
+      - name: Verify SvelteKit external CSS Module integration
+        env:
+          ZIGCSS_SVELTEKIT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+        run: npm run test:sveltekit-example
+
+      - name: Verify Astro external CSS Module integration
+        env:
+          ZIGCSS_ASTRO_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+        run: npm run test:astro-example
+
+      - name: Verify Nuxt external CSS Module integration
+        env:
+          ZIGCSS_NUXT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+        run: npm run test:nuxt-example
+
+      - name: Verify Parcel local transformer integration
+        env:
+          ZIGCSS_PARCEL_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+        run: npm run test:parcel-example
+
+      - name: Verify dependency-file build-system integrations
+        env:
+          ZIGCSS_REAL_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss
+          ZIGCSS_REQUIRE_BUILD_SYSTEMS: '1'
+        run: npm run test:build-systems
 
       - name: Install pinned Neovim clients
         run: |
@@ -455,6 +567,8 @@ jobs:
         run: npm run test:documentation && npm run check:documentation
 
       - name: Verify Zig package metadata
+        env:
+          ZIGCSS_REQUIRE_FETCHED_ZIG_PACKAGE: '1'
         run: npm run test:zig-package
 
       - name: Verify npm CLI wrapper

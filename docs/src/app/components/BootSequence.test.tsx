@@ -9,6 +9,7 @@ describe('BootSequence', () => {
   it('runs once per session and is click-to-skip', () => {
     const first = render(<BootSequence />)
     const boot = screen.getByRole('dialog', { name: /zigcss boot sequence/i })
+    expect(boot.querySelector('[style]')).toBeNull()
 
     fireEvent.click(boot)
     expect(screen.queryByRole('dialog', { name: /zigcss boot sequence/i })).not.toBeInTheDocument()

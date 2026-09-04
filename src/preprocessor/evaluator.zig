@@ -15,6 +15,9 @@ const native_sourcemap = @import("sourcemap.zig");
 const core_diagnostics = @import("../diagnostics.zig");
 const core_equivalence = @import("../css/equivalence.zig");
 const core_pipeline = @import("../css/pipeline.zig");
+const prefix_rewrite = @import("../prefixing/rewrite.zig");
+const target_query = @import("../prefixing/target_query.zig");
+const verified_optimizer = @import("../transform/verified_optimizer.zig");
 
 pub const intermediate_source_name = "zigcss-native:///intermediate.css";
 
@@ -37,9 +40,14 @@ pub const Format = enum {
     minified,
 };
 
+pub const TargetQuery = target_query.Query;
+
 pub const Options = struct {
     format: Format = .pretty,
     source_map: bool = false,
+    optimize: bool = false,
+    prefix: bool = false,
+    targets: ?*const TargetQuery = null,
 };
 
 pub const Checkpoint = enum {
@@ -73,6 +81,7 @@ pub const Error = std.mem.Allocator.Error ||
     EvaluationFailed,
     GeneratedCssRejected,
     InvalidLimits,
+    InvalidOptions,
     InvalidOutput,
     SessionClosed,
     SessionFailed,
@@ -139,6 +148,14 @@ pub const ValidatedCss = struct {
 
     pub fn css(self: *const ValidatedCss) []const u8 {
         return self.core.css;
+    }
+
+    /// Transfers the already-owned core emitter buffer out of this result.
+    /// The moved-from value remains safe to deinitialize exactly once.
+    pub fn takeCss(self: *ValidatedCss) []const u8 {
+        const moved = self.core.css;
+        self.core.css = &.{};
+        return moved;
     }
 
     pub fn sourceMap(self: *const ValidatedCss) ?[]const u8 {
@@ -393,6 +410,14 @@ pub const Transaction = struct {
 
     pub fn finish(self: *Transaction, options: Options) Error!ValidatedCss {
         try self.requireOpen();
+        if ((options.source_map and options.optimize) or
+            (options.prefix and options.targets == null) or
+            (!options.prefix and options.targets != null) or
+            (options.targets != null and !options.targets.?.validate()))
+        {
+            self.poison();
+            return error.InvalidOptions;
+        }
         self.checkpoint(.finish) catch |err| return err;
         if (self.meter.call_depth != 0) {
             self.poison();
@@ -445,6 +470,37 @@ pub const Transaction = struct {
             self.validation_failure = failure;
             self.poison();
             return error.GeneratedCssRejected;
+        }
+
+        if (options.optimize) {
+            verified_optimizer.applyToFixedPoint(
+                self.allocator,
+                &parsed,
+                coreMode(options.format),
+            ) catch |err| {
+                self.poison();
+                return switch (err) {
+                    error.OutOfMemory => error.OutOfMemory,
+                    error.OptimizationDidNotConverge => error.ValidatedOutputLimitExceeded,
+                    else => error.CoreValidationFailed,
+                };
+            };
+            self.checkpoint(.validate) catch |err| return err;
+        }
+
+        if (options.prefix) {
+            prefix_rewrite.applyToStylesheet(
+                self.allocator,
+                &parsed,
+                options.targets.?,
+            ) catch |err| {
+                self.poison();
+                return switch (err) {
+                    error.OutOfMemory => error.OutOfMemory,
+                    else => error.CoreValidationFailed,
+                };
+            };
+            self.checkpoint(.validate) catch |err| return err;
         }
 
         var core_result = parsed.emitResult(self.allocator, .{

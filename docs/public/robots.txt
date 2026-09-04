@@ -1,3 +1,0 @@
-User-agent: *
-Allow: /zigcss/
-Sitemap: https://vyakymenko.github.io/zigcss/sitemap.xml

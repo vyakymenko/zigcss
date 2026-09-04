@@ -44,13 +44,18 @@ whitespace. The negative matrix spans parser structure, units, variables,
 colors, rulesets, extension, functions, mixins, namespaces, recursion,
 at-rules, custom properties, and malformed imports.
 
-`corpus.test.mjs` compares every success or failure directly with canonical
-Less 4.6.7. CSS, normalized diagnostics, official formatted errors, and the
-complete explicit dependency inventory must agree; canonical `result.imports`
-must be a subset because upstream omits some nested reads. Eight bounded
-workers must repeat every adapter result exactly. Every successful CSS result
-then parses with independent recovery disabled and round-trips twice through
-ZigCSS before a second independent parse.
+`corpus.test.mjs` runs the exact Less 4.9.0 development oracle over this
+checksum-owned, frozen Less 4.6.7 corpus and baseline. CSS, normalized
+diagnostics, official formatted errors, and the adapter's complete explicit
+dependency inventory must agree with the frozen baseline. The forward
+oracle's `result.imports` is compared as an exact set under the closed,
+named `exactForwardOracleImportDrift` policy: its sole admitted case is
+`less-import-import-interpolation`, where Less 4.9.0 omits the inline
+`import/import/imports/logo.less` read while the adapter retains the complete
+frozen dependency inventory. Any new or unobserved drift fails the test. Eight
+bounded workers must repeat every adapter result exactly. Every successful CSS
+result then parses with independent recovery disabled and round-trips twice
+through ZigCSS before a second independent parse.
 
 Project JavaScript, user plugins, remote imports, package importers, and
 upstream cases that intentionally emit invalid or environment-specific CSS are

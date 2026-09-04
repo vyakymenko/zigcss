@@ -75,7 +75,7 @@ describe('experimental VS Code extension package', () => {
     const status = read('docs/src/content/docs/guide/status.md')
     const readme = read('vscode-extension/README.md')
 
-    expect(workflow).toContain('node-version: 22')
+    expect(workflow).toContain("node-version: '22.22.0'")
     expect(workflow).toContain('vscode-extension/package-lock.json')
     expect(workflow).toContain('working-directory: vscode-extension')
     expect(workflow).toContain('npm test && npm run package:check')

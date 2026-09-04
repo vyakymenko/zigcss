@@ -372,6 +372,30 @@ fn decodeScalar(bytes: []const u8, index: usize) DecodedScalar {
     return .{ .value = value, .len = sequence_length, .valid = true };
 }
 
+/// Original UTF-16 positions are cached only at sparse scalar boundaries. A
+/// lookup therefore scans at most one stride plus the tail of one UTF-8 scalar,
+/// while the cache remains bounded by the indexed source byte inventory.
+pub const position_checkpoint_stride: usize = 256;
+
+const PositionCheckpoint = struct {
+    offset: u32,
+    line: u32,
+    column: u32,
+};
+
+const PositionIndexRange = struct {
+    start: usize,
+    len: usize,
+};
+
+pub const PositionIndexStats = struct {
+    indexed_sources: usize,
+    indexed_source_bytes: u64,
+    checkpoints: usize,
+    lookup_scanned_bytes: u64,
+    max_lookup_scan_bytes: usize,
+};
+
 pub const Builder = struct {
     pub const Checkpoint = struct {
         segment_count: usize,
@@ -385,7 +409,14 @@ pub const Builder = struct {
     limits: Limits,
     segment_items: std.ArrayList(Segment) = .empty,
     name_items: std.ArrayList([]const u8) = .empty,
+    /// Keys borrow the individually owned byte slices in `name_items`.
+    name_index: std.StringHashMapUnmanaged(u32) = .empty,
     name_bytes: usize = 0,
+    position_source_index: std.AutoHashMapUnmanaged(u32, PositionIndexRange) = .empty,
+    position_checkpoints: std.ArrayList(PositionCheckpoint) = .empty,
+    position_indexed_source_bytes: u64 = 0,
+    position_lookup_scanned_bytes: u64 = 0,
+    position_max_lookup_scan_bytes: usize = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -396,6 +427,11 @@ pub const Builder = struct {
     }
 
     pub fn deinit(self: *Builder) void {
+        self.position_source_index.deinit(self.allocator);
+        self.position_checkpoints.deinit(self.allocator);
+        // The index borrows every key from `name_items`, so it must stop
+        // observing those keys before their backing allocations are freed.
+        self.name_index.deinit(self.allocator);
         for (self.name_items.items) |name| {
             if (name.len > 0) self.allocator.free(name);
         }
@@ -415,13 +451,19 @@ pub const Builder = struct {
         name: ?[]const u8,
     ) Error!void {
         self.sources.validateSpan(original) catch return error.InvalidSpan;
-        const original_position = self.sources.position(original.source, original.start) catch
-            return error.InvalidSpan;
+        const original_position = self.originalPosition(original.source, original.start) catch |err|
+            return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                else => error.InvalidSpan,
+            };
         try self.validateGenerated(generated);
         const replacing = self.isReplacing(generated);
         if (!replacing and self.segment_items.items.len >= self.limits.max_segments) {
             return error.MappingLimitExceeded;
         }
+        // Reserve the only fallible segment mutation before interning a new
+        // name. Once `internName` commits, segment publication cannot fail.
+        if (!replacing) try self.segment_items.ensureUnusedCapacity(self.allocator, 1);
         const name_id = if (name) |value| try self.internName(value) else null;
         const segment = Segment{
             .generated = generated,
@@ -433,7 +475,7 @@ pub const Builder = struct {
         if (replacing) {
             self.segment_items.items[self.segment_items.items.len - 1] = segment;
         } else {
-            try self.segment_items.append(self.allocator, segment);
+            self.segment_items.appendAssumeCapacity(segment);
         }
     }
 
@@ -449,6 +491,16 @@ pub const Builder = struct {
         };
     }
 
+    pub fn positionIndexStats(self: *const Builder) PositionIndexStats {
+        return .{
+            .indexed_sources = self.position_source_index.count(),
+            .indexed_source_bytes = self.position_indexed_source_bytes,
+            .checkpoints = self.position_checkpoints.items.len,
+            .lookup_scanned_bytes = self.position_lookup_scanned_bytes,
+            .max_lookup_scan_bytes = self.position_max_lookup_scan_bytes,
+        };
+    }
+
     pub fn restore(self: *Builder, checkpoint_value: Checkpoint) Error!void {
         if (checkpoint_value.segment_count > self.segment_items.items.len or
             (checkpoint_value.segment_count == 0) != (checkpoint_value.last_segment == null) or
@@ -458,6 +510,7 @@ pub const Builder = struct {
             return error.InvalidGeneratedPosition;
         }
         for (self.name_items.items[checkpoint_value.name_count..]) |name| {
+            std.debug.assert(self.name_index.remove(name));
             if (name.len > 0) self.allocator.free(name);
         }
         self.segment_items.shrinkRetainingCapacity(checkpoint_value.segment_count);
@@ -470,8 +523,14 @@ pub const Builder = struct {
 
     pub fn finish(self: *Builder) Error!Map {
         const segments = try self.segment_items.toOwnedSlice(self.allocator);
-        errdefer if (segments.len > 0) self.allocator.free(segments);
-        const names = try self.name_items.toOwnedSlice(self.allocator);
+        const names = self.name_items.toOwnedSlice(self.allocator) catch |err| {
+            self.segment_items = .fromOwnedSlice(segments);
+            return err;
+        };
+        // The returned map now owns every name allocation. Drop all borrowed
+        // keys before the builder can be reused with a fresh name inventory.
+        self.name_index.clearRetainingCapacity();
+        self.name_bytes = 0;
         return .{
             .allocator = self.allocator,
             .segment_items = segments,
@@ -510,9 +569,7 @@ pub const Builder = struct {
         for (name) |byte| {
             if (byte < 0x20 or byte == 0x7f) return error.InvalidName;
         }
-        for (self.name_items.items, 0..) |existing, index| {
-            if (std.mem.eql(u8, existing, name)) return @intCast(index);
-        }
+        if (self.name_index.get(name)) |index| return index;
         const next_bytes = std.math.add(usize, self.name_bytes, name.len) catch
             return error.NameLimitExceeded;
         if (self.name_items.items.len >= self.limits.max_names or
@@ -521,13 +578,171 @@ pub const Builder = struct {
         {
             return error.NameLimitExceeded;
         }
+        // Pre-reserve both containers before taking ownership of the key. No
+        // logical state changes until every fallible capacity operation and
+        // the name allocation have succeeded.
+        try self.name_items.ensureUnusedCapacity(self.allocator, 1);
+        try self.name_index.ensureUnusedCapacity(self.allocator, 1);
         const owned = try self.allocator.dupe(u8, name);
         errdefer if (owned.len > 0) self.allocator.free(owned);
-        try self.name_items.append(self.allocator, owned);
+        const index: u32 = @intCast(self.name_items.items.len);
+        self.name_items.appendAssumeCapacity(owned);
+        self.name_index.putAssumeCapacityNoClobber(owned, index);
         self.name_bytes = next_bytes;
-        return @intCast(self.name_items.items.len - 1);
+        return index;
+    }
+
+    fn originalPosition(
+        self: *Builder,
+        source_id: source.SourceId,
+        offset: u32,
+    ) Error!source.Position {
+        const file = self.sources.get(source_id) catch return error.InvalidSpan;
+        if (offset > file.bytes.len or file.line_starts.len == 0 or file.line_starts[0] != 0) {
+            return error.InvalidSpan;
+        }
+        const line_index = lineIndexAtOffset(file, offset) orelse return error.InvalidSpan;
+        const range = try self.ensurePositionIndex(file);
+
+        var scan_offset = file.line_starts[line_index];
+        var column: u32 = 0;
+        const checkpoints = self.position_checkpoints.items[range.start..][0..range.len];
+        var low: usize = 0;
+        var high = checkpoints.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (checkpoints[middle].offset <= offset) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        if (low > 0) {
+            const candidate = checkpoints[low - 1];
+            if (candidate.line == line_index) {
+                scan_offset = candidate.offset;
+                column = candidate.column;
+            }
+        }
+
+        var cursor: usize = scan_offset;
+        while (cursor < offset) {
+            const decoded = decodeScalar(file.bytes, cursor);
+            if (cursor + decoded.len > offset) return error.InvalidSpan;
+            cursor += decoded.len;
+            column = std.math.add(
+                u32,
+                column,
+                if (decoded.value > 0xffff) 2 else 1,
+            ) catch return error.InvalidSpan;
+        }
+        const scanned_bytes: usize = @as(usize, offset) - @as(usize, scan_offset);
+        self.position_lookup_scanned_bytes = std.math.add(
+            u64,
+            self.position_lookup_scanned_bytes,
+            scanned_bytes,
+        ) catch std.math.maxInt(u64);
+        self.position_max_lookup_scan_bytes = @max(
+            self.position_max_lookup_scan_bytes,
+            scanned_bytes,
+        );
+        return .{ .line = @intCast(line_index), .column = column };
+    }
+
+    fn ensurePositionIndex(
+        self: *Builder,
+        file: *const source.File,
+    ) std.mem.Allocator.Error!PositionIndexRange {
+        if (self.position_source_index.get(file.id.value)) |range| return range;
+
+        const checkpoint_count = countPositionCheckpoints(file);
+        std.debug.assert(checkpoint_count <= file.bytes.len / position_checkpoint_stride);
+        // Reserve every cache container before publishing either the range or
+        // any checkpoint. The ArrayList growth is deliberately last: after it
+        // succeeds, cache construction has no remaining failure point.
+        try self.position_source_index.ensureUnusedCapacity(self.allocator, 1);
+        try self.position_checkpoints.ensureUnusedCapacity(self.allocator, checkpoint_count);
+
+        const range = PositionIndexRange{
+            .start = self.position_checkpoints.items.len,
+            .len = checkpoint_count,
+        };
+        appendPositionCheckpointsAssumeCapacity(&self.position_checkpoints, file);
+        std.debug.assert(self.position_checkpoints.items.len == range.start + range.len);
+        self.position_source_index.putAssumeCapacityNoClobber(file.id.value, range);
+        self.position_indexed_source_bytes += file.bytes.len;
+        return range;
     }
 };
+
+fn lineIndexAtOffset(file: *const source.File, offset: u32) ?usize {
+    var low: usize = 0;
+    var high = file.line_starts.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (file.line_starts[middle] <= offset) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    if (low == 0) return null;
+    return low - 1;
+}
+
+fn countPositionCheckpoints(file: *const source.File) usize {
+    var count: usize = 0;
+    for (file.line_starts, 0..) |line_start, line_index| {
+        const line_end: usize = if (line_index + 1 < file.line_starts.len)
+            file.line_starts[line_index + 1]
+        else
+            file.bytes.len;
+        var checkpoint_offset: usize = line_start;
+        var cursor: usize = line_start;
+        while (cursor < line_end) {
+            cursor += decodeScalar(file.bytes, cursor).len;
+            std.debug.assert(cursor <= line_end);
+            if (cursor - checkpoint_offset >= position_checkpoint_stride) {
+                count += 1;
+                checkpoint_offset = cursor;
+            }
+        }
+    }
+    return count;
+}
+
+fn appendPositionCheckpointsAssumeCapacity(
+    checkpoints: *std.ArrayList(PositionCheckpoint),
+    file: *const source.File,
+) void {
+    for (file.line_starts, 0..) |line_start, line_index| {
+        const line_end: usize = if (line_index + 1 < file.line_starts.len)
+            file.line_starts[line_index + 1]
+        else
+            file.bytes.len;
+        var checkpoint_offset: usize = line_start;
+        var cursor: usize = line_start;
+        var column: u32 = 0;
+        while (cursor < line_end) {
+            const decoded = decodeScalar(file.bytes, cursor);
+            cursor += decoded.len;
+            std.debug.assert(cursor <= line_end);
+            column = std.math.add(
+                u32,
+                column,
+                if (decoded.value > 0xffff) 2 else 1,
+            ) catch unreachable;
+            if (cursor - checkpoint_offset >= position_checkpoint_stride) {
+                checkpoints.appendAssumeCapacity(.{
+                    .offset = @intCast(cursor),
+                    .line = @intCast(line_index),
+                    .column = column,
+                });
+                checkpoint_offset = cursor;
+            }
+        }
+    }
+}
 
 fn positionLess(left: GeneratedPosition, right: GeneratedPosition) bool {
     return left.line < right.line or (left.line == right.line and left.column < right.column);

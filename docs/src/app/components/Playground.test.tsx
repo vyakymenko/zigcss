@@ -5,8 +5,9 @@ import { Playground } from './Playground'
 
 describe('Playground', () => {
   it('shows the playground as unavailable', () => {
-    render(<BrowserRouter><Playground /></BrowserRouter>)
+    const { container } = render(<BrowserRouter><Playground /></BrowserRouter>)
     expect(screen.getByRole('heading', { name: /playground unavailable/i })).toBeInTheDocument()
+    expect(container.querySelector('section')).toHaveClass('bg-white', 'text-slate-900')
     expect(screen.getByText(/public compile API is disabled/i)).toBeInTheDocument()
   })
 

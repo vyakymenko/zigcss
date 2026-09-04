@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import sizeOf from 'image-size'
 import less from 'less'
 import {
   ProviderFailure,
@@ -9,9 +8,10 @@ import {
 } from '../metadata.mjs'
 import { createConfinedResolver } from '../resolver.mjs'
 import { parseSourceMap } from '../source-map.mjs'
+import { imageDimensions } from '../image-dimensions.mjs'
 import { createLessImportAuthority } from './less-importer.mjs'
 
-export const LESS_VERSION = '4.6.7'
+export const LESS_VERSION = '4.9.0'
 
 const IMPORT_SENTINEL = 'ZIGCSS_LESS_IMPORTS_UNAVAILABLE'
 const PLUGIN_DISABLED_MESSAGE = '@plugin statements are not allowed when disablePluginRule is set to true'
@@ -170,7 +170,7 @@ function ownedImageDimensions(functionContext, filePathNode, fileManager) {
     throw { type: 'File', message: `Image file '${filePath}' was not found` }
   }
   try {
-    return sizeOf(loaded.contents)
+    return imageDimensions(loaded.contents)
   } catch {
     throw { type: 'File', message: `Image file '${filePath}' is invalid` }
   }

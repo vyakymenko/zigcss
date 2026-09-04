@@ -48,7 +48,7 @@ export function BootSequence() {
         </p>
         <div className="mt-8 space-y-3 text-sm sm:text-base">
           {bootLines.map((line, index) => (
-            <p key={line} className="boot-line" style={{ animationDelay: `${index * 140}ms` }}>
+            <p key={line} className={`boot-line boot-line-delay-${index}`}>
               <span className="text-[#b7f34a]">[{index + 1}/4]</span> {line}
             </p>
           ))}

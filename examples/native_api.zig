@@ -14,7 +14,7 @@ const examples = [_]Example{
     .{ .syntax = .scss, .filename = "example.scss", .source = "$color: red; .card { color: $color; }", .expected = ".card{color:red}" },
     .{ .syntax = .sass, .filename = "example.sass", .source = "$color: red\n.card\n  color: $color\n", .expected = ".card{color:red}" },
     .{ .syntax = .less, .filename = "example.less", .source = "@color: red; .card { color: @color; }", .expected = ".card{color:red}" },
-    .{ .syntax = .stylus, .filename = "example.styl", .source = "color = red\n.card\n  color color\n", .expected = ".card{color:#f00}" },
+    .{ .syntax = .stylus, .filename = "example.styl", .source = "color = red\n.card\n  color color\n", .expected = ".card{color:red}" },
 };
 
 pub fn main() !void {
@@ -25,6 +25,16 @@ pub fn main() !void {
     const root = try std.fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(root);
 
+    var targets = switch (try zigcss.prefixing.target_query.parse(
+        allocator,
+        "chrome >= 120, edge >= 120, firefox >= 120",
+        .{},
+    )) {
+        .query => |query| query,
+        .invalid => return error.InvalidTargetQuery,
+    };
+    defer targets.deinit();
+
     var buffer: [1024]u8 = undefined;
     var writer = std.fs.File.stdout().writer(&buffer);
     inline for (examples) |example| {
@@ -34,6 +44,9 @@ pub fn main() !void {
             .syntax = example.syntax,
             .root_paths = &.{root},
             .format = .minified,
+            .optimize = true,
+            .prefix = true,
+            .targets = &targets,
         });
         defer result.deinit();
         if (result.diagnostics.len != 0 or !std.mem.eql(u8, result.css, example.expected)) {

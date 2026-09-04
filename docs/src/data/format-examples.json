@@ -37,7 +37,7 @@
     "input": "@accent: #b7f34a;\n\n.button {\n  background: @accent;\n\n  &:hover {\n    filter: brightness(1.08);\n  }\n}",
     "output": ".button{background:#b7f34a}.button:hover{filter:brightness(1.08)}",
     "pipeline": "Less → native Less frontend → ZigCSS core → compact CSS",
-    "note": "The native Less path is checked against the development-only Less 4.6.7 oracle and rejects invalid generated CSS before output."
+    "note": "The native Less path retains its frozen 4.6.7 conformance baseline while exact Less 4.9.0 serves as the development-only forward oracle; invalid generated CSS is rejected before output."
   },
   {
     "id": "stylus",

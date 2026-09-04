@@ -1,0 +1,5 @@
+@use "tokens";
+
+.zigcss-current-native {
+  color: tokens.$accent;
+}

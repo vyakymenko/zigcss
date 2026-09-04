@@ -1,27 +1,175 @@
 {
   "name": "zigcss",
-  "version": "0.6.0",
+  "version": "0.7.0-rc.1",
   "description": "Self-contained native CSS, SCSS, Sass, Less, and Stylus compiler written in Zig",
-  "main": "index.js",
+  "main": "api.cjs",
+  "types": "api.d.ts",
   "bin": {
-    "zigcss": "index.js"
+    "zigcss": "index.js",
+    "zigcss-install": "install.js"
   },
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "import": {
+        "types": "./api.d.mts",
+        "default": "./api.mjs"
+      },
+      "require": {
+        "types": "./api.d.cts",
+        "default": "./api.cjs"
+      }
+    },
+    "./adapters": {
+      "import": {
+        "types": "./adapters/index.d.mts",
+        "default": "./adapters/index.mjs"
+      },
+      "require": {
+        "types": "./adapters/index.d.cts",
+        "default": "./adapters/index.cjs"
+      }
+    },
+    "./vite": {
+      "import": {
+        "types": "./adapters/vite.d.mts",
+        "default": "./adapters/vite.mjs"
+      },
+      "require": {
+        "types": "./adapters/vite.d.cts",
+        "default": "./adapters/vite.cjs"
+      }
+    },
+    "./rollup": {
+      "import": {
+        "types": "./adapters/rollup.d.mts",
+        "default": "./adapters/rollup.mjs"
+      },
+      "require": {
+        "types": "./adapters/rollup.d.cts",
+        "default": "./adapters/rollup.cjs"
+      }
+    },
+    "./esbuild": {
+      "import": {
+        "types": "./adapters/esbuild.d.mts",
+        "default": "./adapters/esbuild.mjs"
+      },
+      "require": {
+        "types": "./adapters/esbuild.d.cts",
+        "default": "./adapters/esbuild.cjs"
+      }
+    },
+    "./bun": {
+      "import": {
+        "types": "./adapters/bun.d.mts",
+        "default": "./adapters/bun.mjs"
+      },
+      "require": {
+        "types": "./adapters/bun.d.cts",
+        "default": "./adapters/bun.cjs"
+      }
+    },
+    "./webpack": {
+      "import": {
+        "types": "./adapters/webpack.d.mts",
+        "default": "./adapters/webpack.cjs"
+      },
+      "require": {
+        "types": "./adapters/webpack.d.cts",
+        "default": "./adapters/webpack.cjs"
+      }
+    },
+    "./rspack": {
+      "import": {
+        "types": "./adapters/rspack.d.mts",
+        "default": "./adapters/rspack.cjs"
+      },
+      "require": {
+        "types": "./adapters/rspack.d.cts",
+        "default": "./adapters/rspack.cjs"
+      }
+    },
     "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "adapters": [
+        "adapters/index.d.ts"
+      ],
+      "vite": [
+        "adapters/vite.d.ts"
+      ],
+      "rollup": [
+        "adapters/rollup.d.ts"
+      ],
+      "esbuild": [
+        "adapters/esbuild.d.ts"
+      ],
+      "bun": [
+        "adapters/bun.d.ts"
+      ],
+      "webpack": [
+        "adapters/webpack.d.ts"
+      ],
+      "rspack": [
+        "adapters/rspack.d.ts"
+      ]
+    }
   },
   "files": [
     "LICENSE",
     "PREPROCESSOR-SBOM.spdx.json",
     "README.md",
     "THIRD_PARTY_NOTICES.md",
+    "adapters/bun.cjs",
+    "adapters/bun.d.cts",
+    "adapters/bun.d.mts",
+    "adapters/bun.d.ts",
+    "adapters/bun.mjs",
+    "adapters/core.cjs",
+    "adapters/esbuild.cjs",
+    "adapters/esbuild.d.cts",
+    "adapters/esbuild.d.mts",
+    "adapters/esbuild.d.ts",
+    "adapters/esbuild.mjs",
+    "adapters/index.cjs",
+    "adapters/index.d.cts",
+    "adapters/index.d.mts",
+    "adapters/index.d.ts",
+    "adapters/index.mjs",
+    "adapters/rollup.cjs",
+    "adapters/rollup.d.cts",
+    "adapters/rollup.d.mts",
+    "adapters/rollup.d.ts",
+    "adapters/rollup.mjs",
+    "adapters/rspack.cjs",
+    "adapters/rspack.d.cts",
+    "adapters/rspack.d.mts",
+    "adapters/rspack.d.ts",
+    "adapters/vite.cjs",
+    "adapters/vite.d.cts",
+    "adapters/vite.d.mts",
+    "adapters/vite.d.ts",
+    "adapters/vite.mjs",
+    "adapters/webpack-types.d.ts",
+    "adapters/webpack.cjs",
+    "adapters/webpack.d.cts",
+    "adapters/webpack.d.mts",
+    "adapters/webpack.d.ts",
+    "api.cjs",
+    "api.d.cts",
+    "api.d.mts",
+    "api.d.ts",
+    "api.mjs",
     "index.js",
-    "install.js"
+    "install.js",
+    "native-integrity.json"
   ],
   "scripts": {
     "postinstall": "node install.js",
     "dev": "node dev.js",
     "dev:docker": "docker compose -f docker-compose.dev.yml up --build",
+    "test:dev-container": "node scripts/smoke-development-container.mjs",
     "build:website": "cd docs && npm ci --ignore-scripts && npm run build",
     "generate:prefix-data": "node scripts/generate-prefix-data.mjs --write",
     "check:prefix-data": "node scripts/generate-prefix-data.mjs --check",
@@ -34,6 +182,13 @@
     "check:dependencies": "node scripts/audit-production-dependencies.mjs --check",
     "test:dependencies": "node --test scripts/audit-production-dependencies.test.mjs",
     "audit:production": "node scripts/audit-production-dependencies.mjs --audit",
+    "audit:development": "node scripts/audit-production-dependencies.mjs --audit-development",
+    "audit:documentation": "npm --prefix docs audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high",
+    "audit:vscode": "npm --prefix vscode-extension audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high",
+    "audit:turbopack-example": "npm --prefix examples/next-turbopack audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high",
+    "audit:sveltekit-example": "npm --prefix examples/sveltekit audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high",
+    "audit:astro-example": "npm --prefix examples/astro audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high",
+    "audit:nuxt-example": "npm --prefix examples/nuxt audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high",
     "generate:benchmark-corpora": "node scripts/generate-benchmark-corpora.mjs --write",
     "check:benchmark-corpora": "node scripts/generate-benchmark-corpora.mjs --check",
     "test:benchmark-corpora": "node --test scripts/generate-benchmark-corpora.test.mjs",
@@ -52,18 +207,35 @@
     "check:benchmark-publication": "node scripts/publish-benchmark-report.mjs --check",
     "test:benchmark-publication": "node --test scripts/publish-benchmark-report.test.mjs",
     "check:workflows": "node scripts/validate-workflows.mjs --check",
-    "test:workflows": "node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/validate-workflows.test.mjs",
+    "test:workflows": "node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/smoke-development-container.test.mjs scripts/test-release-container.test.mjs scripts/validate-workflows.test.mjs scripts/verify-build-workflow-run.test.mjs",
+    "check:nix-flake": "node scripts/validate-nix-flake.mjs --check",
+    "test:nix-flake": "node --test scripts/validate-nix-flake.test.mjs",
     "check:version": "node scripts/validate-release-version.mjs --check",
     "test:version": "node --test scripts/validate-release-version.test.mjs",
+    "check:release-admission": "node scripts/validate-release-admission.mjs --check",
+    "test:release-admission": "node --test scripts/validate-release-admission.test.mjs",
     "check:release-metadata": "node scripts/generate-release-metadata.mjs --check-workflow",
-    "test:release-metadata": "node --test scripts/generate-release-metadata.test.mjs",
-    "test:npm-publication": "node --test scripts/check-npm-version-availability.test.mjs scripts/verify-npm-publication.test.mjs",
+    "test:release-metadata": "node --test scripts/create-release-archive.test.mjs scripts/generate-release-metadata.test.mjs",
+    "check:native-integrity": "node scripts/validate-native-integrity.mjs --check",
+    "test:native-integrity": "node --test scripts/generate-native-integrity.test.mjs scripts/validate-native-integrity.test.mjs",
+    "test:npm-publication": "node --test scripts/check-npm-version-availability.test.mjs scripts/npm-package-artifact.test.mjs scripts/smoke-public-delivery.test.mjs scripts/verify-npm-publication.test.mjs",
     "test:release-smoke": "node --test scripts/smoke-release-artifact.test.mjs",
     "test:release-consumers": "node --test scripts/verify-release-consumers.test.mjs",
     "test:release-container": "node scripts/test-release-container.mjs",
     "test:release-homebrew": "node scripts/verify-homebrew-formula.mjs --smoke",
     "test:zig-package": "node --test scripts/verify-zig-package.test.mjs",
     "test:node-wrapper": "node --test scripts/verify-node-wrapper.test.mjs",
+    "test:node-api": "node --test scripts/verify-node-api.test.mjs",
+    "test:bundler-adapters": "node --test scripts/verify-bundler-adapters.test.mjs",
+    "test:turbopack-example": "node --test scripts/verify-turbopack-example.test.mjs",
+    "test:next-webpack-example": "node --test scripts/verify-next-webpack-example.test.mjs",
+    "test:sveltekit-example": "node --test scripts/verify-sveltekit-example.test.mjs",
+    "test:astro-example": "node --test scripts/verify-astro-example.test.mjs",
+    "test:nuxt-example": "node --test scripts/verify-nuxt-example.test.mjs",
+    "test:parcel-example": "node --test scripts/verify-parcel-example.test.mjs",
+    "test:types": "tsc -p tests/typescript/tsconfig.json",
+    "test:build-systems": "node --test scripts/verify-build-system-examples.test.mjs",
+    "test:package-managers": "node --test scripts/verify-package-managers.test.mjs",
     "test:vscode": "npm --prefix vscode-extension test && npm --prefix vscode-extension run package:check",
     "test:neovim": "node --test scripts/verify-neovim-config.test.mjs && node scripts/test-neovim-integration.mjs",
     "test:preprocessor-host": "node --test tests/preprocessors/protocol/*.test.mjs",
@@ -121,7 +293,7 @@
       },
       "less": {
         "package": "less",
-        "version": "4.6.7",
+        "version": "4.9.0",
         "license": "Apache-2.0",
         "syntaxes": [
           "less"
@@ -168,18 +340,31 @@
     "node": ">=20.19.0"
   },
   "preferGlobal": true,
+  "preferUnplugged": true,
   "dependencies": {},
   "overrides": {
     "brace-expansion": "5.0.9"
   },
   "devDependencies": {
     "@mdn/browser-compat-data": "8.0.0",
+    "@parcel/diagnostic": "2.16.4",
+    "@parcel/plugin": "2.16.4",
+    "@parcel/source-map": "2.1.1",
+    "@rspack/core": "2.2.2",
     "esbuild": "0.28.1",
-    "image-size": "0.5.5",
-    "less": "4.6.7",
+    "less": "4.9.0",
     "lightningcss": "1.30.1",
     "lightningcss-cli": "1.30.1",
+    "next": "16.3.4",
+    "parcel": "2.16.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "rollup": "4.63.1",
     "sass": "1.101.0",
-    "stylus": "0.64.0"
-  }
+    "stylus": "0.64.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "webpack": "5.110.2"
+  },
+  "packageManager": "pnpm@11.25.0+sha512.5cde925b4f075f725eb71fbae18a42ffe784524789f19b61c731cb8721ec28aaee160e01a8d5af4fedb2a42cdbf300efe23db356b0d4a17b4d63e11f8ab7c956"
 }

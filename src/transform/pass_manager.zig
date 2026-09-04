@@ -111,6 +111,8 @@ pub const Context = struct {
     compilation: *compilation.Compilation,
     source_id: source.SourceId,
     scratch_allocator: std.mem.Allocator,
+    last_exact_minified_mapped_root: ?*const ast.RuleList = null,
+    structural_minified_mapped_proof_emits: usize = 0,
 
     pub fn init(
         compilation_context: *compilation.Compilation,
@@ -135,6 +137,35 @@ pub const Context = struct {
 
     pub fn file(self: *Context) *const source.SourceFile {
         return self.compilation.sources.get(self.source_id) catch unreachable;
+    }
+
+    /// This cache is deliberately pointer-exact: a distinct root must still
+    /// prove its minified CSS and source-map emission even when structurally
+    /// equal to the last successfully checked root. Plan roots live in the
+    /// compilation arena, which does not free or reuse individual addresses
+    /// while this Context and its Compilation remain alive.
+    pub fn hasExactMinifiedMappedEmissionProof(
+        self: *const Context,
+        rules: *const ast.RuleList,
+    ) bool {
+        return self.last_exact_minified_mapped_root == rules;
+    }
+
+    /// Commits only a fully successful proof. Callers pass the number of
+    /// structural emitter invocations used by that proof (one for an
+    /// emittability check, two for a differential comparison).
+    pub fn commitExactMinifiedMappedEmissionProof(
+        self: *Context,
+        rules: *const ast.RuleList,
+        structural_emits: usize,
+    ) void {
+        std.debug.assert(structural_emits > 0);
+        self.last_exact_minified_mapped_root = rules;
+        self.structural_minified_mapped_proof_emits +|= structural_emits;
+    }
+
+    pub fn structuralProofEmitCount(self: *const Context) usize {
+        return self.structural_minified_mapped_proof_emits;
     }
 };
 

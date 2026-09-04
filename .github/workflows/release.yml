@@ -7,15 +7,24 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: zigcss-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   npm-preflight:
     name: Verify npm Publication
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
+      actions: read
       contents: read
     outputs:
       release-channel: ${{ steps.npm-policy.outputs.channel }}
       github-prerelease: ${{ steps.npm-policy.outputs.github_prerelease }}
+      npm-package-archive: ${{ steps.npm-package.outputs.archive-name }}
+      npm-package-shasum: ${{ steps.npm-package.outputs.archive-shasum }}
+      npm-package-integrity: ${{ steps.npm-package.outputs.archive-integrity }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,10 +38,25 @@ jobs:
       - name: Verify native zero-dependency package
         run: npm run test:preprocessor-package && npm run check:preprocessor-package
 
-      - name: Verify synchronized release version for publication
-        run: npm run check:version -- --tag "$GITHUB_REF_NAME"
+      - name: Verify packaged Node API
+        run: npm run test:node-api
 
-      - name: Verify stable release promotion
+      - name: Verify synchronized release version for publication
+        run: |
+          npm run check:version -- --tag "$GITHUB_REF_NAME"
+          node scripts/validate-native-integrity.mjs --check
+
+      - name: Verify successful Build evidence for release commit
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          candidate_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          node scripts/verify-build-workflow-run.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$candidate_commit"
+
+      - name: Verify release candidate admission
         shell: bash
         run: |
           candidate_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
@@ -40,7 +64,7 @@ jobs:
             git ls-remote --exit-code --refs origin refs/heads/main |
               cut -f1
           )"
-          npm run check:stable-release -- \
+          node scripts/validate-release-admission.mjs --check \
             --release-tag "$GITHUB_REF_NAME" \
             --candidate-commit "$candidate_commit" \
             --origin-main-commit "$origin_main_commit"
@@ -60,10 +84,37 @@ jobs:
             --versions-file "$versions" \
             --github-output "$GITHUB_OUTPUT"
 
+      - name: Pack exact npm package
+        id: npm-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          package_directory="$RUNNER_TEMP/zigcss-npm-publication"
+          pack_description="$RUNNER_TEMP/zigcss-npm-pack.json"
+          mkdir "$package_directory"
+          npm pack --ignore-scripts --json \
+            --pack-destination "$package_directory" > "$pack_description"
+          archive="$package_directory/zigcss-$version.tgz"
+          node scripts/npm-package-artifact.mjs prepare \
+            --archive "$archive" \
+            --version "$version" \
+            --pack-description "$pack_description" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Upload exact npm package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-publication-${{ github.sha }}
+          path: ${{ runner.temp }}/zigcss-npm-publication/${{ steps.npm-package.outputs.archive-name }}
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Release ${{ matrix.target }}
     needs: npm-preflight
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     permissions:
       attestations: write
       contents: read
@@ -112,6 +163,12 @@ jobs:
         with:
           node-version: '20.19.0'
 
+      - name: Download exact npm package for smoke
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-publication-${{ github.sha }}
+          path: ${{ runner.temp }}/zigcss-npm-publication
+
       - name: Setup Zig
         uses: ./.github/actions/setup-zig
         with:
@@ -132,29 +189,32 @@ jobs:
       - name: Plan Release Assets
         shell: bash
         run: |
-          base="zigcss-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          version="${GITHUB_REF_NAME#v}"
+          epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"
+          base="zigcss-v${version}-${{ matrix.target }}"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"
           echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"
           echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"
           echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"
-          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
 
       - name: Create Archive
         shell: bash
         run: |
-          mkdir -p release-assets/staging
-          cp "zig-out/bin/${{ matrix.binary-name }}" release-assets/staging/
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            (
-              cd release-assets/staging
-              powershell -NoProfile -Command "Compress-Archive -LiteralPath '${{ matrix.binary-name }}' -DestinationPath '../$RELEASE_ARCHIVE' -Force"
-            )
-          else
-            COPYFILE_DISABLE=1 tar -czf "release-assets/$RELEASE_ARCHIVE" \
-              -C release-assets/staging "${{ matrix.binary-name }}"
-          fi
-          rm -rf release-assets/staging
+          mkdir -p release-assets
+          node scripts/create-release-archive.mjs \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Verify Committed Native Integrity
+        shell: bash
+        run: |
+          node scripts/validate-native-integrity.mjs \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION"
 
       - name: Generate SHA-256 Manifest and SPDX SBOM
         shell: bash
@@ -187,7 +247,10 @@ jobs:
             --archive "release-assets/$RELEASE_ARCHIVE" \
             --binary "zig-out/bin/${{ matrix.binary-name }}" \
             --target "${{ matrix.target }}" \
-            --version "$RELEASE_VERSION"
+            --version "$RELEASE_VERSION" \
+            --npm-package "$NPM_PACKAGE_ARCHIVE"
+        env:
+          NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}
 
       - name: Attest Release Provenance
         id: provenance
@@ -228,11 +291,19 @@ jobs:
             --source-date-epoch "$SOURCE_DATE_EPOCH"
           gh attestation verify "release-assets/$RELEASE_ARCHIVE" \
             -R "$GITHUB_REPOSITORY" \
-            --bundle "release-assets/${RELEASE_BASE}.provenance.sigstore.jsonl"
+            --bundle "release-assets/${RELEASE_BASE}.provenance.sigstore.jsonl" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --signer-digest "$GITHUB_SHA" \
+            --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA"
           gh attestation verify "release-assets/$RELEASE_ARCHIVE" \
             -R "$GITHUB_REPOSITORY" \
             --bundle "release-assets/${RELEASE_BASE}.sbom.sigstore.jsonl" \
-            --predicate-type https://spdx.dev/Document/v2.3
+            --predicate-type https://spdx.dev/Document/v2.3 \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --signer-digest "$GITHUB_SHA" \
+            --source-ref "refs/tags/$GITHUB_REF_NAME" \
+            --source-digest "$GITHUB_SHA"
 
       - name: Upload Release Assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -250,6 +321,7 @@ jobs:
     name: Create Release
     needs: [npm-preflight, release]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -260,6 +332,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
+          pattern: zigcss-*
 
       - name: Get Version
         id: version
@@ -287,7 +360,7 @@ jobs:
             - macOS (x86_64, aarch64)
             - Windows (x86_64)
 
-            Executable preprocessor plugins and project code remain outside the native product contract. Optimizer transforms, native CSS CLI source-map output, browser targeting, alternate ecosystem adapters, and the public compile service retain their documented experimental or unavailable boundaries. Public performance comparisons are withdrawn until a controlled scheduled archive is selected and reproduced by the BENCH-007 publication gate.
+            The same closed verified optimizer runs directly for CSS and after native frontend evaluation for SCSS, indented Sass, Less, and Stylus. It remains incompatible with source maps, and profiling remains CSS-only. The verified eight-feature target-prefix pass runs after frontend evaluation and any optimizer fixed point for all five syntaxes, requires a strict explicit six-browser minimum query, and does not claim general autoprefixing or Browserslist behavior. Executable preprocessor plugins and project code remain outside the native product contract. Broader compatibility data, alternate ecosystem adapters, and the public compile service retain their documented experimental or unavailable boundaries. Public performance comparisons are withdrawn until a controlled scheduled archive is selected and reproduced by the BENCH-007 publication gate.
 
           draft: false
           prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}
@@ -296,6 +369,7 @@ jobs:
     name: Publish to npm
     needs: [npm-preflight, create-release]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -309,11 +383,52 @@ jobs:
           node-version: '20.19.0'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Download exact npm package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-publication-${{ github.sha }}
+          path: ${{ runner.temp }}/zigcss-npm-publication
+
+      - name: Verify exact npm package handoff
+        shell: bash
+        run: |
+          node scripts/npm-package-artifact.mjs verify \
+            --archive "$NPM_PACKAGE_ARCHIVE" \
+            --version "${GITHUB_REF_NAME#v}" \
+            --expected-shasum "${{ needs.npm-preflight.outputs.npm-package-shasum }}" \
+            --expected-integrity "${{ needs.npm-preflight.outputs.npm-package-integrity }}"
+        env:
+          NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}
+
       - name: Publish to npm
-        run: npm publish --tag "$RELEASE_CHANNEL" --provenance
+        run: npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}
           RELEASE_CHANNEL: ${{ needs.npm-preflight.outputs.release-channel }}
 
       - name: Verify npm publication
-        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}"
+        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}" --archive "$NPM_PACKAGE_ARCHIVE"
+        env:
+          NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}
+
+  anonymous-public-delivery:
+    name: Verify Anonymous Public Delivery
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout verification source without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.19.0'
+
+      - name: Smoke anonymous canonical npm delivery
+        run: node scripts/smoke-public-delivery.mjs --version "${GITHUB_REF_NAME#v}"

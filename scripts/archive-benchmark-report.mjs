@@ -20,6 +20,7 @@ const contract = {
     labels: ['self-hosted', 'linux', 'x64', 'zigcss-benchmark-v1'],
     platform: 'linux',
     architecture: 'x64',
+    nodeVersion: '22.22.0',
     fingerprintFields: [
       'platform',
       'architecture',
@@ -121,6 +122,9 @@ function validateControlledReport(report) {
   }
   if (report.environment.architecture !== contract.runner.architecture) {
     fail(`controlled hardware architecture must be ${contract.runner.architecture}`)
+  }
+  if (report.environment.nodeVersion !== `v${contract.runner.nodeVersion}`) {
+    fail(`controlled benchmark Node.js version must be v${contract.runner.nodeVersion}`)
   }
   validateBenchmarkHostAttestation(report.environment.hostAttestation, { controlledRequired: true })
 }
@@ -251,6 +255,11 @@ export function validateBenchmarkArchiveWorkflowSource(benchmarkWorkflow, buildW
     'scheduled workflow must use read-only repository contents',
   )
   requireContains(benchmarkWorkflow, 'timeout-minutes: 45', 'scheduled workflow timeout drifted')
+  requireContains(
+    benchmarkWorkflow,
+    `- name: Setup Node.js\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0\n        with:\n          node-version: '${contract.runner.nodeVersion}'`,
+    `scheduled workflow must use exact Node.js ${contract.runner.nodeVersion}`,
+  )
   if (benchmarkWorkflow.includes('    env:\n      BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}')) {
     fail('scheduled workflow runner context must be resolved only in step-local environment')
   }

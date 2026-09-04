@@ -42,7 +42,7 @@ function makeReleaseReady(version = '0.6.0-rc.2') {
 
 test('accepts the published native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 9)
+  assert.equal(contract.schemaVersion, 10)
   assert.equal(contract.state, 'native-graduated')
   assert.equal(contract.nativeReleaseReady, true)
   assert.equal(contract.nativeReleaseVersion, '0.6.0-rc.2')
@@ -217,12 +217,15 @@ test('accepts the published native stylesheet implementation contract', () => {
         'zig-api',
         'binary-cli',
         'javascript-wrapper',
+        'programmatic-node-api',
         'files-and-stdin',
         'batch',
         'watch',
         'parallel',
         'diagnostics-and-dependencies',
         'source-maps',
+        'verified-optimizer',
+        'verified-target-prefix',
       ],
       providerProcesses: 0,
     },
@@ -262,6 +265,23 @@ test('accepts the published native stylesheet implementation contract', () => {
       evidenceTests: [
         'javascript wrapper routes the finite native syntax set through the installed binary',
         'javascript wrapper keeps native routing explicit and ungated preprocessors fail closed',
+      ],
+    }, {
+      id: 'programmatic-node-api',
+      releaseGapFamily: 'native-programmatic-node-api-routing',
+      state: 'verified',
+      evidenceTests: [
+        'programmatic Node API exposes matching CommonJS and real ESM surfaces',
+        'binary hidden Node route dispatches one typed bounded frame',
+        'detectSyntax owns the closed five-syntax extension set',
+        'string API routes all five syntaxes through one exact framed request',
+        'file APIs infer all five syntaxes and default roots to the entry directory',
+        'request normalization carries maps, dependencies, optimizer, prefix query, and roots',
+        'source parents and explicit roots are canonical across directory symlinks',
+        'validation is closed and rejects unsafe combinations before process launch',
+        'compile failures expose immutable diagnostics and never partial CSS',
+        'malformed, truncated, mismatched, oversized, and invalid typed responses fail closed',
+        'async API enforces timeout and AbortSignal termination',
       ],
     }, {
       id: 'files-and-stdin',
@@ -318,7 +338,32 @@ test('accepts the published native stylesheet implementation contract', () => {
         'external Zig API composes imported Unicode source positions without intermediate leaks',
         'binary CLI routes composed native source maps through files stdin and parallel batches',
         'binary CLI native watch atomically replaces CSS and its composed source map',
+        'binary CLI routes stable CSS source maps through files stdin and parallel batches',
+        'binary CLI stable CSS watch atomically replaces CSS and its inline source map',
         'javascript wrapper routes the finite native syntax set through the installed binary',
+      ],
+    }, {
+      id: 'verified-optimizer',
+      releaseGapFamily: 'native-verified-optimizer-routing',
+      state: 'verified',
+      evidenceTests: [
+        'native compiler applies the closed optimizer after every private frontend',
+        'external Zig API applies the verified optimizer to the finite native syntax set',
+        'binary CLI applies the verified optimizer to native files stdin and parallel batches',
+        'binary CLI native optimizer watch commits only byte-stable output',
+        'binary CLI rejects native maps plus optimizer before reading any syntax',
+        'javascript wrapper forwards native optimizer requests unchanged',
+      ],
+    }, {
+      id: 'verified-target-prefix',
+      releaseGapFamily: 'native-verified-target-prefix-routing',
+      state: 'verified',
+      evidenceTests: [
+        'native compiler applies verified target prefixing after every private frontend',
+        'external Zig API applies verified target prefixing to the finite native syntax set',
+        'binary CLI applies verified target prefixing to native files stdin maps optimize and parallel batches',
+        'binary CLI native target prefix watch retains output recovers and shares one immutable query',
+        'javascript wrapper forwards verified target prefix requests unchanged',
       ],
     }],
   })
@@ -487,7 +532,8 @@ test('accepts the published native stylesheet implementation contract', () => {
     oracle: {
       id: 'less',
       package: 'less',
-      version: '4.6.7',
+      developmentVersion: '4.9.0',
+      baselineVersion: '4.6.7',
       selection: 'tests/preprocessors/less/corpus/selection.json',
       caseCount: 88,
     },
@@ -954,17 +1000,37 @@ test('accepts the published native stylesheet implementation contract', () => {
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
 })
 
-test('binds the stable package identity to the immutable native prerelease evidence', () => {
-  const stablePromotion = JSON.parse(fs.readFileSync(
+test('separates active package identity from immutable stable publication evidence', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+  manifest.version = '0.7.0'
+  assert.doesNotThrow(() => validateContract(loadContract(), { manifest }))
+
+  const rollbackManifest = clone(manifest)
+  rollbackManifest.version = '0.5.9'
+  assert.throws(
+    () => validateContract(loadContract(), { manifest: rollbackManifest }),
+    /active package version 0\.5\.9 is older than immutable stable publication 0\.6\.0/,
+  )
+
+  const originalStablePromotion = JSON.parse(fs.readFileSync(
     path.join(repositoryRoot, 'release/stable-promotion.json'),
     'utf8',
   ))
-  stablePromotion.candidateVersion = '0.7.0'
-  stablePromotion.candidateTag = 'v0.7.0'
-  assert.throws(
-    () => validateContract(loadContract(), { stablePromotion }),
-    /neither the selected native prerelease nor its bounded stable promotion/,
-  )
+  for (const mutate of [
+    stablePromotion => { stablePromotion.candidateVersion = '0.7.0'; stablePromotion.candidateTag = 'v0.7.0' },
+    stablePromotion => { stablePromotion.state = 'candidate-ready' },
+    stablePromotion => { stablePromotion.packageState = 'in-progress' },
+    stablePromotion => { stablePromotion.previousPrerelease.version = '0.6.0-rc.3' },
+    stablePromotion => { stablePromotion.publicationEvidence.npmLatest = '0.7.0' },
+    stablePromotion => { stablePromotion.publicationEvidence.tagCommit = 'not-a-commit' },
+  ]) {
+    const stablePromotion = clone(originalStablePromotion)
+    mutate(stablePromotion)
+    assert.throws(
+      () => validateContract(loadContract(), { stablePromotion }),
+      /immutable stable promotion no longer binds the published native prerelease and stable publication/,
+    )
+  }
 })
 
 test('rejects widened, unpinned, or unevidenced native Sass conformance progress', () => {
@@ -996,6 +1062,8 @@ test('rejects widened, unpinned, or unevidenced native Sass conformance progress
 test('rejects widened, unpinned, or unevidenced native Less conformance progress', () => {
   for (const mutate of [
     contract => { contract.lessConformance.releaseGapFamily = 'renamed-conformance' },
+    contract => { contract.lessConformance.oracle.developmentVersion = '4.6.7' },
+    contract => { contract.lessConformance.oracle.baselineVersion = '4.9.0' },
     contract => { contract.lessConformance.completedCaseCount = 87 },
     contract => { contract.lessConformance.remainingCaseCount = 1 },
     contract => { contract.lessConformance.terminalContract.successCaseCount = 67 },
@@ -1423,6 +1491,12 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
     }),
     /parameterized native Zig API example execution is missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nativeApiExample: nativeApiExample.replace('.prefix = true', '.prefix = false'),
+    }),
+    /native Zig API example verified target prefix is missing/,
+  )
 
   const documentationPolicy = JSON.parse(fs.readFileSync(
     path.join(repositoryRoot, 'docs/documentation-validation.json'),
@@ -1455,6 +1529,65 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
     () => validateContract(loadContract(), { capabilityMetadata }),
     /capability metadata native status drifted for scss/,
   )
+  const nodeCapabilityMetadata = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'docs/src/data/capabilities.json'),
+    'utf8',
+  ))
+  nodeCapabilityMetadata.capabilities.find(row => row.id === 'node-api').status = 'Unavailable'
+  assert.throws(
+    () => validateContract(loadContract(), { capabilityMetadata: nodeCapabilityMetadata }),
+    /capability metadata programmatic Node API status drifted/,
+  )
+  const nextWebpackCapabilityMetadata = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'docs/src/data/capabilities.json'),
+    'utf8',
+  ))
+  nextWebpackCapabilityMetadata.capabilities.find(
+    row => row.id === 'next-webpack-host-example',
+  ).behavior = 'General Next.js Webpack support is available.'
+  assert.throws(
+    () => validateContract(loadContract(), {
+      capabilityMetadata: nextWebpackCapabilityMetadata,
+    }),
+    /capability metadata Next\.js Webpack host is missing/,
+  )
+  for (const [needle, replacement] of [
+    [
+      'The five `node_modules` variants use ordinary CommonJS, ESM, and declaration package resolution',
+      'All variants use an unspecified resolver',
+    ],
+    [
+      "The default-PnP route uses Yarn's loader for CommonJS and ESM export resolution",
+      'The default-PnP route assumes exports resolve',
+    ],
+    ['verifies exact import/require declaration bytes', 'accepts inferred declaration metadata'],
+    [
+      'path-maps those files for a condition-specific strict compile',
+      'claims native PnP compilation without evidence',
+    ],
+    [
+      'exact unpatched TypeScript 7.0.2 without a Yarn SDK or patch',
+      'an unspecified compiler',
+    ],
+    ['`TS2307` for no-paths PnP package resolution', 'successful native PnP resolution'],
+    ['native TypeScript PnP resolution is not claimed', 'native TypeScript PnP resolution is claimed'],
+    [
+      "[Yarn's official SDK guidance](https://yarnpkg.com/getting-started/editor-sdks)",
+      'unlinked external guidance',
+    ],
+    ['confined Yarn and Corepack state', 'ambient package-manager state'],
+  ]) {
+    const mutated = JSON.parse(fs.readFileSync(
+      path.join(repositoryRoot, 'docs/src/data/capabilities.json'),
+      'utf8',
+    ))
+    const nodeApi = mutated.capabilities.find(row => row.id === 'node-api')
+    nodeApi.behavior = nodeApi.behavior.replace(needle, replacement)
+    assert.throws(
+      () => validateContract(loadContract(), { capabilityMetadata: mutated }),
+      /capability metadata programmatic Node API is missing/,
+    )
+  }
 
   for (const [field, relativePath, needle, replacement, expectedError] of [
     [
@@ -1465,17 +1598,38 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
       /format compatibility guide is missing/,
     ],
     [
+      'formatGuide',
+      'docs/src/content/docs/guide/format-compatibility.md',
+      'Explicit experimental adapters now expose the current-checkout compiler through `zigcss/vite`, `zigcss/rollup`, `zigcss/esbuild`, `zigcss/bun`, `zigcss/webpack`, and `zigcss/rspack`',
+      'Explicit experimental adapters expose the published stable compiler automatically',
+      /format compatibility guide is missing/,
+    ],
+    [
       'statusGuide',
       'docs/src/content/docs/guide/status.md',
-      'The package JavaScript wrapper only locates and invokes that binary',
-      'The package JavaScript wrapper hosts every language',
+      'The current `Unreleased` source package additionally exposes a typed programmatic Node.js API',
+      'This source package has no programmatic API',
       /status guide is missing/,
+    ],
+    [
+      'statusGuide',
+      'docs/src/content/docs/guide/status.md',
+      'The local Parcel example is an eighth exact package manifest',
+      'The local Parcel example is outside the dependency inventory',
+      /status guide is missing/,
+    ],
+    [
+      'readme',
+      'README.md',
+      'The current `Unreleased` source package also exports a typed programmatic Node.js API',
+      'The current source package has no programmatic API',
+      /README programmatic Node API module boundary is missing/,
     ],
     [
       'recoveryGuide',
       'docs/src/content/docs/guide/recovery-cli.md',
-      'They do not run during compilation',
-      'They run during compilation',
+      'These providers do not run during compilation',
+      'These providers run during compilation',
       /native CLI guide is missing/,
     ],
     [
@@ -1486,10 +1640,24 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
       /build-from-source guide native Zig API example drifted/,
     ],
     [
+      'buildGuide',
+      'docs/src/content/docs/guide/build-from-source.md',
+      'one exact dependency-free and script-free manifest whose Parcel toolchain is owned by the root lockfile',
+      'one unowned local Parcel manifest',
+      /build-from-source guide is missing/,
+    ],
+    [
       'changelog',
       'CHANGELOG.md',
       'remain exact development-only reference oracles and do not run during compilation',
       'remain production runtime dependencies',
+      /changelog migration notes is missing/,
+    ],
+    [
+      'changelog',
+      'CHANGELOG.md',
+      'Add a typed zero-production-dependency Node.js API at the package root',
+      'Do not add a Node.js API',
       /changelog migration notes is missing/,
     ],
   ]) {
@@ -1675,9 +1843,14 @@ test('binds the README to the exact self-contained native source snapshot', () =
       /README native five-language source snapshot is missing/,
     ],
     [
-      'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles.',
+      'Dart Sass 1.101.0 and Stylus 0.64.0 remain exact development-only reference oracles.',
       'Canonical providers remain available at runtime.',
       /README development-only oracle boundary is missing/,
+    ],
+    [
+      'Less 4.9.0 is the current development oracle over the frozen 4.6.7 native conformance baseline; advancing that forward oracle does not regraduate or rewrite the published native behavior.',
+      'Less uses an unspecified oracle.',
+      /README Less forward-oracle boundary is missing/,
     ],
     [
       'zero `dependencies` and zero `optionalDependencies`',
@@ -1776,7 +1949,7 @@ test('binds website claims and the recorded lab to the native product path', () 
     ],
     [
       'docs/src/app/components/GettingStarted.tsx',
-      'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles; they do not run during compilation.',
+      'Dart Sass 1.101.0, Less 4.9.0, and Stylus 0.64.0 remain development-only reference oracles; Less forward-checks the frozen 4.6.7 native baseline, and none of them runs during compilation.',
       'Canonical providers run during compilation.',
       /website development-only oracle boundary is missing/,
     ],
@@ -1794,7 +1967,7 @@ test('binds website claims and the recorded lab to the native product path', () 
     ],
     [
       'docs/src/app/components/Features.tsx',
-      'The compatibility table below records the native-graduated contract promoted by REL-010; the non-prerelease GitHub Release and npm latest publication are verified, while the immutable RC remains on next.',
+      'The table mixes explicitly labeled published-stable rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; rows whose contract says current, source-checkout, or Unreleased remain Unreleased even after their gates pass.',
       'The compatibility table describes an unbounded future product path.',
       /website published compatibility boundary is missing/,
     ],
@@ -1923,6 +2096,84 @@ test('binds internal native implementations behind the differential product brid
     }),
     /native Zig API composed source-map promotion.*missing/,
   )
+  for (const [relativePath, needle, replacement, expected] of [
+    [
+      'src/native_api.zig',
+      'const css = compiled.takeCss();',
+      'const css = compiled.css();',
+      /native Zig API zero-copy owned CSS promotion.*missing/,
+    ],
+    [
+      'src/preprocessor/compiler.zig',
+      'return self.validated.takeCss();',
+      'return self.validated.css();',
+      /native compiler owned CSS transfer.*missing/,
+    ],
+    [
+      'src/preprocessor/evaluator.zig',
+      'self.core.css = &.{};',
+      'self.core.css = moved;',
+      /native evaluator moved-from CSS teardown safety.*missing/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateContract(loadContract(), {
+        productionSources: loadProductionSources().map(([candidatePath, source]) => [
+          candidatePath,
+          candidatePath === relativePath ? source.replace(needle, replacement) : source,
+        ]),
+      }),
+      expected,
+    )
+  }
+  for (const [relativePath, needle, replacement, expected] of [
+    [
+      'src/native_api.zig',
+      '.optimize = options.optimize,',
+      '.optimize = false,',
+      /native Zig API optimizer promotion.*missing/,
+    ],
+    [
+      'src/preprocessor/compiler.zig',
+      '.optimize = options.optimize,',
+      '.optimize = false,',
+      /native compiler optimizer promotion.*missing/,
+    ],
+    [
+      'src/preprocessor/evaluator.zig',
+      'verified_optimizer.applyToFixedPoint(',
+      'missingOptimizer(',
+      /native evaluator verified fixed-point optimizer.*missing/,
+    ],
+    [
+      'src/native_api.zig',
+      '.prefix = options.prefix,',
+      '.prefix = false,',
+      /native Zig API target-prefix promotion.*missing/,
+    ],
+    [
+      'src/preprocessor/compiler.zig',
+      '.targets = options.targets,',
+      '.targets = null,',
+      /native compiler target-query promotion.*missing/,
+    ],
+    [
+      'src/preprocessor/evaluator.zig',
+      'prefix_rewrite.applyToStylesheet(',
+      'missingTargetPrefix(',
+      /native evaluator verified target-prefix rewrite.*missing/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateContract(loadContract(), {
+        productionSources: loadProductionSources().map(([candidatePath, source]) => [
+          candidatePath,
+          candidatePath === relativePath ? source.replace(needle, replacement) : source,
+        ]),
+      }),
+      expected,
+    )
+  }
 })
 
 test('binds the finite native product routing inventory and verified closed package', () => {
@@ -1942,6 +2193,9 @@ test('binds the finite native product routing inventory and verified closed pack
     routing => { routing.routes[7].state = 'pending' },
     routing => { routing.routes[8].state = 'pending' },
     routing => { routing.routes[9].state = 'pending' },
+    routing => { routing.routes[10].state = 'pending' },
+    routing => { routing.routes[11].state = 'pending' },
+    routing => { routing.routes[12].state = 'pending' },
     routing => routing.routes.push(clone(routing.routes[0])),
   ]) {
     const changed = clone(loadContract())
@@ -2015,6 +2269,64 @@ test('binds the finite native product routing inventory and verified closed pack
   const cliTests = fs.readFileSync(
     path.join(repositoryRoot, 'tests/cli/native_cli.zig'),
     'utf8',
+  )
+  const compilerTests = fs.readFileSync(
+    path.join(repositoryRoot, 'tests/native-preprocessor/compiler.zig'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      compilerTests: compilerTests.replace(
+        'test "native compiler applies the closed optimizer after every private frontend"',
+        'test "missing native compiler optimizer evidence"',
+      ),
+    }),
+    /native product routing verified-optimizer evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      zigApiTests: zigApiTests.replace(
+        'test "external Zig API applies the verified optimizer to the finite native syntax set"',
+        'test "missing native Zig API optimizer evidence"',
+      ),
+    }),
+    /native product routing verified-optimizer evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native optimizer watch commits only byte-stable output"',
+        'test "missing native CLI optimizer watch evidence"',
+      ),
+    }),
+    /native product routing verified-optimizer evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      compilerTests: compilerTests.replace(
+        'test "native compiler applies verified target prefixing after every private frontend"',
+        'test "missing native compiler target-prefix evidence"',
+      ),
+    }),
+    /native product routing verified-target-prefix evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      zigApiTests: zigApiTests.replace(
+        'test "external Zig API applies verified target prefixing to the finite native syntax set"',
+        'test "missing native Zig API target-prefix evidence"',
+      ),
+    }),
+    /native product routing verified-target-prefix evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary CLI native target prefix watch retains output recovers and shares one immutable query"',
+        'test "missing native CLI target-prefix watch evidence"',
+      ),
+    }),
+    /native product routing verified-target-prefix evidence.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {
@@ -2096,6 +2408,53 @@ test('binds the finite native product routing inventory and verified closed pack
   assert.throws(
     () => validateContract(loadContract(), {
       cliTests: cliTests.replace(
+        'test "binary CLI routes stable CSS source maps through files stdin and parallel batches"',
+        'test "missing stable CSS mapped routing evidence"',
+      ),
+    }),
+    /native product routing source-maps evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+        relativePath === 'src/main.zig'
+          ? source.replace('fn renderCssWithInlineSourceMap(', 'fn missingStableCssMapRenderer(')
+          : source,
+      ]),
+    }),
+    /all-syntax binary CLI source-map renderer.*missing/,
+  )
+  for (const [needle, replacement, expected] of [
+    [
+      '--autoprefix             Run verified eight-feature target prefixing',
+      '--autoprefix             Missing target prefix route',
+      /all-syntax binary CLI target-prefix help.*missing/,
+    ],
+    [
+      'zigcss.prefixing.target_query.parse(allocator, value, .{})',
+      'missingTargetParser(allocator, value, .{})',
+      /binary CLI strict target-query parser.*missing/,
+    ],
+    [
+      '.transforms = .{ .optimize = optimize, .prefix = prefix.enabled },',
+      '.transforms = .{ .optimize = optimize, .prefix = false },',
+      /stable CSS binary CLI target-prefix dispatch.*missing/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateContract(loadContract(), {
+        productionSources: loadProductionSources().map(([relativePath, source]) => [
+          relativePath,
+          relativePath === 'src/main.zig' ? source.replace(needle, replacement) : source,
+        ]),
+      }),
+      expected,
+    )
+  }
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
         'const native_parallel_worker_cap = 8;',
         'const native_parallel_worker_cap = 9;',
       ),
@@ -2106,6 +2465,47 @@ test('binds the finite native product routing inventory and verified closed pack
   const nodeWrapperTests = fs.readFileSync(
     path.join(repositoryRoot, 'scripts/verify-node-wrapper.test.mjs'),
     'utf8',
+  )
+  const nodeApiTests = fs.readFileSync(
+    path.join(repositoryRoot, 'scripts/verify-node-api.test.mjs'),
+    'utf8',
+  )
+  const nodeApiSource = fs.readFileSync(path.join(repositoryRoot, 'api.cjs'), 'utf8')
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeApiTests: nodeApiTests.replace(
+        "test('request normalization carries maps, dependencies, optimizer, prefix query, and roots'",
+        "test('missing programmatic Node result and option evidence'",
+      ),
+    }),
+    /native product routing programmatic-node-api evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      cliTests: cliTests.replace(
+        'test "binary hidden Node route dispatches one typed bounded frame"',
+        'test "missing binary Node route dispatch evidence"',
+      ),
+    }),
+    /native product routing programmatic-node-api evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeWrapperTests: nodeWrapperTests.replace(
+        "test('javascript wrapper forwards native optimizer requests unchanged'",
+        "test('missing JavaScript optimizer route evidence'",
+      ),
+    }),
+    /native product routing verified-optimizer evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeWrapperTests: nodeWrapperTests.replace(
+        "test('javascript wrapper forwards verified target prefix requests unchanged'",
+        "test('missing JavaScript target-prefix route evidence'",
+      ),
+    }),
+    /native product routing verified-target-prefix evidence.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {
@@ -2129,10 +2529,98 @@ test('binds the finite native product routing inventory and verified closed pack
   )
   assert.throws(
     () => validateContract(loadContract(), {
+      nodeWrapperSource: nodeWrapperSource.replace(
+        "for (const marker of ['build.zig', path.join('src', 'node_protocol.zig')]) {",
+        "for (const marker of ['build.zig']) {",
+      ),
+    }),
+    /JavaScript wrapper source-checkout markers.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeWrapperSource: nodeWrapperSource.replace(
+        'return candidate !== null && containsLocalPath(root, candidate) ? candidate : null;',
+        'return candidate;',
+      ),
+    }),
+    /JavaScript wrapper source-checkout confinement.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeWrapperTests: nodeWrapperTests.replace(
+        "test('javascript wrapper selects only a marker-verified confined source-checkout binary'",
+        "test('missing source-checkout wrapper evidence'",
+      ),
+    }),
+    /JavaScript wrapper source-checkout evidence.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
       nodeWrapperTests: nodeWrapperTests.replace("'--source-map',", "'--source-map-missing',"),
     }),
     /JavaScript wrapper source-map forwarding.*missing/,
   )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeApiSource: nodeApiSource.replace(
+        "for (const marker of ['build.zig', path.join('src', 'node_protocol.zig')]) {",
+        "for (const marker of ['build.zig']) {",
+      ),
+    }),
+    /programmatic Node API source-checkout markers.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeApiSource: nodeApiSource.replace(
+        "const candidate = regularExecutable(path.join(root, 'zig-out', 'bin', binaryName));",
+        "const candidate = path.join(root, 'zig-out', 'bin', binaryName);",
+      ),
+    }),
+    /programmatic Node API source-checkout executable.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      nodeApiSource: nodeApiSource.replace(
+        'return candidate !== null && containsLocalPath(root, candidate) ? candidate : null;',
+        'return candidate;',
+      ),
+    }),
+    /programmatic Node API source-checkout confinement.*missing/,
+  )
+  for (const [needle, replacement, expected] of [
+    [
+      "test('a direct source checkout selects only its marker-verified confined freshly built native binary'",
+      "test('missing programmatic Node API source-checkout evidence'",
+      /programmatic Node API source-checkout evidence.*missing/,
+    ],
+    [
+      'source-checkout API must reject a missing protocol marker',
+      'missing protocol-marker rejection evidence',
+      /programmatic Node API missing-marker evidence.*missing/,
+    ],
+    [
+      'source-checkout API must reject a symlink protocol marker',
+      'missing symlink-marker rejection evidence',
+      /programmatic Node API symlink-marker evidence.*missing/,
+    ],
+    [
+      'source-checkout API must reject a final binary symlink',
+      'missing binary-symlink rejection evidence',
+      /programmatic Node API binary-symlink evidence.*missing/,
+    ],
+    [
+      'source-checkout API must reject an intermediate-directory escape',
+      'missing intermediate-directory confinement evidence',
+      /programmatic Node API confinement evidence.*missing/,
+    ],
+  ]) {
+    assert.throws(
+      () => validateContract(loadContract(), {
+        nodeApiTests: nodeApiTests.replace(needle, replacement),
+      }),
+      expected,
+    )
+  }
 
   assert.throws(
     () => validateContract(loadContract(), {
@@ -2194,27 +2682,41 @@ test('binds the finite native product routing inventory and verified closed pack
         relativePath,
         relativePath === 'src/native_api.zig'
           ? source.replace(
-            'const bytes = dependencySourceBytes(compiled, dependency.url)',
-            'const bytes = duplicateDependencyRead(dependency.url)',
+            'compiled.sourceTable().findByName(dependency.url)',
+            'duplicateDependencyRead(dependency.url)',
           )
           : source,
       ]),
     }),
-    /watch snapshot compiler-owned bytes.*missing/,
+    /watch snapshot indexed compiler-owned lookup.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {
       productionSources: loadProductionSources().map(([relativePath, source]) => [
         relativePath,
-        relativePath === 'src/native_api.zig'
+        relativePath === 'src/preprocessor/source.zig'
           ? source.replace(
-            'var loaded = session.load(item.url,',
-            'const loaded = std.fs.cwd().readFileAlloc(item.url,',
+            'name_index: std.StringHashMapUnmanaged(SourceId)',
+            'name_index: MissingSourceIndex',
           )
           : source,
       ]),
     }),
-    /confined watch polling.*missing/,
+    /source-table owned-name index.*missing/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: loadProductionSources().map(([relativePath, source]) => [
+        relativePath,
+          relativePath === 'src/native_api.zig'
+            ? source.replace(
+            'const hash = session.contentFingerprint(item.url)',
+            'var loaded = session.load(item.url,',
+          )
+          : source,
+      ]),
+    }),
+    /confined streaming watch fingerprint.*missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), {
@@ -2245,7 +2747,7 @@ test('binds the finite native product routing inventory and verified closed pack
 
 test('owns the finite native zero-dependency package migration contract', () => {
   const contract = loadContract()
-  assert.equal(contract.schemaVersion, 9)
+  assert.equal(contract.schemaVersion, 10)
   assert.deepEqual(contract.packageMigration, {
     ownerPackage: 'NATIVE-007',
     releaseGapFamily: 'native-zero-dependency-package',
@@ -2267,7 +2769,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
         state: 'verified',
         evidenceTests: [
           'native npm package has zero production and optional dependencies',
-          'native npm archive excludes provider host and JavaScript API bytes',
+          'native npm archive includes only the bounded runtime declaration metadata and trust inventory',
           'javascript wrapper cannot reach the provider host',
         ],
       },
@@ -2312,6 +2814,9 @@ test('owns the finite native zero-dependency package migration contract', () => 
         state: 'verified',
         evidenceTests: [
           'npm installer derives exactly the release workflow asset contract',
+          'npm package binds every native archive to one exact version and digest inventory',
+          'npm installer rejects same-origin checksum substitution before downloading an archive',
+          'npm installer reads its trust manifest only from a bounded regular stable UTF-8 file',
           'npm installer independently validates all five executable target headers',
           'npm package runs one installer lifecycle and CI gates it before dependency installation',
         ],
@@ -2343,7 +2848,7 @@ test('owns the finite native zero-dependency package migration contract', () => 
   assert.throws(
     () => validateContract(loadContract(), {
       packageTests: packageTests.replace(
-        "test('native npm archive excludes provider host and JavaScript API bytes'",
+        "test('native npm archive includes only the bounded runtime declaration metadata and trust inventory'",
         "test('missing package archive evidence'",
       ),
     }),
@@ -2454,8 +2959,8 @@ test('owns the finite native zero-dependency package migration contract', () => 
   assert.throws(
     () => validateContract(loadContract(), {
       releaseSmokePreloadSource: releaseSmokePreloadSource.replace(
-        'childProcess.spawn = function tracedNativeSpawn',
-        'childProcess.spawn = function missingNativeTrace',
+        "immutableFunction(childProcess, 'spawn', function tracedNativeSpawn",
+        "immutableFunction(childProcess, 'spawn', function missingNativeTrace",
       ),
     }),
     /native package migration admitted native child trace.*missing/,
@@ -2483,6 +2988,13 @@ test('owns the finite native zero-dependency package migration contract', () => 
   manifest.exports['./api'] = './api.mjs'
   assert.throws(
     () => validateContract(loadContract(), { manifest }),
+    /native package migration export inventory drifted/,
+  )
+
+  const zippedPnpManifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+  delete zippedPnpManifest.preferUnplugged
+  assert.throws(
+    () => validateContract(loadContract(), { manifest: zippedPnpManifest }),
     /native package migration export inventory drifted/,
   )
 })
@@ -2606,10 +3118,17 @@ test('release tags require the exact owner publication authority after graduatio
   )
 })
 
-test('requires the stable promotion interlock before npm publication preflight', () => {
+test('requires the future candidate admission interlock before npm publication preflight', () => {
   const releaseWorkflow = fs.readFileSync(
     path.join(repositoryRoot, '.github/workflows/release.yml'),
     'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(
+      'node scripts/validate-release-admission.mjs --check \\',
+      'npm run check:stable-release -- \\',
+    ) }),
+    /release workflow candidate admission is missing/,
   )
   assert.throws(
     () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(
@@ -2625,10 +3144,10 @@ test('requires the stable promotion interlock before npm publication preflight',
   assert.match(releaseWorkflow, new RegExp(originMainLookup.replaceAll(' ', '\\s+')))
   assert.throws(
     () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(
-      candidateCommitLookup,
+      new RegExp(candidateCommitLookup.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
       'printf %s "$GITHUB_SHA"',
     ) }),
-    /release workflow candidate commit lookup is missing/,
+    /release workflow candidate commit lookup/,
   )
   assert.throws(
     () => validateContract(loadContract(), { releaseWorkflow: releaseWorkflow.replace(
@@ -2676,6 +3195,38 @@ test('requires one complete build graph with every native frontend runner in CI'
       'zig build test-native-preprocessor --summary all\n        run: node scripts/run-zig-test-suite.mjs --mode Debug',
     ) }),
     /must not duplicate native frontend coverage/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replace(
+      'ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+      'ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: zigcss',
+    ) }),
+    /Next\.js Webpack gate must own exact ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY env/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replace(
+      "          ZIGCSS_REQUIRE_BUILD_SYSTEMS: '1'\n",
+      '',
+    ) }),
+    /build-system gate must own exact ZIGCSS_REAL_BINARY env/,
+  )
+
+  const turbopackStep = buildWorkflow.match(
+    /      - name: Verify Next\.js Turbopack global SCSS integration\n        env:\n          ZIGCSS_TURBOPACK_NATIVE_BINARY: \$\{\{ github\.workspace \}\}\/zig-out\/bin\/zigcss\n        run: npm run test:turbopack-example/,
+  )?.[0]
+  const nextWebpackStep = buildWorkflow.match(
+    /      - name: Verify Next\.js Webpack global SCSS integration\n        env:\n          ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: \$\{\{ github\.workspace \}\}\/zig-out\/bin\/zigcss\n        run: npm run test:next-webpack-example/,
+  )?.[0]
+  assert.ok(turbopackStep)
+  assert.ok(nextWebpackStep)
+  assert.throws(
+    () => validateContract(loadContract(), {
+      buildWorkflow: buildWorkflow
+        .replace(turbopackStep, '__NEXT_TURBOPACK_STEP__')
+        .replace(nextWebpackStep, turbopackStep)
+        .replace('__NEXT_TURBOPACK_STEP__', nextWebpackStep),
+    }),
+    /gates must run after Run Tests/,
   )
 
   const buildFile = fs.readFileSync(path.join(repositoryRoot, 'build.zig'), 'utf8')

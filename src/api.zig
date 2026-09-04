@@ -18,7 +18,7 @@ const verified_optimizer = @import("transform/verified_optimizer.zig");
 
 pub const Syntax = enum {
     css,
-    /// Explicit library-only native subset; the recovery CLI remains CSS-only.
+    /// Explicit library-only native subset; the CLI does not expose CSS Modules.
     css_modules,
 };
 
@@ -400,16 +400,7 @@ fn applyPrefix(
     parsed: *pipeline.ParsedStylesheet,
     query: *const target_query.Query,
 ) !void {
-    const config = try prefix_rewrite.Configuration.init(allocator, query);
-    const registry = [_]pass_manager.Pass{prefix_rewrite.definition(&config)};
-    var plan = try pass_manager.buildPlan(
-        allocator,
-        &registry,
-        &.{prefix_rewrite.id},
-        .{ .allow_compatibility_rewrite = true },
-    );
-    defer plan.deinit();
-    try parsed.applyPassPlan(allocator, &plan, .{});
+    return prefix_rewrite.applyToStylesheet(allocator, parsed, query);
 }
 
 fn applyPluginsAndPrefix(

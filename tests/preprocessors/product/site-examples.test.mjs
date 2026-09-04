@@ -12,6 +12,8 @@ const binaryPath = path.join(
   'bin',
   process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
 )
+const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
+const prereleaseNotice = `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\n`
 const examples = JSON.parse(fs.readFileSync(
   path.join(repositoryRoot, 'docs/src/data/format-examples.json'),
   'utf8',
@@ -47,6 +49,6 @@ test('website input/output lab is exact executable evidence for all five syntaxe
     assert.equal(result.signal, null, example.id)
     assert.equal(result.status, 0, `${example.id}: ${result.stderr}`)
     assert.equal(result.stdout, example.output, example.id)
-    assert.doesNotMatch(result.stderr, /experimental release candidate/)
+    assert.equal(result.stderr, prereleaseNotice)
   }
 })

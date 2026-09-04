@@ -4,23 +4,133 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import {
+  auditArguments,
+  auditEnvironment,
+  dependencySurfaces,
+  developmentDependencySurface,
   discoverNpmSurfaces,
+  locklessLocalManifestSurfaces,
   parseAuditReport,
   renderDependabotConfig,
   repositoryRoot,
+  validateLocklessLocalManifests,
   validateManifestLocks,
+  validateBuildGraphSecurityPatches,
   validateExtensionProductionSecurityPatches,
   validateReviewedDevelopmentOracleOverrides,
   validateUpdatePolicy,
 } from './audit-production-dependencies.mjs'
 
+test('production and development audits have distinct fail-closed scopes', () => {
+  assert.deepEqual(auditArguments(dependencySurfaces[0]), [
+    'audit',
+    '--omit=dev',
+    '--include=prod',
+    '--include=optional',
+    '--include=peer',
+    '--package-lock-only',
+    '--audit-level=high',
+    '--json',
+  ])
+  assert.deepEqual(
+    auditArguments(developmentDependencySurface, { omitDevelopment: false }),
+    [
+      'audit',
+      '--include=prod',
+      '--include=dev',
+      '--include=optional',
+      '--include=peer',
+      '--package-lock-only',
+      '--audit-level=high',
+      '--json',
+    ],
+  )
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+  for (const [name, directory] of [
+    ['audit:documentation', 'docs'],
+    ['audit:vscode', 'vscode-extension'],
+    ['audit:turbopack-example', 'examples/next-turbopack'],
+    ['audit:sveltekit-example', 'examples/sveltekit'],
+    ['audit:astro-example', 'examples/astro'],
+    ['audit:nuxt-example', 'examples/nuxt'],
+  ]) {
+    assert.equal(
+      manifest.scripts[name],
+      `npm --prefix ${directory} audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high`,
+    )
+  }
+})
+
+test('documentation and VS Code build graphs lock the reviewed advisory fixes', () => {
+  const docsLock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'docs', 'package-lock.json'), 'utf8'))
+  const extensionLock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'vscode-extension', 'package-lock.json'), 'utf8'))
+  assert.equal(validateBuildGraphSecurityPatches(docsLock, extensionLock), true)
+
+  const vulnerableDocs = structuredClone(docsLock)
+  vulnerableDocs.packages['node_modules/browserslist'].version = '4.28.6'
+  assert.throws(
+    () => validateBuildGraphSecurityPatches(vulnerableDocs, extensionLock),
+    /must lock browserslist 4\.28\.8/,
+  )
+
+  const vulnerableExtension = structuredClone(extensionLock)
+  vulnerableExtension.packages['node_modules/qs'].version = '6.15.3'
+  assert.throws(
+    () => validateBuildGraphSecurityPatches(docsLock, vulnerableExtension),
+    /must lock qs 6\.16\.0/,
+  )
+})
+
+test('audit environment removes ambient dependency-scope overrides case-insensitively', () => {
+  const sanitized = auditEnvironment({
+    PATH: '/usr/bin',
+    npm_config_registry: 'https://registry.example.test',
+    npm_config_omit: 'dev optional',
+    NPM_CONFIG_INCLUDE: 'dev',
+    Npm_Config_Production: 'true',
+    npm_CONFIG_only: 'production',
+    NPM_CONFIG_DEV: 'false',
+    npm_config_optional: 'false',
+    NpM_cOnFiG_pEeR: 'false',
+    NoDe_EnV: 'production',
+    no_color: '0',
+  })
+
+  assert.deepEqual(sanitized, {
+    PATH: '/usr/bin',
+    npm_config_registry: 'https://registry.example.test',
+    no_color: '0',
+    NO_COLOR: '1',
+  })
+  assert.equal(
+    Object.keys(sanitized).some(name => [
+      'node_env',
+      'npm_config_dev',
+      'npm_config_include',
+      'npm_config_omit',
+      'npm_config_only',
+      'npm_config_optional',
+      'npm_config_peer',
+      'npm_config_production',
+    ].includes(name.toLowerCase())),
+    false,
+  )
+})
+
 test('all npm manifests have synchronized lockfiles and exact direct versions', () => {
-  assert.equal(validateManifestLocks(), 3)
+  assert.deepEqual(validateManifestLocks(), { locked: 7, locklessLocal: 1 })
   assert.deepEqual(discoverNpmSurfaces().map(surface => surface.dependabotDirectory), [
     '/',
     '/docs',
+    '/examples/next-turbopack',
+    '/examples/sveltekit',
+    '/examples/astro',
+    '/examples/nuxt',
     '/vscode-extension',
   ])
+  assert.deepEqual(locklessLocalManifestSurfaces.map(surface => surface.directory), ['examples/parcel'])
+  assert.equal(validateLocklessLocalManifests(), 1)
 })
 
 test('manifest inventory rejects unpinned direct versions and unowned lockfiles', t => {
@@ -42,12 +152,43 @@ test('manifest inventory rejects unpinned direct versions and unowned lockfiles'
 
   writeSurface('.', 'root', { unsafe: '^1.0.0' })
   writeSurface('docs', 'docs', { zigcss: 'file:..' })
+  writeSurface('examples/next-turbopack', 'turbopack-example')
+  writeSurface('examples/sveltekit', 'sveltekit-example')
+  writeSurface('examples/astro', 'astro-example')
+  writeSurface('examples/nuxt', 'nuxt-example')
   writeSurface('vscode-extension', 'extension')
+  fs.mkdirSync(path.join(root, 'examples', 'parcel'), { recursive: true })
+  fs.writeFileSync(
+    path.join(root, 'examples', 'parcel', 'package.json'),
+    JSON.stringify(locklessLocalManifestSurfaces[0].manifest),
+  )
   assert.throws(() => validateManifestLocks(root), /not an exact version/)
 
   writeSurface('.', 'root', { safe: '1.0.0' })
   writeSurface('extra', 'extra')
-  assert.throws(() => discoverNpmSurfaces(root), /lockfile inventory changed/)
+  assert.throws(() => discoverNpmSurfaces(root), /manifest inventory changed/)
+})
+
+test('root-lock-bound Parcel manifest stays dependency-free and script-free', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-parcel-manifest-policy-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const directory = path.join(root, 'examples', 'parcel')
+  fs.mkdirSync(directory, { recursive: true })
+  const exact = structuredClone(locklessLocalManifestSurfaces[0].manifest)
+  fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify(exact))
+  assert.equal(validateLocklessLocalManifests(root), 1)
+
+  for (const mutation of [
+    { ...exact, scripts: { build: 'parcel build' } },
+    { ...exact, dependencies: { parcel: '2.16.4' } },
+    { ...exact, private: false },
+  ]) {
+    fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify(mutation))
+    assert.throws(
+      () => validateLocklessLocalManifests(root),
+      /exact dependency-free and script-free local manifest/,
+    )
+  }
 })
 
 test('production audit parsing requires a consistent v2 report with no high or critical findings', () => {
@@ -126,6 +267,6 @@ test('Dependabot policy is exact, bounded, and cannot silently gain release auth
   assert.equal(fs.readFileSync(path.join(repositoryRoot, '.github/dependabot.yml'), 'utf8'), expected)
   assert.doesNotMatch(expected, /target-branch|registries|reviewers|assignees|automerge/i)
   assert.equal((expected.match(/package-ecosystem:/g) ?? []).length, 3)
-  assert.match(expected, /directories:\n      - "\/"\n      - "\/docs"\n      - "\/vscode-extension"/)
+  assert.match(expected, /directories:\n      - "\/"\n      - "\/docs"\n      - "\/examples\/next-turbopack"\n      - "\/examples\/sveltekit"\n      - "\/examples\/astro"\n      - "\/examples\/nuxt"\n      - "\/vscode-extension"/)
   assert.equal(validateUpdatePolicy(), true)
 })

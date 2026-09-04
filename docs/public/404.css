@@ -1,0 +1,23 @@
+body {
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  background: #0b110d;
+  color: #eef5ec;
+  font-family: monospace;
+}
+
+main {
+  width: min(44rem, calc(100% - 3rem));
+  border: 1px solid rgba(183, 243, 74, 0.3);
+  padding: 2rem;
+}
+
+p:first-child {
+  color: #b7f34a;
+}
+
+p:last-child {
+  color: #879685;
+}

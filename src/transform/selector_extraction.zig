@@ -545,6 +545,7 @@ fn validateEmittable(
     context: *pass_manager.Context,
     rules: *const ast.RuleList,
 ) pass_manager.Error!void {
+    if (context.hasExactMinifiedMappedEmissionProof(rules)) return;
     var output = emitter.emitWithSourceMap(
         context.scratchAllocator(),
         context.file(),
@@ -556,6 +557,7 @@ fn validateEmittable(
         else => return error.ValidationFailed,
     };
     output.deinit();
+    context.commitExactMinifiedMappedEmissionProof(rules, 1);
 }
 
 fn validateSameEmission(
@@ -563,6 +565,7 @@ fn validateSameEmission(
     expected: *const ast.RuleList,
     actual: *const ast.RuleList,
 ) pass_manager.Error!void {
+    if (expected == actual) return validateEmittable(context, actual);
     var expected_output = emitter.emitWithSourceMap(
         context.scratchAllocator(),
         context.file(),
@@ -590,6 +593,7 @@ fn validateSameEmission(
     {
         return error.ValidationFailed;
     }
+    context.commitExactMinifiedMappedEmissionProof(actual, 2);
 }
 
 const pipeline = @import("../css/pipeline.zig");

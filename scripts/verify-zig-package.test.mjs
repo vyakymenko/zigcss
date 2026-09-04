@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +28,92 @@ function filesRecursive(directory) {
     const entryPath = path.join(directory, entry.name)
     return entry.isDirectory() ? filesRecursive(entryPath) : [entryPath]
   })
+}
+
+const maximumZigOutputBytes = 8 * 1024 * 1024
+const zigCommandTimeoutMs = 15 * 60 * 1000
+
+function exactZigTool() {
+  const command = process.env.ZIG ?? (process.platform === 'win32' ? 'zig.exe' : 'zig')
+  const result = spawnSync(command, ['version'], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024,
+    timeout: 5_000,
+    windowsHide: true,
+  })
+  if (result.error?.code === 'ENOENT') return null
+  assert.equal(result.error, undefined, `Zig version probe failed: ${result.error?.message}`)
+  assert.equal(result.signal, null, 'Zig version probe was terminated')
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  if (!['0.15.2\n', '0.15.2\r\n'].includes(result.stdout)) return null
+  return command
+}
+
+function zigBuildEnvironment(workspace) {
+  if (process.platform !== 'darwin') return process.env
+  const sdk = '/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk'
+  if (!fs.existsSync(sdk)) return process.env
+  const wrapperDirectory = path.join(workspace, 'sdk-wrapper')
+  fs.mkdirSync(wrapperDirectory)
+  const wrapper = path.join(wrapperDirectory, 'xcrun')
+  fs.writeFileSync(wrapper, [
+    '#!/bin/sh',
+    'if [ "$#" -eq 3 ] && [ "$1" = "--sdk" ] && [ "$2" = "macosx" ] && [ "$3" = "--show-sdk-path" ]; then',
+    `  echo ${sdk}`,
+    '  exit 0',
+    'fi',
+    'exec /usr/bin/xcrun "$@"',
+    '',
+  ].join('\n'), { mode: 0o755 })
+  return {
+    ...process.env,
+    MACOSX_DEPLOYMENT_TARGET: '15.4',
+    PATH: `${wrapperDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
+  }
+}
+
+function runZig(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd ?? repositoryRoot,
+    encoding: 'utf8',
+    env: options.env ?? process.env,
+    maxBuffer: maximumZigOutputBytes,
+    timeout: zigCommandTimeoutMs,
+    windowsHide: true,
+  })
+  assert.equal(result.error, undefined, `${options.label ?? 'Zig command'} failed to start: ${result.error?.message}`)
+  assert.equal(result.signal, null, `${options.label ?? 'Zig command'} was terminated`)
+  assert.equal(
+    result.status,
+    0,
+    [options.label ?? 'Zig command', result.stdout, result.stderr].filter(Boolean).join('\n'),
+  )
+  return result
+}
+
+function verifyFetchedTree(root, expectedTopLevel) {
+  const actualTopLevel = fs.readdirSync(root).sort()
+  assert.deepEqual(actualTopLevel, [...expectedTopLevel].sort())
+  const pending = [root]
+  let entries = 0
+  let bytes = 0
+  while (pending.length > 0) {
+    const directory = pending.pop()
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      entries += 1
+      assert.equal(entries <= 2_000, true, 'fetched Zig package tree is unexpectedly large')
+      const filename = path.join(directory, entry.name)
+      const stat = fs.lstatSync(filename)
+      assert.equal(stat.isSymbolicLink(), false, 'fetched Zig package must not contain symlinks')
+      if (stat.isDirectory()) pending.push(filename)
+      else {
+        assert.equal(stat.isFile(), true, 'fetched Zig package entries must be regular files or directories')
+        bytes += stat.size
+        assert.equal(bytes <= 64 * 1024 * 1024, true, 'fetched Zig package bytes exceed the audit bound')
+      }
+    }
+  }
+  assert.equal(entries > expectedTopLevel.length, true, 'fetched Zig package must contain compiler sources')
 }
 
 test('Zig package identity version and minimum toolchain are pinned', () => {
@@ -97,6 +185,103 @@ test('the committed consumer uses the package manager rather than a relative sou
   assert.doesNotMatch(consumer, /@import\("\.\.\//)
 })
 
+const fetchedConsumerRequired = process.env.ZIGCSS_REQUIRE_FETCHED_ZIG_PACKAGE === '1'
+  || process.env.GITHUB_ACTIONS === 'true'
+const fetchedConsumerZig = exactZigTool()
+
+test('a fresh isolated zig fetch cache copy compiles the external package consumer', {
+  skip: fetchedConsumerZig === null && !fetchedConsumerRequired
+    ? 'exact Zig 0.15.2 is not available; GitHub Actions makes this consumer mandatory'
+    : false,
+}, () => {
+  assert.notEqual(fetchedConsumerZig, null, 'fresh fetched-cache consumer is mandatory on this host')
+  const temporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-fetched-consumer-')))
+  try {
+    const expectedTopLevel = [
+      'build.zig',
+      'build.zig.zon',
+      'build_helpers.zig',
+      'src',
+      'README.md',
+      'LICENSE',
+    ]
+    const stagedPackage = path.join(temporary, 'source-package')
+    fs.mkdirSync(stagedPackage)
+    for (const relativePath of expectedTopLevel) {
+      const source = path.join(repositoryRoot, relativePath)
+      const stat = fs.lstatSync(source)
+      assert.equal(stat.isSymbolicLink(), false, `${relativePath} cannot be a source-package symlink`)
+      const destination = path.join(stagedPackage, relativePath)
+      if (stat.isDirectory()) {
+        fs.cpSync(source, destination, {
+          dereference: false,
+          errorOnExist: true,
+          force: false,
+          recursive: true,
+        })
+      } else {
+        assert.equal(stat.isFile(), true, `${relativePath} must be a regular source-package entry`)
+        fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL)
+      }
+    }
+    verifyFetchedTree(stagedPackage, expectedTopLevel)
+
+    const globalCache = path.join(temporary, 'global-cache')
+    const fetched = runZig(fetchedConsumerZig, [
+      'fetch', '.',
+      '--global-cache-dir', globalCache,
+    ], {
+      cwd: stagedPackage,
+      label: 'isolated zig fetch package copy',
+    })
+    assert.equal(fetched.stderr, '')
+    const packageHash = fetched.stdout.trim()
+    const version = field(read('build.zig.zon'), 'version')
+    assert.match(
+      packageHash,
+      new RegExp(`^zigcss-${version.replaceAll('.', '\\.')}[-+][A-Za-z0-9_-]{20,}$`),
+    )
+    const packageRoot = path.join(globalCache, 'p', packageHash)
+    const packageStat = fs.lstatSync(packageRoot)
+    assert.equal(packageStat.isDirectory(), true)
+    assert.equal(packageStat.isSymbolicLink(), false)
+    const relativeToCheckout = path.relative(repositoryRoot, fs.realpathSync(packageRoot))
+    assert.equal(path.isAbsolute(relativeToCheckout), false)
+    assert.match(relativeToCheckout, /^\.\.(?:[/\\]|$)/)
+    verifyFetchedTree(packageRoot, expectedTopLevel)
+
+    const consumer = path.join(temporary, 'consumer')
+    fs.cpSync(path.join(repositoryRoot, 'tests', 'package-consumer'), consumer, {
+      errorOnExist: true,
+      force: false,
+      recursive: true,
+    })
+    const manifestPath = path.join(consumer, 'build.zig.zon')
+    const manifest = fs.readFileSync(manifestPath, 'utf8')
+    const fetchedPackagePath = path.relative(consumer, packageRoot).split(path.sep).join('/')
+    assert.match(fetchedPackagePath, /^\.\.(?:\/|$)/)
+    const isolatedManifest = manifest.replace(
+      '.zigcss = .{ .path = "../.." },',
+      `.zigcss = .{ .path = ${JSON.stringify(fetchedPackagePath)} },`,
+    )
+    assert.notEqual(isolatedManifest, manifest)
+    fs.writeFileSync(manifestPath, isolatedManifest)
+
+    const result = runZig(fetchedConsumerZig, [
+      'build', 'test', '--summary', 'all',
+      '--cache-dir', path.join(temporary, 'consumer-cache'),
+      '--global-cache-dir', globalCache,
+    ], {
+      cwd: consumer,
+      env: zigBuildEnvironment(temporary),
+      label: 'fresh fetched-cache external Zig consumer',
+    })
+    assert.equal(`${result.stdout}\n${result.stderr}`.includes(repositoryRoot), false)
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})
+
 test('every Zig example has an executable build gate', () => {
   const examples = filesRecursive(path.join(repositoryRoot, 'examples'))
     .filter(file => file.endsWith('.zig'))
@@ -132,7 +317,9 @@ test('the installed executable delegates CSS compilation to the public facade', 
   const main = read('src/main.zig')
   const api = read('src/api.zig')
   const profiling = read('src/profiling.zig')
-  const runtime = main.split('\ntest "')[0]
+  const testOnlyImports = main.indexOf('\nconst formats = @import("formats.zig");')
+  assert.notEqual(testOnlyImports, -1, 'missing test-only CLI import boundary')
+  const runtime = main.slice(0, testOnlyImports)
   const watch = runtime.match(/fn watchFile\([\s\S]*?\n}\n\nconst CompileError/)
   const parallel = runtime.match(/const BatchWorkQueue[\s\S]*?\n}\n\nconst CompileError/)
   const batch = runtime.match(/fn compileBatch\([\s\S]*?\n}\n\nfn experimentalFormatName/)
@@ -190,4 +377,8 @@ test('active source and CI surfaces agree on the Zig 0.15.2 baseline', () => {
   assert.match(read('docs/src/content/docs/guide/build-from-source.md'), /tests\/package-consumer/)
   assert.match(read('docs/src/app/components/GettingStarted.tsx'), /Use Zig 0\.15\.2 and run:/)
   assert.doesNotMatch(read('install.js'), /Zig 0\.15\.2\+/)
+  assert.match(
+    buildWorkflow,
+    /- name: Verify Zig package metadata\n\s+env:\n\s+ZIGCSS_REQUIRE_FETCHED_ZIG_PACKAGE: '1'\n\s+run: npm run test:zig-package/,
+  )
 })

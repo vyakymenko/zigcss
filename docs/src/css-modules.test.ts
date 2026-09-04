@@ -48,7 +48,8 @@ describe('published native CSS Modules subset', () => {
     expect(guide).toContain('CSS0008')
     expect(guide).toContain('CSS0009')
     expect(guide).toContain('MODULE-002')
-    expect(guide).toMatch(/CLI and LSP still reject/i)
+    expect(guide).toMatch(/CLI and LSP do not expose CSS Modules semantics/i)
+    expect(guide).toMatch(/\.module\.css.*rejected on the default CSS route/i)
   })
 
   test('keeps the library-only guide discoverable', () => {

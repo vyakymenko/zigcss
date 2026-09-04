@@ -5,7 +5,8 @@ Source builds are the verified alternative to the published five-language native
 ## Requirements
 
 - Zig 0.15.2
-- Node.js 20.19 or newer for development-oracle and documentation gates; stylesheet compilation itself does not require Node.js
+- Node.js 20.19 or newer for the published package wrapper; the complete checkout, documentation, and pinned framework gates use exact Node.js 22.22.0; stylesheet compilation itself does not require Node.js
+- Nix 2.35.2 only for the optional repository-local flake route
 - Git
 
 ## Build and test
@@ -13,7 +14,7 @@ Source builds are the verified alternative to the published five-language native
 ```bash
 git clone https://github.com/vyakymenko/zigcss.git
 cd zigcss
-npm ci
+npm ci --ignore-scripts
 zig build
 zig build test --summary all
 zig build test-public-api --summary all
@@ -21,9 +22,67 @@ zig build test-native-zig-api --summary all
 zig build test-documentation-examples --summary all
 ```
 
-The self-contained executable is written to `zig-out/bin/zigcss` and compiles CSS, SCSS, indented Sass, Less, and Stylus through native Zig paths. The root `index.js` launcher only locates and invokes that binary. Exact Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 providers remain development-only reference oracles and do not run during compilation.
+The self-contained executable is written to `zig-out/bin/zigcss` and compiles CSS, SCSS, indented Sass, Less, and Stylus through native Zig paths. In a direct checkout, the root `index.js` launcher selects that executable only when `build.zig` and `src/node_protocol.zig` are regular non-symlink markers and the executable is itself regular, non-symlink, executable, and confined to the checkout. Exact Dart Sass 1.101.0, Less 4.9.0, and Stylus 0.64.0 providers remain development-only reference oracles and do not run during compilation. Less 4.9.0 is a forward oracle over the frozen 4.6.7 native conformance baseline, not a new native graduation.
+
+## Compiler-aware development container
+
+With Docker Compose available, the complete local compiler-and-site loop has one
+host command and no host Node or Zig prerequisite:
+
+```bash
+npm run dev:docker
+```
+
+Open `http://127.0.0.1:5173/zigcss/`. The image pins its Node base, Dockerfile
+frontend, and architecture-specific Zig archive by digest. It mounts the source
+checkout read-only and keeps documentation dependencies, compiler caches, and
+outputs in project-scoped named volumes. Vite starts only after a successful
+initial Zig build; health requires both the current compiler readiness marker and
+the loopback site response. A later failed rebuild makes the service unhealthy
+instead of accepting a stale binary.
+
+Stop the service while retaining those caches:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+To deliberately discard only this Compose project's development volumes and
+force a clean dependency install and compiler build next time:
+
+```bash
+docker compose -f docker-compose.dev.yml down --volumes
+```
+
+This is a development surface, not the production static-site image, and it
+does not expose the compiler over HTTP.
 
 `test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade, result cleanup, the explicit native CSS Modules subset, and an experimental borrowed native-plugin callback without claiming a stable plugin ABI or full ecosystem compatibility.
+
+## Nix flake source build
+
+The current checkout has one repository-local flake with default `packages`, `apps`, and `checks` for `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, and `aarch64-darwin`. Its only input is one commit- and `narHash`-pinned nixpkgs revision, its Zig package must report exactly 0.15.2, and its source is reduced to an explicit build/source/license allowlist.
+
+Run the static policy first, then use Nix 2.35.2 without registry lookup or lock regeneration:
+
+```bash
+npm run test:nix-flake
+npm run check:nix-flake
+nix flake check --all-systems --no-build \
+  --no-update-lock-file --no-write-lock-file --no-use-registries .
+nix flake check \
+  --no-update-lock-file --no-write-lock-file --no-use-registries .
+nix build --no-link \
+  --no-update-lock-file --no-write-lock-file --no-use-registries .#default
+nix run \
+  --no-update-lock-file --no-write-lock-file --no-use-registries \
+  .#default -- --version
+git diff --exit-code -- flake.nix flake.lock
+```
+
+The `--all-systems --no-build` command evaluates the four declared output sets; it does not cross-compile them. The ordinary check, build, and run commands select the current native system. The package check includes bounded version, CSS, and SCSS compilation smokes, not the complete Zig test suite. The GitHub Actions workflow is configured to run the static check before the full-SHA installer action and to execute the native route on four matching Unix runners.
+
+This is not an offline or published distribution path. Bootstrap, the pinned nixpkgs input, and substitute acquisition require network access. CI uses the exact Nix 2.35.2 release URL, but the versioned installer script is not content-addressed even though that official script verifies its selected binary tarball. Hosted runner images remain mutable, and flakes are an experimental Nix interface. The flake declares no Windows output, development shell, NixOS module, or Home Manager module; it does not publish ZigCSS to nixpkgs or a registry, provide a binary cache, alter stable 0.6.0, or promise offline installation.
 
 ## Zig library example
 
@@ -61,7 +120,7 @@ Set `.syntax = .css_modules` only for the [experimental native CSS Modules subse
 
 ## Native stylesheet Zig API example
 
-The finite native Zig API remains explicitly namespaced as `zigcss.experimental_native` even after machine graduation; the namespace does not grant executable plugin parity. This exact example is compiled and executed by `test-documentation-examples`:
+The finite native Zig API remains explicitly namespaced as `zigcss.experimental_native` even after machine graduation; the namespace does not grant executable plugin parity. This exact example parses one modern canonical target query, proves that the verified rewrite is an exact no-op for these inputs across all four frontends, and is compiled and executed by `test-documentation-examples`:
 
 <!-- native-api-example:start -->
 ```zig
@@ -81,7 +140,7 @@ const examples = [_]Example{
     .{ .syntax = .scss, .filename = "example.scss", .source = "$color: red; .card { color: $color; }", .expected = ".card{color:red}" },
     .{ .syntax = .sass, .filename = "example.sass", .source = "$color: red\n.card\n  color: $color\n", .expected = ".card{color:red}" },
     .{ .syntax = .less, .filename = "example.less", .source = "@color: red; .card { color: @color; }", .expected = ".card{color:red}" },
-    .{ .syntax = .stylus, .filename = "example.styl", .source = "color = red\n.card\n  color color\n", .expected = ".card{color:#f00}" },
+    .{ .syntax = .stylus, .filename = "example.styl", .source = "color = red\n.card\n  color color\n", .expected = ".card{color:red}" },
 };
 
 pub fn main() !void {
@@ -92,6 +151,16 @@ pub fn main() !void {
     const root = try std.fs.cwd().realpathAlloc(allocator, ".");
     defer allocator.free(root);
 
+    var targets = switch (try zigcss.prefixing.target_query.parse(
+        allocator,
+        "chrome >= 120, edge >= 120, firefox >= 120",
+        .{},
+    )) {
+        .query => |query| query,
+        .invalid => return error.InvalidTargetQuery,
+    };
+    defer targets.deinit();
+
     var buffer: [1024]u8 = undefined;
     var writer = std.fs.File.stdout().writer(&buffer);
     inline for (examples) |example| {
@@ -101,6 +170,9 @@ pub fn main() !void {
             .syntax = example.syntax,
             .root_paths = &.{root},
             .format = .minified,
+            .optimize = true,
+            .prefix = true,
+            .targets = &targets,
         });
         defer result.deinit();
         if (result.diagnostics.len != 0 or !std.mem.eql(u8, result.css, example.expected)) {
@@ -117,7 +189,7 @@ Arbitrary Sass plugins, custom functions/importers, Less JavaScript/plugins, Sty
 
 ## Local Zig package dependency
 
-The root `build.zig.zon` declares package `zigcss` 0.6.0, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, supported `build_helpers.zig`, `src`, `README.md`, and `LICENSE`. Tests, docs, package-manager wrappers, and editor files are not part of the Zig package.
+The root `build.zig.zon` declares the active source package `zigcss` 0.7.0-rc.1, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, supported `build_helpers.zig`, `src`, `README.md`, and `LICENSE`. Tests, docs, package-manager wrappers, and editor files are not part of the Zig package. This candidate is not the published stable 0.6.0 release.
 
 `tests/package-consumer` declares the repository as a path dependency, requests `zigcss.module("zigcss")`, and compiles the owned API from outside the package. Run its exact consumer gate with:
 
@@ -126,7 +198,7 @@ cd tests/package-consumer
 zig build test --summary all
 ```
 
-The package is also verified through a fresh `zig fetch .` cache so the allowlisted copy—not only the full checkout—can satisfy a consumer. The published GitHub release provides architecture-matched binary archives; this source dependency remains intentionally documented through the repository rather than a hand-maintained remote URL/hash.
+CI also runs `zig fetch` with a fresh isolated global cache, checks that the resulting package contains exactly the declared top-level allowlist with no symlinks or oversized tree, and rewires the external consumer to that fetched cache copy. The consumer then compiles the public module and build helper without reading the full checkout. The published GitHub release provides architecture-matched binary archives; this source dependency remains intentionally documented through the repository rather than a hand-maintained remote URL/hash.
 
 ## Cached CSS build helper
 
@@ -170,6 +242,7 @@ npm run check:documentation
 npm run test:dependencies
 npm run check:dependencies
 npm run audit:production
+npm run audit:development
 npm run test:zig-package
 npm run test:compat
 npm run test:transforms
@@ -177,7 +250,7 @@ npm run test:transforms
 
 The documentation gate syntax-checks every tracked shell, JSON, Lua, and Vim fence, compiles every CSS fence, runs the compiled Zig examples through the build graph, and resolves every tracked internal Markdown/site link. Set `NVIM` to a Neovim 0.11.7-or-later executable so the checked Lua and Ex-command examples use the real editor parser without loading user configuration.
 
-The dependency gate inventories the root, documentation, and VS Code npm manifests and version-3 lockfiles, requires exact direct dependency versions, and audits each production lock graph from the lockfile with high/critical findings as failures. The reviewed `.github/dependabot.yml` opens only bounded weekly version-update pull requests for those npm directories, GitHub Actions, and the root Docker ecosystem; it grants no automerge, registry credentials, publishing, or deployment authority.
+The dependency gate inventories the root package, documentation site, Next.js Turbopack example, SvelteKit example, Astro example, Nuxt example, and VS Code extension as seven exact npm manifest/version-3-lockfile pairs. It separately binds the local Parcel example as one exact dependency-free and script-free manifest whose Parcel toolchain is owned by the root lockfile; any additional package manifest or lockfile fails the inventory. The gate requires exact direct dependency versions; all four framework-host examples keep their host packages development-only and have empty production graphs. CI first audits all seven production lock graphs, then the complete root development graph—including Parcel 2.16.4—with `npm run audit:development`, then the complete documentation and VS Code build graphs, and finally the four full pinned Next.js, SvelteKit, Astro, and Nuxt host-lock audits. Any high or critical finding fails. The Pages workflow repeats the complete documentation build-graph audit before testing and building, and deploys only the exact commit from a successful same-repository `Build` push on `main`. The root audit covers the exact development-only Less 4.9.0 forward oracle and confirms that the former direct `image-size` 0.5.5 pin is absent; Less and Stylus image metadata instead share the bounded PNG/GIF/JPEG/SVG parser over resolver-owned bytes. The reviewed `.github/dependabot.yml` opens only bounded weekly version-update pull requests for the seven independently locked npm directories, GitHub Actions, and the root Docker ecosystem; the root-bound Parcel manifest receives dependency updates through the root directory and cannot declare its own dependency graph. The policy grants no automerge, registry credentials, publishing, or deployment authority. The build workflow's Test job uses exact Node 22.22.0 because the pinned Astro and Nuxt engines require that host line.
 
 ## Characterization example
 
@@ -198,4 +271,5 @@ The CLI writes an experimental-build warning to standard error. Treat successful
 - [Current status](/guide/status)
 - [CSS compatibility](/guide/css-compatibility)
 - [CSS Modules subset](/guide/css-modules)
+- [Builder integrations](/guide/builder-integrations)
 - [Recovery CLI](/guide/recovery-cli)

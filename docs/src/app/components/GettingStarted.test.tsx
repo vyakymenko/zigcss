@@ -25,7 +25,7 @@ describe('GettingStarted', () => {
   it('presents the exact native language and development-oracle boundary', () => {
     renderGettingStarted()
     expect(screen.getByText(/the source snapshot compiles css, scss, indented sass, less, and stylus through self-contained native zig frontends/i)).toBeInTheDocument()
-    expect(screen.getByText(/dart sass 1\.101\.0.*less 4\.6\.7.*stylus 0\.64\.0.*development-only reference oracles/i)).toBeInTheDocument()
+    expect(screen.getByText(/dart sass 1\.101\.0.*less 4\.9\.0.*stylus 0\.64\.0.*development-only reference oracles.*frozen 4\.6\.7 native baseline/i)).toBeInTheDocument()
     expect(screen.getByText(/does not enable arbitrary plugins/i)).toBeInTheDocument()
   })
 

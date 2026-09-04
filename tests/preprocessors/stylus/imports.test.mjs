@@ -278,7 +278,7 @@ test('matches canonical JSON, image-size, and embedurl helpers over resolver-own
     fs.mkdirSync(components)
     fs.writeFileSync(variables, '{"spacing":4,"tone":"rebeccapurple"}\n')
     fs.writeFileSync(image, Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nGQAAAAASUVORK5CYII=',
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
       'base64',
     ))
     fs.writeFileSync(component, [

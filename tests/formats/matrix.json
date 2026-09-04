@@ -30,7 +30,7 @@
     },
     "less": {
       "package": "less",
-      "version": "4.6.7",
+      "version": "4.9.0",
       "license": "Apache-2.0",
       "adapters": ["less"]
     },
@@ -118,7 +118,7 @@
       "sourceFiles": ["src/preprocessor/less.zig", "src/preprocessor/less_evaluator.zig"],
       "currentBoundary": "The source-built binary and explicit Zig namespace route Less through the native Zig Less parser/evaluator with confined imports/assets, permanent JavaScript/plugin rejection, and strict ZigCSS validation of generated CSS.",
       "knownRisks": [
-        "Less 4.6.7 remains a development-only oracle; Less plugins, JavaScript evaluation, custom file managers/functions, executable project code, and future oracle versions remain outside the graduated native boundary."
+        "Less 4.9.0 remains a development-only forward oracle over the frozen 4.6.7 native conformance baseline; Less plugins, JavaScript evaluation, custom file managers/functions, executable project code, and future oracle versions remain outside the graduated native boundary."
       ],
       "probe": "@color: red;\n.card { color: @color; }\n",
       "probeOutput": ".card{color:red}",

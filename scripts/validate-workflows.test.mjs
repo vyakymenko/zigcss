@@ -6,13 +6,33 @@ import test from 'node:test'
 import {
   actionPins,
   buildThroughputPolicy,
+  buildSystemCiPolicy,
+  documentationBuildCiPolicy,
+  documentationContainerCiPolicy,
+  developmentContainerCiPolicy,
+  publicDeliveryCiPolicy,
   readWorkflowSources,
+  terminalWorkflowTimeoutPolicy,
   validateActionRuntimeMigration,
+  validateAstroWorkflowContract,
   validateBuildThroughput,
+  validateBuildSystemWorkflowContract,
   validateBuildTestGraph,
+  validateDocumentationBuildCoverage,
+  validateNativeIntegrityWorkflowContract,
+  validateNextWebpackWorkflowContract,
+  validateNixFlakeWorkflowContract,
+  validateNuxtWorkflowContract,
+  validatePackageManagerWorkflowContract,
+  validatePublicDeliveryWorkflowContract,
+  validateReleaseBuildEvidenceWorkflowContract,
   validateSetupZigAction,
   validateSetupZigWorkflowContract,
+  validateSveltekitWorkflowContract,
+  validateTurbopackWorkflowContract,
+  validateTerminalWorkflowTimeouts,
   validateNativeCorpusCheckoutAttributes,
+  workflowDisplayNames,
   validateWorkflowSources,
   validateWorkflows,
   validateZigTestSuiteRunner,
@@ -23,11 +43,48 @@ function cloneSources() {
 }
 
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
-  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 11, actions: 39 })
+  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 12, actions: 46 })
   assert.deepEqual(validateZigTestSuiteRunner(), {
     failureHeadBytes: 3 * 1024,
     modes: ['Debug', 'ReleaseSafe'],
   })
+})
+
+test('build-system CI makes every advertised toolchain mandatory', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateBuildSystemWorkflowContract(sources.get('build.yml')), buildSystemCiPolicy)
+
+  for (const [current, replacement] of [
+    ["ZIGCSS_REQUIRE_BUILD_SYSTEMS: '1'", "ZIGCSS_REQUIRE_BUILD_SYSTEMS: '0'"],
+    ['ZIGCSS_REAL_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss', 'ZIGCSS_REAL_BINARY: zigcss'],
+    ['run: npm run test:build-systems', 'run: true'],
+  ]) {
+    const changed = sources.get('build.yml').replace(current, replacement)
+    assert.notEqual(changed, sources.get('build.yml'))
+    assert.throws(
+      () => validateBuildSystemWorkflowContract(changed),
+      /require all four toolchains|mandatory-toolchain/,
+    )
+  }
+})
+
+test('workflow display names remain exact and unique', () => {
+  assert.deepEqual(workflowDisplayNames, {
+    'benchmarks.yml': 'Benchmarks',
+    'build.yml': 'Build',
+    'docs.yml': 'Documentation',
+    'release.yml': 'Release',
+  })
+  assert.equal(new Set(Object.values(workflowDisplayNames)).size, Object.keys(workflowDisplayNames).length)
+
+  for (const [filename, name] of Object.entries(workflowDisplayNames)) {
+    const renamed = cloneSources()
+    renamed.set(filename, renamed.get(filename).replace(`name: ${name}`, 'name: Build impostor'))
+    assert.throws(
+      () => validateWorkflowSources(renamed),
+      new RegExp(`${filename.replace('.', '\\.')} top-level workflow name`),
+    )
+  }
 })
 
 test('Windows checkout preserves the finite native conformance text-fixture surface as LF', () => {
@@ -80,7 +137,7 @@ test('Windows checkout preserves the finite native conformance text-fixture surf
 
 test('the hosted action runtime migration has a finite reviewed terminal', () => {
   assert.deepEqual(validateActionRuntimeMigration(), {
-    actions: 7,
+    actions: 8,
     node24Actions: [
       'actions/checkout',
       'actions/setup-node',
@@ -88,10 +145,363 @@ test('the hosted action runtime migration has a finite reviewed terminal', () =>
       'actions/download-artifact',
       'actions/upload-pages-artifact',
       'actions/deploy-pages',
+      'oven-sh/setup-bun',
     ],
     replacedActions: ['mlugg/setup-zig'],
     pendingActions: [],
   })
+})
+
+test('Nix flake CI owns an exact fail-closed native Unix contract', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateNixFlakeWorkflowContract(sources.get('build.yml')), {
+    action: 'cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24',
+    installUrl: 'https://releases.nixos.org/nix/nix-2.35.2/install',
+    nixVersion: '2.35.2',
+    staticGate: 'npm run test:nix-flake && npm run check:nix-flake',
+  })
+
+  const mutableAction = cloneSources()
+  mutableAction.set('build.yml', mutableAction.get('build.yml').replace(
+    'cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31',
+    'cachix/install-nix-action@v31',
+  ))
+  assert.throws(() => validateWorkflowSources(mutableAction), /full lowercase commit SHA/)
+
+  for (const [current, replacement] of [
+    ['run: node scripts/validate-nix-flake.mjs --check', 'run: true'],
+    ['nix/nix-2.35.2/install', 'nix/nix-2.35.1/install'],
+    ['enable_kvm: false', 'enable_kvm: true'],
+    ['set_as_trusted_user: false', 'set_as_trusted_user: true'],
+    ['sandbox = true', 'sandbox = relaxed'],
+    ["if: runner.os != 'Windows'", "if: runner.os == 'Windows'"],
+    [
+      '          extra_nix_config: |\n            sandbox = true',
+      "          extra_nix_config: |\n            sandbox = true\n          github_access_token: ''",
+    ],
+    ['nix (Nix) 2.35.2', 'nix (Nix) 2.35.1'],
+    ['            --no-link \\\n', ''],
+    ['            --no-update-lock-file \\\n', ''],
+    ['            --no-write-lock-file \\\n', ''],
+    ['            --no-use-registries \\\n', ''],
+    ['git diff --exit-code -- flake.nix flake.lock', 'git diff --exit-code -- flake.nix'],
+    ['npm run test:nix-flake && npm run check:nix-flake', 'npm run check:nix-flake'],
+  ]) {
+    const mutated = cloneSources()
+    const source = mutated.get('build.yml')
+    assert.notEqual(source.replace(current, replacement), source, current)
+    mutated.set('build.yml', source.replace(current, replacement))
+    assert.throws(() => validateWorkflowSources(mutated), /Nix flake/)
+  }
+
+  const preflightStep = [
+    '      - name: Validate Nix flake contract',
+    "        if: runner.os != 'Windows'",
+    '        run: node scripts/validate-nix-flake.mjs --check',
+  ].join('\n')
+  const installStep = [
+    '      - name: Install exact Nix',
+    "        if: runner.os != 'Windows'",
+    '        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31',
+    '        with:',
+    '          install_url: https://releases.nixos.org/nix/nix-2.35.2/install',
+    '          enable_kvm: false',
+    '          set_as_trusted_user: false',
+    '          extra_nix_config: |',
+    '            sandbox = true',
+  ].join('\n')
+  const reordered = cloneSources()
+  const reorderedSource = reordered.get('build.yml').replace(
+    `${preflightStep}\n\n${installStep}`,
+    `${installStep}\n\n${preflightStep}`,
+  )
+  assert.notEqual(reorderedSource, reordered.get('build.yml'))
+  reordered.set('build.yml', reorderedSource)
+  assert.throws(
+    () => validateWorkflowSources(reordered),
+    /Nix flake steps must be adjacent|statically validate, install, and verify Nix|fail closed before the installer/,
+  )
+})
+
+test('package-manager CI owns one immutable setup-bun action and exact stable Bun release', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validatePackageManagerWorkflowContract(sources.get('build.yml')), {
+    action: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6',
+    bunVersion: '1.4.0',
+    gate: 'npm run test:package-managers',
+  })
+
+  const staleVersion = cloneSources()
+  staleVersion.set('build.yml', staleVersion.get('build.yml').replace("bun-version: '1.4.0'", "bun-version: '1.3.14'"))
+  assert.throws(
+    () => validateWorkflowSources(staleVersion),
+    /exact reviewed Bun release|exact Bun 1\.4\.0/,
+  )
+
+  const mutableAction = cloneSources()
+  mutableAction.set('build.yml', mutableAction.get('build.yml').replace(
+    'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0',
+    'oven-sh/setup-bun@v2',
+  ))
+  assert.throws(() => validateWorkflowSources(mutableAction), /full lowercase commit SHA/)
+
+  const setupStep = [
+    '      - name: Setup Bun for package-manager matrix',
+    '        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0',
+    '        with:',
+    "          bun-version: '1.4.0'",
+    '',
+  ].join('\n')
+  const missingSetup = cloneSources()
+  missingSetup.set('build.yml', missingSetup.get('build.yml').replace(setupStep, ''))
+  assert.throws(
+    () => validateWorkflowSources(missingSetup),
+    /action inventory|exact reviewed Bun release/,
+  )
+})
+
+test('Next.js Turbopack CI owns one post-Debug current-native host gate', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateTurbopackWorkflowContract(sources.get('build.yml')), {
+    gate: 'npm run test:turbopack-example',
+    host: 'Next.js 16.3.4',
+    nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
+  })
+
+  const relativeBinary = cloneSources()
+  relativeBinary.set('build.yml', relativeBinary.get('build.yml').replace(
+    'ZIGCSS_TURBOPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    'ZIGCSS_TURBOPACK_NATIVE_BINARY: zig-out/bin/zigcss',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(relativeBinary),
+    /exact absolute current-checkout native binary|native binary environment changed/,
+  )
+
+  const removedGate = cloneSources()
+  removedGate.set('build.yml', removedGate.get('build.yml').replace(
+    'run: npm run test:turbopack-example',
+    'run: npm run removed-turbopack-example',
+  ))
+  assert.throws(() => validateWorkflowSources(removedGate), /Next\.js Turbopack gate/)
+
+  const gateBlock = [
+    '      - name: Verify Next.js Turbopack global SCSS integration',
+    '        env:',
+    '          ZIGCSS_TURBOPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:turbopack-example',
+    '',
+  ].join('\n')
+  const beforeDebug = cloneSources()
+  beforeDebug.set('build.yml', beforeDebug.get('build.yml')
+    .replace(gateBlock, '')
+    .replace('      - name: Run Tests\n', `${gateBlock}      - name: Run Tests\n`))
+  assert.throws(
+    () => validateWorkflowSources(beforeDebug),
+    /must run after the native Debug suite/,
+  )
+})
+
+test('Next.js Webpack CI owns one exact post-Turbopack pre-SvelteKit current-native host gate', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateNextWebpackWorkflowContract(sources.get('build.yml')), {
+    gate: 'npm run test:next-webpack-example',
+    host: 'Next.js 16.3.4 with Webpack 5.110.2',
+    nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
+    nodeVersion: '22.22.0',
+  })
+
+  const missingGate = cloneSources()
+  missingGate.set('build.yml', missingGate.get('build.yml').replace(
+    'run: npm run test:next-webpack-example',
+    'run: npm run removed-next-webpack-example',
+  ))
+  assert.throws(() => validateWorkflowSources(missingGate), /Next\.js Webpack gate/)
+
+  const relativeBinary = cloneSources()
+  relativeBinary.set('build.yml', relativeBinary.get('build.yml').replace(
+    'ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    'ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: zig-out/bin/zigcss',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(relativeBinary),
+    /exact absolute current-checkout native binary|native binary environment changed/,
+  )
+
+  const mutableNode = cloneSources()
+  mutableNode.set('build.yml', mutableNode.get('build.yml').replace(
+    "node-version: '22.22.0'",
+    'node-version: 22',
+  ))
+  assert.throws(
+    () => validateNextWebpackWorkflowContract(mutableNode.get('build.yml')),
+    /Next\.js Webpack gate must run on exact Node 22\.22\.0/,
+  )
+
+  const gateBlock = [
+    '      - name: Verify Next.js Webpack global SCSS integration',
+    '        env:',
+    '          ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:next-webpack-example',
+    '',
+  ].join('\n')
+  const beforeTurbopack = cloneSources()
+  beforeTurbopack.set('build.yml', beforeTurbopack.get('build.yml')
+    .replace(gateBlock, '')
+    .replace('      - name: Verify Next.js Turbopack global SCSS integration\n', `${gateBlock}      - name: Verify Next.js Turbopack global SCSS integration\n`))
+  assert.throws(
+    () => validateWorkflowSources(beforeTurbopack),
+    /after the locked install, native Debug suite, and Turbopack gate, and before SvelteKit/,
+  )
+
+  const afterSveltekit = cloneSources()
+  afterSveltekit.set('build.yml', afterSveltekit.get('build.yml')
+    .replace(gateBlock, '')
+    .replace(
+      '        run: npm run test:sveltekit-example\n',
+      `        run: npm run test:sveltekit-example\n\n${gateBlock}`,
+    ))
+  assert.throws(
+    () => validateWorkflowSources(afterSveltekit),
+    /after the locked install, native Debug suite, and Turbopack gate, and before SvelteKit/,
+  )
+})
+
+test('SvelteKit CI owns one post-Debug current-native host gate', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateSveltekitWorkflowContract(sources.get('build.yml')), {
+    gate: 'npm run test:sveltekit-example',
+    host: 'SvelteKit 2.70.3 with Vite 8.2.2',
+    nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
+  })
+
+  const relativeBinary = cloneSources()
+  relativeBinary.set('build.yml', relativeBinary.get('build.yml').replace(
+    'ZIGCSS_SVELTEKIT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    'ZIGCSS_SVELTEKIT_NATIVE_BINARY: zig-out/bin/zigcss',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(relativeBinary),
+    /SvelteKit gate must use the exact absolute current-checkout native binary|SvelteKit native binary environment changed/,
+  )
+
+  const removedGate = cloneSources()
+  removedGate.set('build.yml', removedGate.get('build.yml').replace(
+    'run: npm run test:sveltekit-example',
+    'run: npm run removed-sveltekit-example',
+  ))
+  assert.throws(() => validateWorkflowSources(removedGate), /SvelteKit gate/)
+
+  const gateBlock = [
+    '      - name: Verify SvelteKit external CSS Module integration',
+    '        env:',
+    '          ZIGCSS_SVELTEKIT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:sveltekit-example',
+    '',
+  ].join('\n')
+  const beforeDebug = cloneSources()
+  beforeDebug.set('build.yml', beforeDebug.get('build.yml')
+    .replace(gateBlock, '')
+    .replace('      - name: Run Tests\n', `${gateBlock}      - name: Run Tests\n`))
+  assert.throws(
+    () => validateWorkflowSources(beforeDebug),
+    /SvelteKit gate must run after the native Debug suite/,
+  )
+})
+
+test('Astro CI owns one post-Debug current-native host gate', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateAstroWorkflowContract(sources.get('build.yml')), {
+    gate: 'npm run test:astro-example',
+    host: 'Astro 7.2.10',
+    nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
+  })
+
+  const relativeBinary = cloneSources()
+  relativeBinary.set('build.yml', relativeBinary.get('build.yml').replace(
+    'ZIGCSS_ASTRO_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    'ZIGCSS_ASTRO_NATIVE_BINARY: zig-out/bin/zigcss',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(relativeBinary),
+    /Astro gate must use the exact absolute current-checkout native binary|Astro native binary environment changed/,
+  )
+
+  const mutableNode = cloneSources()
+  mutableNode.set('build.yml', mutableNode.get('build.yml').replace("node-version: '22.22.0'", 'node-version: 22'))
+  assert.throws(() => validateWorkflowSources(mutableNode), /Astro gate must run on exact Node 22\.22\.0/)
+
+  const removedGate = cloneSources()
+  removedGate.set('build.yml', removedGate.get('build.yml').replace(
+    'run: npm run test:astro-example',
+    'run: npm run removed-astro-example',
+  ))
+  assert.throws(() => validateWorkflowSources(removedGate), /Astro gate/)
+
+  const gateBlock = [
+    '      - name: Verify Astro external CSS Module integration',
+    '        env:',
+    '          ZIGCSS_ASTRO_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:astro-example',
+    '',
+  ].join('\n')
+  const beforeDebug = cloneSources()
+  beforeDebug.set('build.yml', beforeDebug.get('build.yml')
+    .replace(gateBlock, '')
+    .replace('      - name: Run Tests\n', `${gateBlock}      - name: Run Tests\n`))
+  assert.throws(
+    () => validateWorkflowSources(beforeDebug),
+    /Astro gate must run after the native Debug suite/,
+  )
+})
+
+test('Nuxt CI owns one post-Debug current-native host gate', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateNuxtWorkflowContract(sources.get('build.yml')), {
+    gate: 'npm run test:nuxt-example',
+    host: 'Nuxt 4.5.2',
+    nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
+  })
+
+  const relativeBinary = cloneSources()
+  relativeBinary.set('build.yml', relativeBinary.get('build.yml').replace(
+    'ZIGCSS_NUXT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    'ZIGCSS_NUXT_NATIVE_BINARY: zig-out/bin/zigcss',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(relativeBinary),
+    /Nuxt gate must use the exact absolute current-checkout native binary|Nuxt native binary environment changed/,
+  )
+
+  const unsupportedNode = cloneSources()
+  unsupportedNode.set('build.yml', unsupportedNode.get('build.yml').replace("node-version: '22.22.0'", "node-version: '20.19.0'"))
+  assert.throws(
+    () => validateNuxtWorkflowContract(unsupportedNode.get('build.yml')),
+    /Nuxt gate must run on exact Node 22\.22\.0/,
+  )
+
+  const removedGate = cloneSources()
+  removedGate.set('build.yml', removedGate.get('build.yml').replace(
+    'run: npm run test:nuxt-example',
+    'run: npm run removed-nuxt-example',
+  ))
+  assert.throws(() => validateWorkflowSources(removedGate), /Nuxt gate/)
+
+  const gateBlock = [
+    '      - name: Verify Nuxt external CSS Module integration',
+    '        env:',
+    '          ZIGCSS_NUXT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:nuxt-example',
+    '',
+  ].join('\n')
+  const beforeDebug = cloneSources()
+  beforeDebug.set('build.yml', beforeDebug.get('build.yml')
+    .replace(gateBlock, '')
+    .replace('      - name: Run Tests\n', `${gateBlock}      - name: Run Tests\n`))
+  assert.throws(
+    () => validateWorkflowSources(beforeDebug),
+    /Nuxt gate must run after the native Debug suite/,
+  )
 })
 
 test('all four Zig setup placements use the repository-owned terminal and retain bounded cache cleanup', t => {
@@ -155,6 +565,89 @@ test('all four Zig setup placements use the repository-owned terminal and retain
   assert.throws(() => validateSetupZigAction(temporary), /missing integrity contract/)
 })
 
+test('native archives use one committed epoch and only tag releases enforce committed digests', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateNativeIntegrityWorkflowContract(sources), {
+    buildEpochReads: 2,
+    releaseArchiveGates: 1,
+    releaseEpochReads: 1,
+  })
+
+  const missingBuildEpoch = cloneSources()
+  missingBuildEpoch.set('build.yml', missingBuildEpoch.get('build.yml').replace(
+    '          epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"\n',
+    '',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(missingBuildEpoch),
+    /exactly two manifest-owned source date epochs/,
+  )
+
+  const mutableEpoch = cloneSources()
+  mutableEpoch.set('release.yml', mutableEpoch.get('release.yml').replace(
+    '          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"',
+    '          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(mutableEpoch),
+    /manifest-owned source date epoch|mutable commit timestamp/,
+  )
+
+  const missingReleaseGate = cloneSources()
+  missingReleaseGate.set('release.yml', missingReleaseGate.get('release.yml').replace(
+    '      - name: Verify Committed Native Integrity',
+    '      - name: Removed Committed Native Integrity',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(missingReleaseGate),
+    /verify every tag archive against the committed native integrity manifest/,
+  )
+
+  const missingPrepackCheck = cloneSources()
+  missingPrepackCheck.set('release.yml', missingPrepackCheck.get('release.yml').replace(
+    'node scripts/validate-native-integrity.mjs --check',
+    'node scripts/validate-native-integrity.mjs --removed-check',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(missingPrepackCheck),
+    /native integrity command inventory|before packing npm/,
+  )
+
+  const developmentDigestGate = cloneSources()
+  developmentDigestGate.set('build.yml', developmentDigestGate.get('build.yml').replace(
+    '      - name: Generate Native Smoke Metadata',
+    '      - name: Development digest comparison\n'
+      + '        run: |\n'
+      + '          node scripts/validate-native-integrity.mjs \\\n'
+      + '            --archive "release-assets/$RELEASE_ARCHIVE"\n\n'
+      + '      - name: Generate Native Smoke Metadata',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(developmentDigestGate),
+    /must not compare unreleased development archives/,
+  )
+
+  const sameRunTrustData = cloneSources()
+  sameRunTrustData.set('release.yml', sameRunTrustData.get('release.yml').replace(
+    'node scripts/validate-native-integrity.mjs \\',
+    'node scripts/validate-native-integrity.mjs --write \\',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(sameRunTrustData),
+    /verify every tag archive|must never derive committed native integrity trust data/,
+  )
+
+  const missingCiGate = cloneSources()
+  missingCiGate.set('build.yml', missingCiGate.get('build.yml').replace(
+    'node --test scripts/validate-native-integrity.test.mjs',
+    'node --test scripts/removed-native-integrity.test.mjs',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(missingCiGate),
+    /test and check the native integrity policy exactly once/,
+  )
+})
+
 test('mutable, malformed, unknown, and stale action references fail closed', () => {
   const mutable = cloneSources()
   mutable.set('build.yml', mutable.get('build.yml').replace(
@@ -212,6 +705,413 @@ test('workflow and job permission expansion fails closed', () => {
   assert.throws(() => validateWorkflowSources(compilerOidc), /job build permissions changed/)
 })
 
+test('documentation deployment requires one successful same-repository main Build commit, complete audits, and the live container gate', () => {
+  const development = cloneSources()
+  development.set('docs.yml', development.get('docs.yml').replace(
+    "github.event.workflow_run.head_branch == 'main'",
+    "github.event.workflow_run.head_branch == 'development'",
+  ))
+  assert.throws(() => validateWorkflowSources(development), /exact successful same-repository main Build file and SHA/)
+
+  const wrongWorkflowPath = cloneSources()
+  wrongWorkflowPath.set('docs.yml', wrongWorkflowPath.get('docs.yml').replace(
+    "github.event.workflow_run.path == '.github/workflows/build.yml'",
+    "github.event.workflow_run.path == '.github/workflows/benchmarks.yml'",
+  ))
+  assert.throws(() => validateWorkflowSources(wrongWorkflowPath), /exact successful same-repository main Build file and SHA/)
+
+  const missingWorkflowName = cloneSources()
+  missingWorkflowName.set('docs.yml', missingWorkflowName.get('docs.yml').replace(
+    "      github.event.workflow_run.name == 'Build' &&\n",
+    '',
+  ))
+  assert.throws(() => validateWorkflowSources(missingWorkflowName), /exact successful same-repository main Build file and SHA/)
+
+  const manual = cloneSources()
+  manual.set('docs.yml', manual.get('docs.yml').replace(
+    '  workflow_run:',
+    '  workflow_dispatch:\n  workflow_run:',
+  ))
+  assert.throws(() => validateWorkflowSources(manual), /completed main Build workflow/)
+
+  const wrongCommit = cloneSources()
+  wrongCommit.set('docs.yml', wrongCommit.get('docs.yml').replace(
+    "github.event.workflow_run.head_sha || github.sha",
+    'github.sha',
+  ))
+  assert.throws(() => validateWorkflowSources(wrongCommit), /exact successful Build commit/)
+
+  const missingRepositoryBoundary = cloneSources()
+  missingRepositoryBoundary.set('docs.yml', missingRepositoryBoundary.get('docs.yml').replace(
+    '      github.event.workflow_run.repository.full_name == github.repository &&\n',
+    '',
+  ))
+  assert.throws(() => validateWorkflowSources(missingRepositoryBoundary), /exact successful same-repository main Build file and SHA/)
+
+  const missingSourceIdentity = cloneSources()
+  missingSourceIdentity.set('docs.yml', missingSourceIdentity.get('docs.yml').replace(
+    '          test "$actual_source_sha" = "$EXPECTED_SOURCE_SHA"\n',
+    '',
+  ))
+  assert.throws(() => validateWorkflowSources(missingSourceIdentity), /verify and export the exact checked-out source SHA/)
+
+  const cancellableByFailure = cloneSources()
+  cancellableByFailure.set('docs.yml', cancellableByFailure.get('docs.yml').replace(
+    "  group: pages-${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && 'deploy' || format('{0}-{1}', github.event_name, github.ref) }}",
+    '  group: pages-${{ github.ref }}',
+  ))
+  assert.throws(() => validateWorkflowSources(cancellableByFailure), /prevent failed Build completions/)
+
+  const missingDocsAudit = cloneSources()
+  missingDocsAudit.set('docs.yml', missingDocsAudit.get('docs.yml').replace(
+    'npm audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high',
+    'npm audit --omit=dev --package-lock-only --audit-level=high',
+  ))
+  assert.throws(() => validateWorkflowSources(missingDocsAudit), /complete documentation build graph/)
+
+  const missingBuildAudit = cloneSources()
+  missingBuildAudit.set('build.yml', missingBuildAudit.get('build.yml').replace(
+    ' && npm run audit:documentation && npm run audit:vscode',
+    '',
+  ))
+  assert.throws(() => validateWorkflowSources(missingBuildAudit), /documentation, VS Code, and framework build graphs/)
+
+  const containerStep = [
+    '      - name: Build and smoke-test documentation container',
+    '        run: node docs/scripts/smoke-docs-container.mjs',
+    '',
+  ].join('\n')
+  const missingContainerSmoke = cloneSources()
+  missingContainerSmoke.set('docs.yml', missingContainerSmoke.get('docs.yml').replace(containerStep, ''))
+  assert.throws(() => validateWorkflowSources(missingContainerSmoke), /live-smoke Dockerfile\.docs/)
+
+  const reorderedContainerSmoke = cloneSources()
+  reorderedContainerSmoke.set('docs.yml', reorderedContainerSmoke.get('docs.yml')
+    .replace(containerStep, '')
+    .replace('      - name: Build documentation\n', `${containerStep}      - name: Build documentation\n`))
+  assert.throws(() => validateWorkflowSources(reorderedContainerSmoke), /live-smoke Dockerfile\.docs/)
+
+  const nonBlockingContainerSmoke = cloneSources()
+  nonBlockingContainerSmoke.set('docs.yml', nonBlockingContainerSmoke.get('docs.yml').replace(
+    '        run: node docs/scripts/smoke-docs-container.mjs',
+    '        run: node docs/scripts/smoke-docs-container.mjs\n        continue-on-error: true',
+  ))
+  assert.throws(() => validateWorkflowSources(nonBlockingContainerSmoke), /live-smoke Dockerfile\.docs/)
+
+  for (const input of documentationContainerCiPolicy.contextPaths) {
+    const missingContextInput = cloneSources()
+    missingContextInput.set('docs.yml', missingContextInput.get('docs.yml').replaceAll(
+      `      - '${input}'\n`,
+      '',
+    ))
+    assert.throws(
+      () => validateWorkflowSources(missingContextInput),
+      /exact documentation container context inputs/,
+      input,
+    )
+  }
+})
+
+test('the unfiltered Build workflow owns the complete documentation test suite', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateDocumentationBuildCoverage(sources.get('build.yml')), {
+    install: documentationBuildCiPolicy.installCommand,
+    test: documentationBuildCiPolicy.testCommand,
+    triggers: ['push', 'pull_request', 'workflow_dispatch'],
+  })
+
+  const missingDocsTest = cloneSources()
+  missingDocsTest.set('build.yml', missingDocsTest.get('build.yml').replace(
+    '      - name: Test documentation site\n        run: npm --prefix docs run test:run\n\n',
+    '',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(missingDocsTest),
+    /install locked documentation dependencies, run the complete docs suite, and live-smoke the development container exactly once/,
+  )
+
+  const duplicateDocsTest = cloneSources()
+  duplicateDocsTest.set('build.yml', duplicateDocsTest.get('build.yml').replace(
+    '      - name: Test documentation site\n        run: npm --prefix docs run test:run',
+    '      - name: Test documentation site\n        run: npm --prefix docs run test:run && npm --prefix docs run test:run',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(duplicateDocsTest),
+    /install locked documentation dependencies, run the complete docs suite, and live-smoke the development container exactly once/,
+  )
+
+  const nonBlockingDocsTest = cloneSources()
+  nonBlockingDocsTest.set('build.yml', nonBlockingDocsTest.get('build.yml').replace(
+    '      - name: Test documentation site\n        run: npm --prefix docs run test:run',
+    '      - name: Test documentation site\n        continue-on-error: true\n        run: npm --prefix docs run test:run',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(nonBlockingDocsTest),
+    /install locked documentation dependencies, run the complete docs suite, and live-smoke the development container exactly once/,
+  )
+
+  const missingDevelopmentContainer = cloneSources()
+  missingDevelopmentContainer.set('build.yml', missingDevelopmentContainer.get('build.yml').replace(
+    `\n\n      - name: Build and smoke-test development container\n        run: ${developmentContainerCiPolicy.command}`,
+    '',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(missingDevelopmentContainer),
+    /live-smoke the development container exactly once/,
+  )
+
+  const nonBlockingDevelopmentContainer = cloneSources()
+  nonBlockingDevelopmentContainer.set('build.yml', nonBlockingDevelopmentContainer.get('build.yml').replace(
+    `        run: ${developmentContainerCiPolicy.command}`,
+    `        run: ${developmentContainerCiPolicy.command}\n        continue-on-error: true`,
+  ))
+  assert.throws(
+    () => validateWorkflowSources(nonBlockingDevelopmentContainer),
+    /live-smoke the development container exactly once/,
+  )
+
+  const pathFilteredBuild = cloneSources()
+  pathFilteredBuild.set('build.yml', pathFilteredBuild.get('build.yml').replace(
+    '  pull_request:\n    branches: [main, development]',
+    '  pull_request:\n    branches: [main, development]\n    paths: [src/**]',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(pathFilteredBuild),
+    /every main\/development push and pull request without path filters/,
+  )
+})
+
+test('release publication requires one exact-SHA successful same-repository main Build run first', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateReleaseBuildEvidenceWorkflowContract(sources.get('release.yml')), {
+    branch: 'main',
+    event: 'push',
+    permission: 'actions: read',
+    workflow: 'Build',
+  })
+
+  const admissionStep = [
+    '      - name: Verify release candidate admission',
+    '        shell: bash',
+    '        run: |',
+    '          candidate_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"',
+    '          origin_main_commit="$(',
+    '            git ls-remote --exit-code --refs origin refs/heads/main |',
+    '              cut -f1',
+    '          )"',
+    '          node scripts/validate-release-admission.mjs --check \\',
+    '            --release-tag "$GITHUB_REF_NAME" \\',
+    '            --candidate-commit "$candidate_commit" \\',
+    '            --origin-main-commit "$origin_main_commit"',
+    '',
+  ].join('\n')
+  assert.equal(sources.get('release.yml').includes(admissionStep), true)
+
+  const missingAdmission = cloneSources()
+  missingAdmission.set(
+    'release.yml',
+    missingAdmission.get('release.yml').replace(admissionStep, ''),
+  )
+  assert.throws(
+    () => validateWorkflowSources(missingAdmission),
+    /one exact fail-closed candidate admission gate/,
+  )
+
+  const stableOnlyAdmission = cloneSources()
+  stableOnlyAdmission.set('release.yml', stableOnlyAdmission.get('release.yml').replace(
+    'node scripts/validate-release-admission.mjs --check \\',
+    'npm run check:stable-release -- \\',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(stableOnlyAdmission),
+    /one exact fail-closed candidate admission gate/,
+  )
+
+  const admissionAfterAuthority = cloneSources()
+  admissionAfterAuthority.set('release.yml', admissionAfterAuthority.get('release.yml')
+    .replace(admissionStep, '')
+    .replace('      - name: Pack exact npm package\n', `${admissionStep}      - name: Pack exact npm package\n`))
+  assert.throws(
+    () => validateWorkflowSources(admissionAfterAuthority),
+    /must run before every publication authority/,
+  )
+
+  const missing = cloneSources()
+  const step = [
+    '      - name: Verify successful Build evidence for release commit',
+    '        shell: bash',
+    '        env:',
+    '          GITHUB_TOKEN: ${{ github.token }}',
+    '        run: |',
+    '          candidate_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"',
+    '          node scripts/verify-build-workflow-run.mjs \\',
+    '            --repository "$GITHUB_REPOSITORY" \\',
+    '            --commit "$candidate_commit"',
+    '',
+  ].join('\n')
+  assert.equal(missing.get('release.yml').includes(step), true)
+  missing.set('release.yml', missing.get('release.yml').replace(step, ''))
+  assert.throws(
+    () => validateWorkflowSources(missing),
+    /must verify one exact-SHA successful Build run/,
+  )
+
+  const unpeeledTag = cloneSources()
+  unpeeledTag.set('release.yml', unpeeledTag.get('release.yml').replace(
+    '--commit "$candidate_commit"',
+    '--commit "$GITHUB_SHA"',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(unpeeledTag),
+    /must verify one exact-SHA successful Build run/,
+  )
+
+  const personalToken = cloneSources()
+  personalToken.set('release.yml', personalToken.get('release.yml').replace(
+    'GITHUB_TOKEN: ${{ github.token }}',
+    'GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(personalToken),
+    /must verify one exact-SHA successful Build run/,
+  )
+
+  const afterAuthority = cloneSources()
+  afterAuthority.set('release.yml', afterAuthority.get('release.yml')
+    .replace(step, '')
+    .replace('      - name: Pack exact npm package\n', `${step}      - name: Pack exact npm package\n`))
+  assert.throws(
+    () => validateWorkflowSources(afterAuthority),
+    /must run before every publication authority/,
+  )
+
+  const noActionsRead = cloneSources()
+  noActionsRead.set('release.yml', noActionsRead.get('release.yml').replace(
+    '    permissions:\n      actions: read\n      contents: read',
+    '    permissions:\n      contents: read',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(noActionsRead),
+    /job npm-preflight permissions changed/,
+  )
+})
+
+test('release ends with one bounded credential-free anonymous public delivery smoke', () => {
+  const source = cloneSources().get('release.yml')
+  assert.deepEqual(validatePublicDeliveryWorkflowContract(source), {
+    job: publicDeliveryCiPolicy.job,
+    needs: publicDeliveryCiPolicy.needs,
+    nodeVersion: publicDeliveryCiPolicy.nodeVersion,
+    registry: publicDeliveryCiPolicy.registry,
+    runner: publicDeliveryCiPolicy.runner,
+    timeoutMinutes: publicDeliveryCiPolicy.timeoutMinutes,
+  })
+
+  const marker = '\n  anonymous-public-delivery:'
+  const start = source.indexOf(marker)
+  assert.notEqual(start, -1)
+  const withoutDelivery = source.slice(0, start)
+  assert.throws(
+    () => validatePublicDeliveryWorkflowContract(withoutDelivery),
+    /anonymous public delivery job is unavailable/,
+  )
+
+  const mutateDelivery = mutation => source.slice(0, start) + mutation(source.slice(start))
+  for (const [label, mutated, expected] of [
+    [
+      'dependency',
+      mutateDelivery(job => job.replace('needs: publish-npm', 'needs: create-release')),
+      /exact bounded credential-free terminal/,
+    ],
+    [
+      'checkout credentials',
+      mutateDelivery(job => job.replace('persist-credentials: false', 'persist-credentials: true')),
+      /exact bounded credential-free terminal/,
+    ],
+    [
+      'unpeeled tag',
+      mutateDelivery(job => job.replace('"${GITHUB_REF_NAME#v}"', '"$GITHUB_REF_NAME"')),
+      /exact bounded credential-free terminal/,
+    ],
+    [
+      'npm token',
+      mutateDelivery(job => job.replace(
+        '        run: node scripts/smoke-public-delivery.mjs --version "${GITHUB_REF_NAME#v}"',
+        '        run: node scripts/smoke-public-delivery.mjs --version "${GITHUB_REF_NAME#v}"\n        env:\n          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}',
+      )),
+      /must not receive npm, GitHub, OIDC, or registry credentials/,
+    ],
+    [
+      'registry credential setup',
+      mutateDelivery(job => job.replace(
+        "          node-version: '20.19.0'",
+        "          node-version: '20.19.0'\n          registry-url: 'https://registry.npmjs.org'",
+      )),
+      /must not receive npm, GitHub, OIDC, or registry credentials/,
+    ],
+    [
+      'OIDC permission',
+      mutateDelivery(job => job.replace(
+        '      contents: read',
+        '      contents: read\n      id-token: write',
+      )),
+      /must not receive npm, GitHub, OIDC, or registry credentials/,
+    ],
+    [
+      'non-blocking smoke',
+      mutateDelivery(job => job.replace(
+        '      - name: Smoke anonymous canonical npm delivery',
+        '      - name: Smoke anonymous canonical npm delivery\n        continue-on-error: true',
+      )),
+      /exact bounded credential-free terminal/,
+    ],
+  ]) {
+    assert.notEqual(mutated, source, label)
+    assert.throws(() => validatePublicDeliveryWorkflowContract(mutated), expected, label)
+  }
+
+  const publishStart = withoutDelivery.indexOf('\n  publish-npm:')
+  assert.notEqual(publishStart, -1)
+  const deliveryBlock = source.slice(start)
+  const reordered = withoutDelivery.slice(0, publishStart)
+    + deliveryBlock
+    + '\n'
+    + withoutDelivery.slice(publishStart)
+  assert.throws(
+    () => validatePublicDeliveryWorkflowContract(reordered),
+    /must remain the final job/,
+  )
+})
+
+test('documentation and release terminal jobs own finite hard timeouts', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateTerminalWorkflowTimeouts(sources), terminalWorkflowTimeoutPolicy)
+
+  for (const [filename, jobs] of Object.entries(terminalWorkflowTimeoutPolicy)) {
+    const workflow = sources.get(filename)
+    for (const [job, timeoutMinutes] of Object.entries(jobs)) {
+      const start = workflow.indexOf(`  ${job}:\n`)
+      const laterJobs = Object.keys(jobs)
+        .map(name => workflow.indexOf(`\n  ${name}:\n`, start + 1))
+        .filter(position => position > start)
+      const end = laterJobs.length === 0 ? workflow.length : Math.min(...laterJobs)
+      const jobSource = workflow.slice(start, end)
+      const timeout = `    timeout-minutes: ${timeoutMinutes}\n`
+      assert.notEqual(start, -1)
+      assert.equal(jobSource.split(timeout).length, 2)
+
+      for (const replacement of ['', `    timeout-minutes: ${timeoutMinutes + 1}\n`, timeout + timeout]) {
+        const mutated = cloneSources()
+        mutated.set(filename, workflow.slice(0, start) + jobSource.replace(timeout, replacement) + workflow.slice(end))
+        assert.throws(
+          () => validateWorkflowSources(mutated),
+          new RegExp(`${filename.replace('.', '\\.')} job ${job}.*hard timeout`),
+        )
+      }
+    }
+  }
+})
+
 test('new workflows, jobs, and action placements require an explicit policy update', () => {
   const workflow = cloneSources()
   workflow.set('unreviewed.yml', 'name: Unreviewed\n')
@@ -243,7 +1143,7 @@ test('the workflow security gate runs before dependency installation', () => {
 
 test('the build workflow preserves one complete aggregate suite within a bounded queue', () => {
   const sources = cloneSources()
-  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 11, actions: 39 })
+  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 12, actions: 46 })
 
   const unconstrained = cloneSources()
   unconstrained.set('build.yml', unconstrained.get('build.yml').replace(

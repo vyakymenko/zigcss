@@ -1,6 +1,6 @@
 # Native CSS Modules subset
 
-ZigCSS exposes an experimental, library-only CSS Modules subset through `CompileOptions.syntax = .css_modules`. This surface is deliberately narrower than the broader CSS Modules ecosystem. The recovery CLI and LSP still reject `.module.css`; there is no extension-based fallback to plain CSS.
+ZigCSS exposes an experimental, library-only CSS Modules subset through `CompileOptions.syntax = .css_modules`. This surface is deliberately narrower than the broader CSS Modules ecosystem. The CLI and LSP do not expose CSS Modules semantics. A `.module.css` filename is rejected on the default CSS route; an explicit native preprocessor syntax still controls parsing regardless of the filename.
 
 ## Library use
 

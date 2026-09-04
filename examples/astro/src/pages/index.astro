@@ -1,0 +1,22 @@
+---
+import styles from '../styles/card.module.scss'
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Astro ZigCSS</title>
+  </head>
+  <body>
+    <main class={styles.hero}>
+      <h1>Astro ZigCSS</h1>
+    </main>
+  </body>
+</html>
+
+<script>
+  import styles from '../styles/card.module.scss'
+  document.documentElement.dataset.zigcssClass = styles.hero
+</script>

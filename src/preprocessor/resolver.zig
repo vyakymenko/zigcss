@@ -109,6 +109,16 @@ pub const Stats = struct {
     bytes: u64,
 };
 
+/// Test-visible structural work counters for the private admission indexes.
+/// They count logical hash lookups and graph items visited, never wall time or
+/// hash-table implementation probes.
+pub const IndexOperations = struct {
+    dependency_lookups: u64,
+    edge_lookups: u64,
+    cycle_nodes: u64,
+    cycle_edges: u64,
+};
+
 pub const Loaded = struct {
     url: []const u8,
     contents: []const u8,
@@ -313,18 +323,61 @@ fn canonicalPathFromHandle(
     return std.unicode.wtf16LeToWtf8Alloc(allocator, canonical_wide);
 }
 
+const EdgeKey = struct {
+    parent_url: ?[]const u8,
+    child_url: []const u8,
+};
+
+const EdgeKeyContext = struct {
+    pub fn hash(_: EdgeKeyContext, key: EdgeKey) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        if (key.parent_url) |parent_url| {
+            hasher.update(&.{1});
+            hasher.update(parent_url);
+        } else {
+            hasher.update(&.{0});
+        }
+        hasher.update(&.{0xff});
+        hasher.update(key.child_url);
+        return hasher.final();
+    }
+
+    pub fn eql(_: EdgeKeyContext, left: EdgeKey, right: EdgeKey) bool {
+        return optionalStringEql(left.parent_url, right.parent_url) and
+            std.mem.eql(u8, left.child_url, right.child_url);
+    }
+};
+
+const EdgeIndex = std.HashMapUnmanaged(EdgeKey, void, EdgeKeyContext, 80);
+const AdjacencyList = std.ArrayList([]const u8);
+const AdjacencyIndex = std.StringHashMapUnmanaged(AdjacencyList);
+
 pub const Session = struct {
     allocator: std.mem.Allocator,
     resolver: *const Resolver,
     cancellation: Cancellation,
     dependency_items: std.ArrayList(Dependency) = .empty,
     edge_items: std.ArrayList(Edge) = .empty,
+    dependency_index: std.StringHashMapUnmanaged(void) = .empty,
+    edge_index: EdgeIndex = .empty,
+    adjacency_index: AdjacencyIndex = .empty,
+    index_operations: IndexOperations = .{
+        .dependency_lookups = 0,
+        .edge_lookups = 0,
+        .cycle_nodes = 0,
+        .cycle_edges = 0,
+    },
     attempts: u64 = 0,
     glob_entries: usize = 0,
     bytes: u64 = 0,
     closed: bool = false,
 
     pub fn deinit(self: *Session) void {
+        self.dependency_index.deinit(self.allocator);
+        self.edge_index.deinit(self.allocator);
+        var adjacency_values = self.adjacency_index.valueIterator();
+        while (adjacency_values.next()) |children| children.deinit(self.allocator);
+        self.adjacency_index.deinit(self.allocator);
         for (self.edge_items.items) |edge| {
             if (edge.parent_url) |parent_url| self.allocator.free(parent_url);
             self.allocator.free(edge.child_url);
@@ -355,6 +408,10 @@ pub const Session = struct {
             .files = self.dependency_items.items.len,
             .bytes = self.bytes,
         };
+    }
+
+    pub fn indexOperations(self: *const Session) IndexOperations {
+        return self.index_operations;
     }
 
     pub fn load(self: *Session, candidate_url: []const u8, options: LoadOptions) Error!Loaded {
@@ -398,7 +455,8 @@ pub const Session = struct {
             if (std.mem.eql(u8, ancestor, canonical_url)) return error.Cycle;
         }
 
-        const is_new_dependency = !containsDependency(self.dependency_items.items, canonical_url);
+        self.index_operations.dependency_lookups += 1;
+        const is_new_dependency = !self.dependency_index.contains(canonical_url);
         if (is_new_dependency and
             self.dependency_items.items.len >= self.resolver.limits.max_files)
         {
@@ -408,7 +466,12 @@ pub const Session = struct {
             null
         else
             options.ancestry[options.ancestry.len - 1];
-        const is_new_edge = !containsEdge(self.edge_items.items, parent_url, canonical_url);
+        const candidate_edge = EdgeKey{
+            .parent_url = parent_url,
+            .child_url = canonical_url,
+        };
+        self.index_operations.edge_lookups += 1;
+        const is_new_edge = !self.edge_index.containsContext(candidate_edge, .{});
         if (is_new_edge and parent_url != null and
             try self.wouldCreateGraphCycle(parent_url.?, canonical_url))
         {
@@ -448,17 +511,58 @@ pub const Session = struct {
         else
             null;
         errdefer if (edge_child) |owned| self.allocator.free(owned);
+
+        if (is_new_dependency) {
+            try self.dependency_index.ensureUnusedCapacity(self.allocator, 1);
+        }
+        if (is_new_edge) {
+            try self.edge_index.ensureUnusedCapacityContext(self.allocator, 1, .{});
+        }
+        var prepared_adjacency: ?AdjacencyList = null;
+        errdefer if (prepared_adjacency) |*children| children.deinit(self.allocator);
+        if (is_new_edge and parent_url != null) {
+            if (self.adjacency_index.getPtr(parent_url.?)) |children| {
+                try children.ensureUnusedCapacity(self.allocator, 1);
+            } else {
+                try self.adjacency_index.ensureUnusedCapacity(self.allocator, 1);
+                var children: AdjacencyList = .empty;
+                errdefer children.deinit(self.allocator);
+                try children.ensureUnusedCapacity(self.allocator, 1);
+                prepared_adjacency = children;
+                children = .empty;
+            }
+        }
         try self.cancellation.check(.complete);
 
         if (dependency_url) |owned| {
             self.dependency_items.appendAssumeCapacity(.{ .url = owned, .kind = options.kind });
+            self.dependency_index.putAssumeCapacityNoClobber(owned, {});
         }
         if (edge_child) |owned_child| {
-            self.edge_items.appendAssumeCapacity(.{
+            const committed_edge = Edge{
                 .parent_url = edge_parent,
                 .child_url = owned_child,
                 .kind = options.kind,
-            });
+            };
+            self.edge_items.appendAssumeCapacity(committed_edge);
+            self.edge_index.putAssumeCapacityNoClobberContext(.{
+                .parent_url = committed_edge.parent_url,
+                .child_url = committed_edge.child_url,
+            }, {}, .{});
+            if (committed_edge.parent_url) |committed_parent| {
+                if (prepared_adjacency) |children| {
+                    var committed_children = children;
+                    committed_children.appendAssumeCapacity(committed_edge.child_url);
+                    self.adjacency_index.putAssumeCapacityNoClobber(
+                        committed_parent,
+                        committed_children,
+                    );
+                    prepared_adjacency = null;
+                } else {
+                    self.adjacency_index.getPtr(committed_parent).?
+                        .appendAssumeCapacity(committed_edge.child_url);
+                }
+            }
         }
         self.bytes += contents.len;
         return .{
@@ -466,6 +570,58 @@ pub const Session = struct {
             .contents = contents,
             .allocator = self.allocator,
         };
+    }
+
+    /// Streams one confined file into an XxHash64 content fingerprint without
+    /// retaining its bytes or admitting dependency, edge, or canonical-URL
+    /// facts. The same capability, no-follow, stability, limit, and
+    /// cancellation boundaries as `load` remain authoritative.
+    pub fn contentFingerprint(self: *Session, candidate_url: []const u8) Error!u64 {
+        if (self.closed) return error.SessionClosed;
+        try self.cancellation.check(.resolve);
+        if (self.attempts >= self.resolver.limits.max_attempts) {
+            return error.AttemptLimitExceeded;
+        }
+        self.attempts += 1;
+
+        var resolved = try self.resolveCandidate(candidate_url);
+        defer resolved.deinit(self.allocator);
+        try self.cancellation.check(.open);
+
+        var file = try openFileNoFollow(resolved.parent, resolved.basename);
+        defer file.close();
+        const before = try ObjectIdentity.read(file);
+        switch (before.kind) {
+            .sym_link => return error.Symlink,
+            .directory => return error.IsDirectory,
+            .file => {},
+            else => return error.NotRegular,
+        }
+
+        const canonical_path = canonicalPathFromHandle(
+            self.allocator,
+            file.handle,
+            resolved.absolute,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.FileChanged,
+        };
+        defer self.allocator.free(canonical_path);
+        if (!containsCanonical(self.resolver, canonical_path)) return error.PathEscape;
+        const canonical_identity = try self.identityAtCanonical(canonical_path);
+        if (!before.sameStable(canonical_identity)) return error.FileChanged;
+
+        const fingerprint = try self.stableFingerprint(
+            file,
+            resolved.parent,
+            resolved.basename,
+            resolved.absolute,
+            canonical_path,
+            before,
+        );
+        try self.cancellation.check(.complete);
+        self.bytes += before.size;
+        return fingerprint;
     }
 
     /// Enumerates one confined local `*`, `?`, or `**` pattern. Enumeration
@@ -732,15 +888,7 @@ pub const Session = struct {
         canonical_path: []const u8,
         before: ObjectIdentity,
     ) Error![]u8 {
-        if (before.size > self.resolver.limits.max_file_bytes) {
-            return error.FileLimitExceeded;
-        }
-        const next_total = std.math.add(u64, self.bytes, before.size) catch
-            return error.TotalLimitExceeded;
-        if (next_total > self.resolver.limits.max_total_bytes) {
-            return error.TotalLimitExceeded;
-        }
-        const size: usize = @intCast(before.size);
+        const size = try self.checkedReadSize(before);
         const contents = try self.allocator.alloc(u8, size);
         errdefer self.allocator.free(contents);
         const parent_before = try ObjectIdentity.read(.{ .handle = parent.fd });
@@ -756,6 +904,70 @@ pub const Session = struct {
             if (amount == 0) return error.FileChanged;
             offset += amount;
         }
+        try self.verifyExpectedEnd(file, size);
+        try self.verifyStableFile(
+            file,
+            parent,
+            basename,
+            absolute,
+            canonical_path,
+            before,
+            parent_before,
+        );
+        return contents;
+    }
+
+    fn stableFingerprint(
+        self: *Session,
+        file: std.fs.File,
+        parent: std.fs.Dir,
+        basename: []const u8,
+        absolute: []const u8,
+        canonical_path: []const u8,
+        before: ObjectIdentity,
+    ) Error!u64 {
+        const size = try self.checkedReadSize(before);
+        const parent_before = try ObjectIdentity.read(.{ .handle = parent.fd });
+        var hasher = std.hash.XxHash64.init(0);
+        var chunk: [read_chunk_bytes]u8 = undefined;
+        var offset: usize = 0;
+        while (offset < size) {
+            try self.cancellation.check(.read);
+            const amount = readAt(
+                file,
+                chunk[0..@min(chunk.len, size - offset)],
+                offset,
+            ) catch return error.Unreadable;
+            if (amount == 0) return error.FileChanged;
+            hasher.update(chunk[0..amount]);
+            offset += amount;
+        }
+        try self.verifyExpectedEnd(file, size);
+        try self.verifyStableFile(
+            file,
+            parent,
+            basename,
+            absolute,
+            canonical_path,
+            before,
+            parent_before,
+        );
+        return hasher.final();
+    }
+
+    fn checkedReadSize(self: *Session, before: ObjectIdentity) Error!usize {
+        if (before.size > self.resolver.limits.max_file_bytes) {
+            return error.FileLimitExceeded;
+        }
+        const next_total = std.math.add(u64, self.bytes, before.size) catch
+            return error.TotalLimitExceeded;
+        if (next_total > self.resolver.limits.max_total_bytes) {
+            return error.TotalLimitExceeded;
+        }
+        return @intCast(before.size);
+    }
+
+    fn verifyExpectedEnd(self: *Session, file: std.fs.File, size: usize) Error!void {
         try self.cancellation.check(.read);
         var extra: [1]u8 = undefined;
         const extra_bytes = readAt(file, &extra, size) catch return error.Unreadable;
@@ -763,7 +975,18 @@ pub const Session = struct {
             if (size >= self.resolver.limits.max_file_bytes) return error.FileLimitExceeded;
             return error.FileChanged;
         }
+    }
 
+    fn verifyStableFile(
+        self: *Session,
+        file: std.fs.File,
+        parent: std.fs.Dir,
+        basename: []const u8,
+        absolute: []const u8,
+        canonical_path: []const u8,
+        before: ObjectIdentity,
+        parent_before: ObjectIdentity,
+    ) Error!void {
         try self.cancellation.check(.verify);
         const after = try ObjectIdentity.read(file);
         if (!before.sameStable(after) or after.kind != .file) return error.FileChanged;
@@ -794,7 +1017,6 @@ pub const Session = struct {
         const canonical_identity = try self.identityAtCanonical(canonical_after);
         if (!after.sameStable(canonical_identity)) return error.FileChanged;
         try self.cancellation.check(.verify);
-        return contents;
     }
 
     fn identityAtCanonical(self: *Session, canonical_path: []const u8) Error!ObjectIdentity {
@@ -840,20 +1062,29 @@ pub const Session = struct {
         child_url: []const u8,
     ) Error!bool {
         if (std.mem.eql(u8, parent_url, child_url)) return true;
+        if (!self.adjacency_index.contains(child_url)) {
+            try self.cancellation.check(.graph);
+            self.index_operations.cycle_nodes += 1;
+            return false;
+        }
         var pending: std.ArrayList([]const u8) = .empty;
         defer pending.deinit(self.allocator);
+        var visited: std.StringHashMapUnmanaged(void) = .empty;
+        defer visited.deinit(self.allocator);
+        try visited.put(self.allocator, child_url, {});
         try pending.append(self.allocator, child_url);
         var index: usize = 0;
         while (index < pending.items.len) : (index += 1) {
             try self.cancellation.check(.graph);
             const current = pending.items[index];
+            self.index_operations.cycle_nodes += 1;
             if (std.mem.eql(u8, current, parent_url)) return true;
-            for (self.edge_items.items) |edge| {
-                const edge_parent = edge.parent_url orelse continue;
-                if (!std.mem.eql(u8, edge_parent, current)) continue;
-                if (!containsString(pending.items, edge.child_url)) {
-                    try pending.append(self.allocator, edge.child_url);
-                }
+            const children = self.adjacency_index.get(current) orelse continue;
+            for (children.items) |next| {
+                self.index_operations.cycle_edges += 1;
+                if (visited.contains(next)) continue;
+                try visited.put(self.allocator, next, {});
+                try pending.append(self.allocator, next);
             }
         }
         return false;
@@ -1180,31 +1411,9 @@ fn hexValue(value: u8) ?u8 {
     };
 }
 
-fn containsDependency(items: []const Dependency, url: []const u8) bool {
-    for (items) |dependency| {
-        if (std.mem.eql(u8, dependency.url, url)) return true;
-    }
-    return false;
-}
-
-fn containsEdge(items: []const Edge, parent_url: ?[]const u8, child_url: []const u8) bool {
-    for (items) |edge| {
-        if (!optionalStringEql(edge.parent_url, parent_url)) continue;
-        if (std.mem.eql(u8, edge.child_url, child_url)) return true;
-    }
-    return false;
-}
-
 fn optionalStringEql(left: ?[]const u8, right: ?[]const u8) bool {
     if (left == null or right == null) return left == null and right == null;
     return std.mem.eql(u8, left.?, right.?);
-}
-
-fn containsString(items: []const []const u8, value: []const u8) bool {
-    for (items) |item| {
-        if (std.mem.eql(u8, item, value)) return true;
-    }
-    return false;
 }
 
 fn mapParentOpenError(err: anyerror) Error {

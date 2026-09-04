@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import {
   admitTimingSample,
+  renderZigCssStderr,
   repositoryRoot,
   validateBenchmarkOutputContract,
   validateBenchmarkOutputWorkflow,
@@ -16,6 +17,22 @@ const input =
   '.component-0000{color:#aabbcc;background:#112233;padding:0px 0px;margin:0px;border-radius:0px}\n'
 const equivalentOutput =
   '.component-0000{border-radius:0;margin:0;padding:0;background:#123;color:#abc}'
+
+test('ZigCSS benchmark stderr is exact for stable and prerelease compilers', () => {
+  assert.equal(
+    renderZigCssStderr('0.7.0-rc.1', '/input.css', '/output.css'),
+    'Warning: ZigCSS 0.7.0-rc.1 is an experimental release candidate; do not use it for production CSS.\n' +
+      'Compiled: /input.css -> /output.css\n',
+  )
+  assert.equal(
+    renderZigCssStderr('0.7.0', '/input.css', '/output.css'),
+    'Compiled: /input.css -> /output.css\n',
+  )
+  assert.throws(
+    () => renderZigCssStderr('v0.7.0-rc.1', '/input.css', '/output.css'),
+    /not canonical Semantic Versioning/,
+  )
+})
 
 test('benchmark output validation accepts only recovery-free semantic equivalence', () => {
   const report = validateOutput(input, equivalentOutput, 'equivalent fixture')

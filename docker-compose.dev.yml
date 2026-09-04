@@ -1,30 +1,53 @@
 services:
   dev:
+    init: true
     build:
       context: .
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
-      # Persistent volumes OUTSIDE /app so bind mount doesn't clobber them.
-      # The entrypoint.sh creates symlinks from /app subdirs to these paths.
-      - zig-cache:/cache/zig-cache
-      - zig-out:/cache/zig-out
-      - dot-zig-cache:/cache/dot-zig-cache
-      - docs-node-modules:/deps/docs/node_modules
+      # The checkout is never overlaid on /app: doing that makes nested named
+      # volumes impossible to mount when their host-side directories do not
+      # exist. The entrypoint links a finite set of live inputs into /app.
+      - type: bind
+        source: "${ZIGCSS_DEV_SOURCE_DIRECTORY:-.}"
+        target: /workspace
+        read_only: true
+      # Keep Vite's config at its logical /app/docs path. Loading it through a
+      # symlink would make package resolution escape to host node_modules.
+      - type: bind
+        source: ./docs/vite.config.ts
+        target: /app/docs/vite.config.ts
+        read_only: true
+      - docs-node-modules:/app/docs/node_modules
+      - zig-bin:/app/bin
+      - zig-cache:/app/zig-cache
+      - zig-out:/app/zig-out
+      - dot-zig-cache:/app/.zig-cache
+      - zig-global-cache:/home/node/.cache/zig
     environment:
       - CHOKIDAR_USEPOLLING=true
+      - ZIGCSS_DOCS_DEV_EXTERNAL=1
+      - ZIGCSS_DEV_BIN_DIRECTORY=/app/bin
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /app/bin/.zigcss-dev-ready && /app/bin/zigcss --version >/dev/null && wget -q --spider -T 5 http://127.0.0.1:5173/zigcss/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    stop_grace_period: 10s
     labels:
       playgrounds.github_url: https://github.com/vyakymenko/zigcss
-      playgrounds.expose: "external:5173"
       playgrounds.dockerfile: Dockerfile
-      playgrounds.branch: dockerized
-      playgrounds.source_mount: "/app"
+      playgrounds.branch: main
+      playgrounds.source_mount: "/workspace"
       playgrounds.start_command: "node dev.js"
       playgrounds.production: false
-      playgrounds.subdomain: zigcss
 
 volumes:
+  docs-node-modules:
+  zig-bin:
   zig-cache:
   zig-out:
   dot-zig-cache:
-  docs-node-modules:
+  zig-global-cache:

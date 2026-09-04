@@ -1,13 +1,13 @@
 # ZigCSS Neovim integration
 
-> Experimental editor integration: this configuration launches the ZigCSS 0.6.0 language server. It does not install or bundle a native binary, scan the filesystem, or enable preprocessor filetypes.
+> Experimental editor integration: this configuration launches the ZigCSS 0.7.0-rc.1 language server from the current source candidate. It does not install or bundle a native binary, scan the filesystem, or enable preprocessor filetypes.
 
 The checked-in configuration uses Neovim's built-in LSP configuration API. It does not depend on the deprecated `require('lspconfig').zigcss.setup()` framework or require `nvim-lspconfig`.
 
 ## Requirements
 
 - Neovim 0.11.7 or later; CI smoke-tests the exact 0.11.7 minimum and current 0.12.4 release
-- A trusted ZigCSS 0.6.0 executable built from this source tree
+- A trusted ZigCSS 0.7.0-rc.1 executable built from this source tree
 
 ## Install
 

@@ -43,6 +43,9 @@ pub const Options = struct {
     root_paths: []const []const u8,
     format: native_evaluator.Format = .pretty,
     source_map: bool = false,
+    optimize: bool = false,
+    prefix: bool = false,
+    targets: ?*const native_evaluator.TargetQuery = null,
     less: native_less_evaluator.Options = .{},
     /// Null derives Stylus output style from `format`; conformance callers may
     /// supply the provider's explicit style while retaining a separate core
@@ -81,6 +84,11 @@ pub const Result = struct {
 
     pub fn css(self: *const Result) []const u8 {
         return self.validated.css();
+    }
+
+    /// Transfers the validated core emitter buffer without another full copy.
+    pub fn takeCss(self: *Result) []const u8 {
+        return self.validated.takeCss();
     }
 
     pub fn sourceMap(self: *const Result) ?[]const u8 {
@@ -193,6 +201,17 @@ pub fn compileReported(
     input: []const u8,
     options: Options,
 ) Error!CompileOutcome {
+    // Fixed-point reparsing does not yet carry a proven mapping back through
+    // the frontend. Reject the unsupported composition before allocating a
+    // resolver, source table, parser, or evaluator.
+    if ((options.source_map and options.optimize) or
+        (options.prefix and options.targets == null) or
+        (!options.prefix and options.targets != null) or
+        (options.targets != null and !options.targets.?.validate()))
+    {
+        return error.InvalidOptions;
+    }
+
     var authority = try native_resolver.Resolver.init(
         allocator,
         options.root_paths,
@@ -328,6 +347,9 @@ pub fn compileReported(
     var validated = transaction.finish(.{
         .format = options.format,
         .source_map = options.source_map,
+        .optimize = options.optimize,
+        .prefix = options.prefix,
+        .targets = options.targets,
     }) catch |err| {
         return reportFailure(
             allocator,

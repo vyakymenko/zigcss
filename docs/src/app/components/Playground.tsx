@@ -4,7 +4,7 @@ import { CircleOff } from "lucide-react";
 export function Playground() {
   return (
     <div className="min-h-[70vh] px-4 py-20 flex items-center justify-center">
-      <section className="max-w-2xl w-full bg-white border border-slate-200 rounded-2xl p-10 text-center shadow-sm">
+      <section className="max-w-2xl w-full bg-white border border-slate-200 rounded-2xl p-10 text-center text-slate-900 shadow-sm">
         <CircleOff className="size-14 text-slate-500 mx-auto mb-5" />
         <h1 className="text-4xl mb-4">Playground unavailable</h1>
         <p className="text-lg text-slate-600 mb-4">

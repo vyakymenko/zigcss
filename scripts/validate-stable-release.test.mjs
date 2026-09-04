@@ -20,6 +20,15 @@ function changedSources(relativePath, transform) {
   return sources
 }
 
+function activeVersionSources(version) {
+  const sources = readStableReleaseSources()
+  const manifest = JSON.parse(sources.get('package.json'))
+  manifest.version = version
+  sources.set('VERSION', `${version}\n`)
+  sources.set('package.json', `${JSON.stringify(manifest, null, 2)}\n`)
+  return sources
+}
+
 test('accepts the closed finite stable publication contract', () => {
   assert.deepEqual(
     validateStableReleaseContract(readStableReleaseContract(), readStableReleaseSources()),
@@ -34,6 +43,39 @@ test('accepts the closed finite stable publication contract', () => {
   assert.match(
     execFileSync(process.execPath, [script, '--check'], { encoding: 'utf8' }),
     /0\.6\.0 \(closed\), 10\/10 gates/,
+  )
+})
+
+test('closed publication evidence permits a newer active source but rejects rollback', () => {
+  assert.deepEqual(
+    validateStableReleaseContract(readStableReleaseContract(), activeVersionSources('0.7.0')),
+    {
+      version: '0.6.0',
+      tag: 'v0.6.0',
+      state: 'closed',
+      verifiedGates: 10,
+      totalGates: 10,
+    },
+  )
+  assert.throws(
+    () => validateStableReleaseContract(readStableReleaseContract(), activeVersionSources('0.5.9')),
+    /active source version 0\.5\.9 is older than immutable published stable 0\.6\.0/,
+  )
+})
+
+test('candidate-ready admission retains an exact active candidate identity', () => {
+  const contract = readStableReleaseContract()
+  contract.state = 'candidate-ready'
+  contract.packageState = 'in-progress'
+  contract.stableReleaseReady = true
+  contract.gates.at(-1).state = 'pending'
+  contract.gates.at(-1).evidence = []
+  contract.publicationEvidence = null
+
+  assert.doesNotThrow(() => validateStableReleaseContract(contract, activeVersionSources('0.6.0')))
+  assert.throws(
+    () => validateStableReleaseContract(contract, activeVersionSources('0.7.0')),
+    /current source VERSION must be "0\.6\.0"/,
   )
 })
 
@@ -90,9 +132,22 @@ test('binds native prerelease, zero-dependency, benchmark, policy, and workflow 
   assert.throws(
     () => validateStableReleaseContract(
       readStableReleaseContract(),
-      changedSources('.github/workflows/release.yml', source => source.replace('npm publish --tag "$RELEASE_CHANNEL" --provenance', 'npm publish --provenance')),
+      changedSources('.github/workflows/release.yml', source => source.replace(
+        'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+        'npm publish "$NPM_PACKAGE_ARCHIVE" --provenance',
+      )),
     ),
     /channel-aware npm publication/,
+  )
+  assert.throws(
+    () => validateStableReleaseContract(
+      readStableReleaseContract(),
+      changedSources('.github/workflows/release.yml', source => source.replace(
+        'node scripts/validate-release-admission.mjs --check \\',
+        'npm run check:stable-release -- \\',
+      )),
+    ),
+    /release admission workflow gate/,
   )
 })
 
@@ -143,7 +198,7 @@ test('binds exact GitHub, artifact, npm, provenance, channel, and consumer evide
   }
 })
 
-test('rejects missing, extra, and prerelease-regressed release sources', () => {
+test('rejects missing, extra, malformed, and package-divergent release sources', () => {
   const missing = readStableReleaseSources()
   missing.delete('README.md')
   assert.throws(
@@ -161,8 +216,16 @@ test('rejects missing, extra, and prerelease-regressed release sources', () => {
   assert.throws(
     () => validateStableReleaseContract(
       readStableReleaseContract(),
-      changedSources('VERSION', () => '0.6.0-rc.2\n'),
+      changedSources('VERSION', () => '0.6.0\r'),
     ),
-    /current source VERSION/,
+    /current source VERSION must contain one canonical version and a final newline/,
+  )
+
+  assert.throws(
+    () => validateStableReleaseContract(
+      readStableReleaseContract(),
+      changedSources('package.json', source => source.replace('"version": "0.7.0-rc.1"', '"version": "0.7.0"')),
+    ),
+    /current package version/,
   )
 })

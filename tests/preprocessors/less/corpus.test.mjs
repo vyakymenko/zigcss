@@ -26,9 +26,19 @@ const compiler = path.join(
   'zig-out/bin',
   process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
 )
+const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
+const prereleaseNotice = `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\n`
 const utf8 = new TextDecoder('utf-8', { fatal: true })
 const provider = createLessProvider()
 let directWarningCapture = null
+const exactForwardOracleImportDrift = new Map([
+  ['less-import-import-interpolation', [
+    'import/import/interpolation-vars.less',
+    'import/import/import-test-e.less',
+    'import/import/import-interpolation.less',
+    'import/import/import-interpolation2.less',
+  ]],
+])
 
 less.logger.addListener(Object.freeze({
   warn(message) {
@@ -272,12 +282,12 @@ function runZigCss(input, id, pass) {
   assert.equal(result.error, undefined, `${id}: ZigCSS ${pass} launch`)
   assert.equal(result.signal, null, `${id}: ZigCSS ${pass} signal`)
   assert.equal(result.status, 0, `${id}: ZigCSS ${pass}\n${result.stderr}`)
-  assert.doesNotMatch(result.stderr, /experimental release candidate/, `${id}: stable ZigCSS warning boundary`)
+  assert.equal(result.stderr, prereleaseNotice, `${id}: ZigCSS prerelease warning boundary`)
   return result.stdout
 }
 
-test('pins, license-reviews, and checksum-verifies the official Less 4.6.7 corpus', () => {
-  assert.equal(LESS_VERSION, '4.6.7')
+test('runs exact Less 4.9.0 against the frozen official Less 4.6.7 corpus', () => {
+  assert.equal(LESS_VERSION, '4.9.0')
   assert.equal(manifest.schemaVersion, 1)
   assert.equal(manifest.caseCount, 88)
   assert.equal(manifest.successCount, 68)
@@ -293,7 +303,7 @@ test('pins, license-reviews, and checksum-verifies the official Less 4.6.7 corpu
     archiveSha256: '9c53e2e65ce1b73fb192e735d3b267c590139212bc76b88151ec546793260577',
     rootPackageSha256: '48a2f0e35ec14107beed6d0279e996fd99754e9ca8b258a5adc0b61841eb17fb',
     providerPackageSha256: 'cc8336c3a08e2be27701c819c066eec04b6c8813d398459049c979c6bc967a46',
-    packageVersion: LESS_VERSION,
+    packageVersion: '4.6.7',
     license: 'Apache-2.0',
     licenseSha256: '39445b459f86621683f9731fb6a7d070819dc379840e8ef52f62bb1c68942291',
   })
@@ -367,6 +377,7 @@ test('matches exact Less across all 88 official success and negative cases', {
 }, async () => {
   const cases = manifest.cases.map(caseData)
   const baseline = new Map()
+  const observedForwardImportDrift = new Set()
   for (const specCase of cases) {
     const direct = await compileDirect(specCase)
     const adapter = await compileAdapter(specCase)
@@ -377,6 +388,16 @@ test('matches exact Less across all 88 official success and negative cases', {
       assert.equal(direct.css, specCase.expectation, `${specCase.id}: official CSS`)
       assert.equal(adapter.css, direct.css, `${specCase.id}: canonical CSS`)
       assert.deepEqual(adapter.dependencies, specCase.dependencies, `${specCase.id}: dependencies`)
+      const expectedDirectDependencies = exactForwardOracleImportDrift.get(specCase.id)
+        ?? specCase.dependencies
+      assert.deepEqual(
+        sorted(direct.dependencies),
+        sorted(expectedDirectDependencies),
+        `${specCase.id}: exact Less 4.9.0 provider dependency set`,
+      )
+      if (exactForwardOracleImportDrift.has(specCase.id)) {
+        observedForwardImportDrift.add(specCase.id)
+      }
       assert.equal(new Set(direct.dependencies).size, direct.dependencies.length)
       for (const dependency of direct.dependencies) {
         assert.equal(
@@ -398,6 +419,7 @@ test('matches exact Less across all 88 official success and negative cases', {
     }
     baseline.set(specCase.id, adapter)
   }
+  assert.deepEqual(observedForwardImportDrift, new Set(exactForwardOracleImportDrift.keys()))
 
   const parallel = await boundedParallel(cases, 8, compileAdapter)
   for (let index = 0; index < cases.length; index += 1) {

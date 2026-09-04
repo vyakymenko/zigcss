@@ -26,6 +26,8 @@ const compiler = path.join(
   'zig-out/bin',
   process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
 )
+const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
+const prereleaseNotice = `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\n`
 const utf8 = new TextDecoder('utf-8', { fatal: true })
 const provider = createDartSassProvider()
 
@@ -231,7 +233,7 @@ function runZigCss(input, id, pass) {
   assert.equal(result.error, undefined, `${id}: ZigCSS ${pass} launch`)
   assert.equal(result.signal, null, `${id}: ZigCSS ${pass} signal`)
   assert.equal(result.status, 0, `${id}: ZigCSS ${pass}\n${result.stderr}`)
-  assert.doesNotMatch(result.stderr, /experimental release candidate/, `${id}: stable ZigCSS warning boundary`)
+  assert.equal(result.stderr, prereleaseNotice, `${id}: ZigCSS prerelease warning boundary`)
   return result.stdout
 }
 

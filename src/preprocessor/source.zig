@@ -66,6 +66,9 @@ pub const Table = struct {
     allocator: std.mem.Allocator,
     limits: Limits,
     files: std.ArrayList(File) = .empty,
+    /// Keys borrow the separately allocated names owned by committed `File`
+    /// entries. They remain stable when the file list reallocates.
+    name_index: std.StringHashMapUnmanaged(SourceId) = .empty,
     owned_bytes: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, limits: Limits) Table {
@@ -73,6 +76,8 @@ pub const Table = struct {
     }
 
     pub fn deinit(self: *Table) void {
+        // The index borrows `File.name`, so release its buckets before names.
+        self.name_index.deinit(self.allocator);
         for (self.files.items) |file| {
             if (file.name.len > 0) self.allocator.free(file.name);
             if (file.bytes.len > 0) self.allocator.free(file.bytes);
@@ -87,9 +92,7 @@ pub const Table = struct {
             return error.InvalidSource;
         }
         if (bytes.len > std.math.maxInt(u32)) return error.SourceTooLarge;
-        for (self.files.items) |file| {
-            if (std.mem.eql(u8, file.name, name)) return error.DuplicateSource;
-        }
+        if (self.name_index.contains(name)) return error.DuplicateSource;
 
         const contribution = std.math.add(usize, name.len, bytes.len) catch
             return error.SourceLimitExceeded;
@@ -109,13 +112,20 @@ pub const Table = struct {
         const line_starts = try buildLineStarts(self.allocator, owned_source);
         errdefer if (line_starts.len > 0) self.allocator.free(line_starts);
 
+        // Grow the index first: the final fallible operation may move `files`,
+        // after which admission must commit without another failure point.
+        try self.name_index.ensureUnusedCapacity(self.allocator, 1);
+        try self.files.ensureUnusedCapacity(self.allocator, 1);
+
         const id = SourceId{ .value = @intCast(self.files.items.len) };
-        try self.files.append(self.allocator, .{
+        self.files.appendAssumeCapacity(.{
             .id = id,
             .name = owned_name,
             .bytes = owned_source,
             .line_starts = line_starts,
         });
+        const committed_name = self.files.items[self.files.items.len - 1].name;
+        self.name_index.putAssumeCapacityNoClobber(committed_name, id);
         self.owned_bytes = next_owned;
         return id;
     }
@@ -128,6 +138,14 @@ pub const Table = struct {
         const index: usize = @intCast(id.value);
         if (index >= self.files.items.len) return error.UnknownSource;
         return &self.files.items[index];
+    }
+
+    /// Returns the committed source with this exact owned name without
+    /// allocating. The returned pointer follows the same lifetime rules as
+    /// `get` and may move after a later successful `add`.
+    pub fn findByName(self: *const Table, name: []const u8) ?*const File {
+        const id = self.name_index.get(name) orelse return null;
+        return self.get(id) catch unreachable;
     }
 
     pub fn span(self: *const Table, id: SourceId, start: u32, end: u32) Error!Span {

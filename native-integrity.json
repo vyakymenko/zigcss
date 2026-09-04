@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "package": "zigcss",
+  "version": "0.7.0-rc.1",
+  "sourceDateEpoch": 1788438195,
+  "archives": [
+    {
+      "target": "x86_64-linux",
+      "filename": "zigcss-v0.7.0-rc.1-x86_64-linux.tar.gz",
+      "sha256": "0d986b801bab1412eed0478d2d93652f86321607cb36b9053849585b5224dd7c"
+    },
+    {
+      "target": "aarch64-linux",
+      "filename": "zigcss-v0.7.0-rc.1-aarch64-linux.tar.gz",
+      "sha256": "4ff306d73d44e2487003fc334ad04e77f6fba744807e7171ba305f6dd3a00386"
+    },
+    {
+      "target": "x86_64-macos",
+      "filename": "zigcss-v0.7.0-rc.1-x86_64-macos.tar.gz",
+      "sha256": "4023678ae0738dd7d43d8eb1388e155cc8eec00051dfdac897a668cab6e99760"
+    },
+    {
+      "target": "aarch64-macos",
+      "filename": "zigcss-v0.7.0-rc.1-aarch64-macos.tar.gz",
+      "sha256": "7476606486b81faca923df339cab720961433f69609ba74535c87fe2fd32a469"
+    },
+    {
+      "target": "x86_64-windows",
+      "filename": "zigcss-v0.7.0-rc.1-x86_64-windows.zip",
+      "sha256": "b3e07178b744cec613fdd6a712101d6168c5c1a58ad1251e21f77a4076030ea6"
+    }
+  ]
+}

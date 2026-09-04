@@ -1,23 +1,28 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+
 # ── Stage 1: build the Vite docs app ─────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS builder
 WORKDIR /repo
 
-# The docs package has a local dependency on the root npm wrapper. Copy only
-# that published wrapper plus locked documentation dependencies before source.
-COPY package.json index.js install.js README.md LICENSE ./
+# The docs package has a local dependency on the root npm package. Copy its
+# complete published runtime, declaration, and trust closure before source.
+COPY package.json index.js install.js api.cjs api.mjs api.d.cts api.d.mts api.d.ts native-integrity.json PREPROCESSOR-SBOM.spdx.json THIRD_PARTY_NOTICES.md README.md LICENSE ./
+COPY adapters/ ./adapters/
 COPY docs/package.json docs/package-lock.json ./docs/
 
 # Install docs deps without executing package lifecycle scripts. The production
 # image serves static files only and deliberately contains no compiler binary.
 WORKDIR /repo/docs
 RUN npm ci --ignore-scripts
+RUN node -e 'for (const id of ["zigcss", "zigcss/adapters", "zigcss/vite", "zigcss/rollup", "zigcss/esbuild", "zigcss/bun", "zigcss/webpack", "zigcss/rspack"]) require(id)' && \
+    node --input-type=module -e 'for (const id of ["zigcss", "zigcss/adapters", "zigcss/vite", "zigcss/rollup", "zigcss/esbuild", "zigcss/bun", "zigcss/webpack", "zigcss/rspack"]) await import(id)'
 COPY docs/ ./
 RUN npm run build
 
 # ── Stage 2: static-only production runtime ──────────────────────────────────
-FROM node:22-alpine AS runtime
+FROM node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS runtime
 
-ARG ZIGCSS_VERSION=0.6.0
+ARG ZIGCSS_VERSION=0.7.0-rc.1
 LABEL org.opencontainers.image.title="ZigCSS Documentation" \
       org.opencontainers.image.version="${ZIGCSS_VERSION}" \
       org.opencontainers.image.source="https://github.com/vyakymenko/zigcss"

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "state": "native-graduated",
   "nativeReleaseReady": true,
   "nativeReleaseVersion": "0.6.0-rc.2",
@@ -38,7 +38,7 @@
     {
       "id": "less",
       "package": "less",
-      "version": "4.6.7",
+      "version": "4.9.0",
       "license": "Apache-2.0",
       "adapters": ["less"],
       "currentReferencePackage": false,
@@ -223,7 +223,8 @@
     "oracle": {
       "id": "less",
       "package": "less",
-      "version": "4.6.7",
+      "developmentVersion": "4.9.0",
+      "baselineVersion": "4.6.7",
       "selection": "tests/preprocessors/less/corpus/selection.json",
       "caseCount": 88
     },
@@ -419,12 +420,15 @@
         "zig-api",
         "binary-cli",
         "javascript-wrapper",
+        "programmatic-node-api",
         "files-and-stdin",
         "batch",
         "watch",
         "parallel",
         "diagnostics-and-dependencies",
-        "source-maps"
+        "source-maps",
+        "verified-optimizer",
+        "verified-target-prefix"
       ],
       "providerProcesses": 0
     },
@@ -468,6 +472,24 @@
         "evidenceTests": [
           "javascript wrapper routes the finite native syntax set through the installed binary",
           "javascript wrapper keeps native routing explicit and ungated preprocessors fail closed"
+        ]
+      },
+      {
+        "id": "programmatic-node-api",
+        "releaseGapFamily": "native-programmatic-node-api-routing",
+        "state": "verified",
+        "evidenceTests": [
+          "programmatic Node API exposes matching CommonJS and real ESM surfaces",
+          "binary hidden Node route dispatches one typed bounded frame",
+          "detectSyntax owns the closed five-syntax extension set",
+          "string API routes all five syntaxes through one exact framed request",
+          "file APIs infer all five syntaxes and default roots to the entry directory",
+          "request normalization carries maps, dependencies, optimizer, prefix query, and roots",
+          "source parents and explicit roots are canonical across directory symlinks",
+          "validation is closed and rejects unsafe combinations before process launch",
+          "compile failures expose immutable diagnostics and never partial CSS",
+          "malformed, truncated, mismatched, oversized, and invalid typed responses fail closed",
+          "async API enforces timeout and AbortSignal termination"
         ]
       },
       {
@@ -530,7 +552,34 @@
           "external Zig API composes imported Unicode source positions without intermediate leaks",
           "binary CLI routes composed native source maps through files stdin and parallel batches",
           "binary CLI native watch atomically replaces CSS and its composed source map",
+          "binary CLI routes stable CSS source maps through files stdin and parallel batches",
+          "binary CLI stable CSS watch atomically replaces CSS and its inline source map",
           "javascript wrapper routes the finite native syntax set through the installed binary"
+        ]
+      },
+      {
+        "id": "verified-optimizer",
+        "releaseGapFamily": "native-verified-optimizer-routing",
+        "state": "verified",
+        "evidenceTests": [
+          "native compiler applies the closed optimizer after every private frontend",
+          "external Zig API applies the verified optimizer to the finite native syntax set",
+          "binary CLI applies the verified optimizer to native files stdin and parallel batches",
+          "binary CLI native optimizer watch commits only byte-stable output",
+          "binary CLI rejects native maps plus optimizer before reading any syntax",
+          "javascript wrapper forwards native optimizer requests unchanged"
+        ]
+      },
+      {
+        "id": "verified-target-prefix",
+        "releaseGapFamily": "native-verified-target-prefix-routing",
+        "state": "verified",
+        "evidenceTests": [
+          "native compiler applies verified target prefixing after every private frontend",
+          "external Zig API applies verified target prefixing to the finite native syntax set",
+          "binary CLI applies verified target prefixing to native files stdin maps optimize and parallel batches",
+          "binary CLI native target prefix watch retains output recovers and shares one immutable query",
+          "javascript wrapper forwards verified target prefix requests unchanged"
         ]
       }
     ]
@@ -556,7 +605,7 @@
         "state": "verified",
         "evidenceTests": [
           "native npm package has zero production and optional dependencies",
-          "native npm archive excludes provider host and JavaScript API bytes",
+          "native npm archive includes only the bounded runtime declaration metadata and trust inventory",
           "javascript wrapper cannot reach the provider host"
         ]
       },
@@ -601,6 +650,9 @@
         "state": "verified",
         "evidenceTests": [
           "npm installer derives exactly the release workflow asset contract",
+          "npm package binds every native archive to one exact version and digest inventory",
+          "npm installer rejects same-origin checksum substitution before downloading an archive",
+          "npm installer reads its trust manifest only from a bounded regular stable UTF-8 file",
           "npm installer independently validates all five executable target headers",
           "npm package runs one installer lifecycle and CI gates it before dependency installation"
         ]
@@ -1304,7 +1356,16 @@
         "transactional-native-stdin-output",
         "pre-graduation-native-batch",
         "deterministic-native-batch",
-        "compile-before-write-native-batch"
+        "compile-before-write-native-batch",
+        "verified-fixed-point-optimizer",
+        "all-native-syntax-optimizer",
+        "optimizer-map-fail-fast",
+        "optimized-watch-and-batch",
+        "verified-target-prefix",
+        "strict-explicit-target-query",
+        "all-native-syntax-prefix",
+        "prefix-map-and-optimizer-composition",
+        "prefixed-watch-and-batch"
       ],
       "nativeSources": ["src/preprocessor/compiler.zig", "src/native_api.zig"],
       "testSources": [

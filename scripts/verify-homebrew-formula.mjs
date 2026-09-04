@@ -24,6 +24,20 @@ export const homebrewArchiveDownloadPolicy = Object.freeze({
   retryWindowSeconds: 240,
 })
 
+export const homebrewStableSource = Object.freeze({
+  digest: '059b5732816655a55d9c9787168809f5f58c2fff35504ddc0c5d3d0c9de63010',
+  sourceCommit: '6786655d66ca65c5a06421c8ed70d84183722dce',
+  url: 'https://github.com/vyakymenko/zigcss/archive/6786655d66ca65c5a06421c8ed70d84183722dce.tar.gz',
+  version: '0.6.0',
+})
+
+const stableSourceLabels = Object.freeze({
+  digest: 'archive SHA-256',
+  sourceCommit: 'commit',
+  url: 'URL',
+  version: 'version',
+})
+
 export function homebrewArchiveDownloadArguments(archive, url) {
   const policy = homebrewArchiveDownloadPolicy
   return [
@@ -133,7 +147,7 @@ export function parseHomebrewFormula(source) {
   literalCount(source, '  depends_on "zig@0.15" => :build', 1, 'Zig 0.15 build dependency')
   literalCount(
     source,
-    '    system Formula["zig@0.15"].opt_bin/"zig", "build", "-Doptimize=ReleaseFast"',
+    '    system formula_opt_bin("zig@0.15")/"zig", "build", "-Doptimize=ReleaseFast"',
     1,
     'toolchain-pinned build command',
   )
@@ -152,7 +166,13 @@ export function parseHomebrewFormula(source) {
   )
   if (/^\s*head\s/m.test(source)) fail('formula must not expose an unverified head build')
   if (/\b(?:curl|wget)\b|https?:\/\/.+https?:\/\//.test(source)) fail('formula install must not perform a second download')
-  return Object.freeze({ digest, sourceCommit: match[1], url, version })
+  const policy = { digest, sourceCommit: match[1], url, version }
+  for (const [field, expected] of Object.entries(homebrewStableSource)) {
+    if (policy[field] !== expected) {
+      fail(`stable source ${stableSourceLabels[field]} must be ${expected}, received ${policy[field]}`)
+    }
+  }
+  return Object.freeze(policy)
 }
 
 function readFormula(root = repositoryRoot) {
@@ -273,9 +293,7 @@ export function smokeHomebrewFormula(root = repositoryRoot) {
     })
     if (compiled.error !== undefined || compiled.status !== 0) fail('formula-built compiler smoke failed')
     if (compiled.stdout !== '.test{color:red}') fail('formula-built compiler emitted unexpected CSS')
-    if (!compiled.stderr.includes(`ZigCSS ${policy.version} is an experimental release candidate`)) {
-      fail('formula-built compiler omitted its experimental warning')
-    }
+    if (compiled.stderr !== '') fail('formula-built stable compiler emitted unexpected diagnostics')
     return policy
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })

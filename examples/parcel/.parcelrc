@@ -1,0 +1,6 @@
+{
+  "extends": "@parcel/config-default",
+  "transformers": {
+    "*.{scss,sass,less,styl,stylus}": ["./parcel-transformer-zigcss.cjs"]
+  }
+}

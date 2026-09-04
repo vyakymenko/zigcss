@@ -17,6 +17,27 @@ const route_cases = [_]RouteCase{
     .{ .syntax = .stylus, .filename = "input.styl", .input = ".a\n  color red\n", .expected = ".a{color:#f00}" },
 };
 
+const optimize_cases = [_]RouteCase{
+    .{ .syntax = .scss, .filename = "optimize.scss", .input = ".empty{}.a{color:#ffffff}.b{color:#fff}", .expected = ".a,.b{color:#fff}" },
+    .{ .syntax = .sass, .filename = "optimize.sass", .input = ".a\n  color: #ffffff\n.b\n  color: #fff\n", .expected = ".a,.b{color:#fff}" },
+    .{ .syntax = .less, .filename = "optimize.less", .input = ".empty{}.a{color:#ffffff}.b{color:#fff}", .expected = ".a,.b{color:#fff}" },
+    .{ .syntax = .stylus, .filename = "optimize.styl", .input = ".a\n  color #ffffff\n.b\n  color #fff\n", .expected = ".a,.b{color:#fff}" },
+};
+
+const prefix_cases = [_]RouteCase{
+    .{ .syntax = .scss, .filename = "prefix.scss", .input = ".a{user-select:none;display:flex}", .expected = ".a{-webkit-user-select:none;-ms-user-select:none;user-select:none;display:-webkit-flex;display:flex}" },
+    .{ .syntax = .sass, .filename = "prefix.sass", .input = ".a\n  user-select: none\n  display: flex\n", .expected = ".a{-webkit-user-select:none;-ms-user-select:none;user-select:none;display:-webkit-flex;display:flex}" },
+    .{ .syntax = .less, .filename = "prefix.less", .input = ".a{user-select:none;display:flex}", .expected = ".a{-webkit-user-select:none;-ms-user-select:none;user-select:none;display:-webkit-flex;display:flex}" },
+    .{ .syntax = .stylus, .filename = "prefix.styl", .input = ".a\n  user-select none\n  display flex\n", .expected = ".a{-webkit-user-select:none;-ms-user-select:none;user-select:none;display:-webkit-flex;display:flex}" },
+};
+
+fn parseTargets(allocator: std.mem.Allocator, input: []const u8) !zigcss.TargetQuery {
+    return switch (try zigcss.prefixing.target_query.parse(allocator, input, .{})) {
+        .query => |query| query,
+        .invalid => error.InvalidQuery,
+    };
+}
+
 const ResultFactCase = struct {
     syntax: native.Syntax,
     filename: []const u8,
@@ -245,6 +266,146 @@ test "external Zig API routes the finite native syntax set through owned CSS res
         try std.testing.expectEqual(@as(usize, 0), first.css.len);
         first.deinit();
     }
+}
+
+test "external Zig API applies the verified optimizer to the finite native syntax set" {
+    var fixture = try Fixture.init(std.testing.allocator);
+    defer fixture.deinit();
+
+    inline for (optimize_cases) |case| {
+        const entry_path = try fixture.entryPath(std.testing.allocator, case.filename);
+        defer std.testing.allocator.free(entry_path);
+        var result = try native.compile(std.testing.allocator, entry_path, case.input, .{
+            .syntax = case.syntax,
+            .root_paths = &.{fixture.root},
+            .format = .minified,
+            .optimize = true,
+        });
+        defer result.deinit();
+        try std.testing.expectEqualStrings(case.expected, result.css);
+        try std.testing.expect(result.source_map == null);
+        try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+
+        var repeated = try zigcss.compile(
+            std.testing.allocator,
+            "native-optimized.css",
+            result.css,
+            .{
+                .format = .minified,
+                .transforms = .{ .optimize = true },
+            },
+        );
+        defer repeated.deinit();
+        try std.testing.expectEqualStrings(result.css, repeated.css);
+        try std.testing.expectEqual(@as(usize, 0), repeated.diagnostics.len);
+
+        try std.testing.expectError(
+            error.InvalidOptions,
+            native.compile(std.testing.allocator, entry_path, case.input, .{
+                .syntax = case.syntax,
+                // The option conflict must win before root validation or a
+                // language-specific frontend is allowed to run.
+                .root_paths = &.{},
+                .source_map = true,
+                .optimize = true,
+            }),
+        );
+    }
+}
+
+test "external Zig API applies verified target prefixing to the finite native syntax set" {
+    var fixture = try Fixture.init(std.testing.allocator);
+    defer fixture.deinit();
+    var legacy_targets = try parseTargets(
+        std.testing.allocator,
+        "safari >= 7, ie >= 11",
+    );
+    defer legacy_targets.deinit();
+    var modern_targets = try parseTargets(
+        std.testing.allocator,
+        "chrome >= 120, edge >= 120, firefox >= 120",
+    );
+    defer modern_targets.deinit();
+
+    inline for (prefix_cases) |case| {
+        const entry_path = try fixture.entryPath(std.testing.allocator, case.filename);
+        defer std.testing.allocator.free(entry_path);
+        var prefixed = try native.compile(std.testing.allocator, entry_path, case.input, .{
+            .syntax = case.syntax,
+            .root_paths = &.{fixture.root},
+            .format = .minified,
+            .source_map = true,
+            .prefix = true,
+            .targets = &legacy_targets,
+        });
+        defer prefixed.deinit();
+        try std.testing.expectEqualStrings(case.expected, prefixed.css);
+        const source_map = prefixed.source_map orelse return error.MissingSourceMap;
+        try std.testing.expect(std.mem.indexOf(
+            u8,
+            source_map,
+            "zigcss-native:///intermediate.css",
+        ) == null);
+        try std.testing.expect(std.mem.indexOf(u8, source_map, case.filename) != null);
+
+        var repeated = try native.compile(std.testing.allocator, entry_path, prefixed.css, .{
+            .syntax = .scss,
+            .root_paths = &.{fixture.root},
+            .format = .minified,
+            .prefix = true,
+            .targets = &legacy_targets,
+        });
+        defer repeated.deinit();
+        try std.testing.expectEqualStrings(prefixed.css, repeated.css);
+
+        var modern = try native.compile(std.testing.allocator, entry_path, case.input, .{
+            .syntax = case.syntax,
+            .root_paths = &.{fixture.root},
+            .format = .minified,
+            .prefix = true,
+            .targets = &modern_targets,
+        });
+        defer modern.deinit();
+        try std.testing.expectEqualStrings(
+            ".a{user-select:none;display:flex}",
+            modern.css,
+        );
+
+        try std.testing.expectError(
+            error.InvalidOptions,
+            native.compile(std.testing.allocator, entry_path, case.input, .{
+                .syntax = case.syntax,
+                .root_paths = &.{},
+                .prefix = true,
+            }),
+        );
+    }
+
+    var forged_targets = [_]zigcss.prefixing.Target{.{
+        .browser = .safari,
+        .minimum = .{ .major = 0 },
+    }};
+    const forged = zigcss.TargetQuery{
+        .allocator = std.testing.allocator,
+        .targets = &forged_targets,
+    };
+    try std.testing.expectError(
+        error.InvalidOptions,
+        native.compile(std.testing.allocator, "relative.scss", ".a{}", .{
+            .syntax = .scss,
+            .root_paths = &.{},
+            .prefix = true,
+            .targets = &forged,
+        }),
+    );
+    try std.testing.expectError(
+        error.InvalidOptions,
+        native.compile(std.testing.allocator, "relative.scss", ".a{}", .{
+            .syntax = .scss,
+            .root_paths = &.{},
+            .targets = &legacy_targets,
+        }),
+    );
 }
 
 test "external Zig API composes deterministic source maps for the finite native syntax set" {
@@ -657,6 +818,12 @@ test "external Zig API owns opaque watch snapshots and detects one transition" {
     try tmp.dir.writeFile(.{ .sub_path = "_tokens.scss", .data = "$color: blue;" });
     try std.testing.expect(try moved.pollWatchInputs());
     try std.testing.expect(!(try moved.pollWatchInputs()));
+    try tmp.dir.deleteFile("_tokens.scss");
+    try std.testing.expect(try moved.pollWatchInputs());
+    try std.testing.expect(!(try moved.pollWatchInputs()));
+    try tmp.dir.writeFile(.{ .sub_path = "_tokens.scss", .data = "$color: blue;" });
+    try std.testing.expect(try moved.pollWatchInputs());
+    try std.testing.expect(!(try moved.pollWatchInputs()));
 }
 
 const AllocationContext = struct {
@@ -699,6 +866,37 @@ fn exerciseNativeApiAllocationFailures(
     try std.testing.expect(failure.source_map == null);
     try std.testing.expectEqual(@as(usize, 1), failure.diagnostics.len);
     try std.testing.expectEqual(@as(usize, 0), failure.dependencies.len);
+
+    var optimized = try native.compile(
+        allocator,
+        context.entry_path,
+        ".empty{}.a{color:#ffffff}.b{color:#fff}",
+        .{
+            .syntax = .scss,
+            .root_paths = &.{context.root},
+            .format = .minified,
+            .optimize = true,
+        },
+    );
+    defer optimized.deinit();
+    try std.testing.expectEqualStrings(".a,.b{color:#fff}", optimized.css);
+
+    var targets = try parseTargets(allocator, "safari >= 7, ie >= 11");
+    defer targets.deinit();
+    var prefixed = try native.compile(
+        allocator,
+        context.entry_path,
+        ".a{user-select:none;display:flex}",
+        .{
+            .syntax = .scss,
+            .root_paths = &.{context.root},
+            .format = .minified,
+            .prefix = true,
+            .targets = &targets,
+        },
+    );
+    defer prefixed.deinit();
+    try std.testing.expectEqualStrings(prefix_cases[0].expected, prefixed.css);
 }
 
 test "external Zig API route handles every allocation failure" {

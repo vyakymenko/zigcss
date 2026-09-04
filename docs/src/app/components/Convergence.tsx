@@ -138,7 +138,7 @@ export function Convergence() {
             {sourceLabels.map(label => <span key={label} className="terminal-node">{label}</span>)}
           </div>
           <div className="convergence-core absolute left-[54%] top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 border border-[#b7f34a]/55 bg-[#101914] px-5 py-8 text-center shadow-[0_0_48px_rgba(183,243,74,0.12)] sm:px-9 sm:py-12">
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#71806f]">owned result</span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-[#879685]">owned result</span>
             <strong className="mt-3 block font-mono text-sm text-[#b7f34a] sm:text-lg">ZIGCSS CORE</strong>
           </div>
           <div className="absolute right-0 top-1/2 z-10 -translate-y-1/2 sm:right-[4%]">

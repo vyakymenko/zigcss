@@ -746,6 +746,27 @@ pub fn definition(config: *const Configuration) pass_manager.Pass {
     };
 }
 
+/// Applies only the closed verified target-prefix pass under its exact
+/// compatibility-rewrite authority. Callers retain ownership of both the
+/// parsed stylesheet and the canonical borrowed target query.
+pub fn applyToStylesheet(
+    allocator: std.mem.Allocator,
+    parsed: *pipeline.ParsedStylesheet,
+    query: *const target_query.Query,
+) !void {
+    if (parsed.hasErrors()) return error.InputHasErrors;
+    const config = try Configuration.init(allocator, query);
+    const registry = [_]pass_manager.Pass{definition(&config)};
+    var plan = try pass_manager.buildPlan(
+        allocator,
+        &registry,
+        &.{id},
+        .{ .allow_compatibility_rewrite = true },
+    );
+    defer plan.deinit();
+    try parsed.applyPassPlan(allocator, &plan, .{});
+}
+
 fn configFromUserData(user_data: ?*anyopaque) pass_manager.Error!*const Configuration {
     const pointer = user_data orelse return error.PassFailed;
     return @ptrCast(@alignCast(pointer));
@@ -805,6 +826,7 @@ fn validateEmittable(
     context: *pass_manager.Context,
     rules: *const ast.RuleList,
 ) pass_manager.Error!void {
+    if (context.hasExactMinifiedMappedEmissionProof(rules)) return;
     var output = emitter.emitWithSourceMap(
         context.scratchAllocator(),
         context.file(),
@@ -816,6 +838,7 @@ fn validateEmittable(
         else => return error.ValidationFailed,
     };
     output.deinit();
+    context.commitExactMinifiedMappedEmissionProof(rules, 1);
 }
 
 fn validateSameEmission(
@@ -823,6 +846,7 @@ fn validateSameEmission(
     expected: *const ast.RuleList,
     actual: *const ast.RuleList,
 ) pass_manager.Error!void {
+    if (expected == actual) return validateEmittable(context, actual);
     var expected_output = emitter.emitWithSourceMap(
         context.scratchAllocator(),
         context.file(),
@@ -850,6 +874,7 @@ fn validateSameEmission(
     {
         return error.ValidationFailed;
     }
+    context.commitExactMinifiedMappedEmissionProof(actual, 2);
 }
 
 fn parseTestQuery(allocator: std.mem.Allocator, input: []const u8) !target_query.Query {
@@ -956,6 +981,18 @@ test "modern target configuration leaves the exact root unchanged" {
     const result = try rewrite(&context, parsed.rules, &config, .{});
     try std.testing.expect(!result.changed);
     try std.testing.expect(result.value == parsed.rules);
+
+    const registry = [_]pass_manager.Pass{definition(&config)};
+    var plan = try pass_manager.buildPlan(
+        std.testing.allocator,
+        &registry,
+        &.{id},
+        .{ .allow_compatibility_rewrite = true },
+    );
+    defer plan.deinit();
+    const validated = try plan.run(&context, parsed.rules, .{ .verify_idempotence = true });
+    try std.testing.expect(validated == parsed.rules);
+    try std.testing.expectEqual(@as(usize, 1), context.structuralProofEmitCount());
 }
 
 test "target prefix pass expands every reviewed category in place and is idempotent" {

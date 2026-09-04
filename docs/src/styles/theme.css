@@ -160,8 +160,9 @@
   }
 
   :focus-visible {
-    outline: 2px solid #83b82d;
-    outline-offset: 3px;
+    outline: 3px solid #f7f3e8;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 7px #172019;
   }
 
   /**
@@ -558,7 +559,7 @@
   }
 
   .evidence-cell span {
-    color: #667563;
+    color: #879685;
     font-size: 0.6rem;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -589,7 +590,7 @@
   }
 
   .endgame-corridor article > span {
-    color: #687666;
+    color: #879685;
     font-size: 0.62rem;
     letter-spacing: 0.16em;
   }
@@ -659,6 +660,52 @@
   .boot-line {
     animation: boot-line 220ms steps(2, end) both;
   }
+
+  .boot-line-delay-1 { animation-delay: 140ms; }
+  .boot-line-delay-2 { animation-delay: 280ms; }
+  .boot-line-delay-3 { animation-delay: 420ms; }
+
+  .noscript-shell {
+    min-height: 100vh;
+    padding: 8vw;
+    background: #0b110d;
+    color: #eef5ec;
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  .noscript-kicker,
+  .noscript-install,
+  .noscript-links a {
+    color: #b7f34a;
+  }
+
+  .noscript-kicker { letter-spacing: 0.14em; }
+
+  .noscript-title {
+    max-width: 16ch;
+    font-family: "Archivo", system-ui, sans-serif;
+    font-size: clamp(3rem, 10vw, 8rem);
+    line-height: 0.82;
+    letter-spacing: -0.07em;
+  }
+
+  .noscript-lede { font-size: 1.25rem; }
+
+  .noscript-copy {
+    max-width: 58rem;
+    color: #91a08f;
+    line-height: 1.8;
+  }
+
+  .noscript-install {
+    margin-top: 2rem;
+    overflow: auto;
+    border: 1px solid #50672d;
+    padding: 1.25rem;
+    background: #080d0a;
+  }
+
+  .noscript-links { margin-top: 2rem; }
 
   @media (min-width: 640px) {
     .proof-rail p {

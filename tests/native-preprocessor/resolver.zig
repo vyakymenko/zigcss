@@ -232,6 +232,71 @@ test "loads empty files across the exact end-of-file boundary" {
     );
 }
 
+test "content fingerprints stream exact XxHash64 without graph facts" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const contents = try std.testing.allocator.alloc(u8, 64 * 1024 + 17);
+    defer std.testing.allocator.free(contents);
+    for (contents, 0..) |*byte, index| byte.* = @truncate(index *% 131 +% 17);
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/fingerprint.scss", .data = contents });
+    const path = try fixture.path("fingerprint.scss");
+    defer std.testing.allocator.free(path);
+    const url = try fileUrl(path);
+    defer std.testing.allocator.free(url);
+
+    var expected_hasher = std.hash.XxHash64.init(0);
+    expected_hasher.update(contents);
+    const expected = expected_hasher.final();
+
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
+    defer confined.deinit();
+    var session = confined.createSession(std.testing.allocator, .{});
+    defer session.deinit();
+    try std.testing.expectEqual(expected, try session.contentFingerprint(url));
+    try std.testing.expectEqual(@as(usize, 0), session.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), session.edges().len);
+    try std.testing.expectEqual(
+        resolver.Stats{ .attempts = 1, .files = 0, .bytes = contents.len },
+        session.stats(),
+    );
+
+    var loaded = try session.load(url, .{ .kind = .reference, .ancestry = &.{} });
+    defer loaded.deinit();
+    var loaded_hasher = std.hash.XxHash64.init(0);
+    loaded_hasher.update(loaded.contents);
+    try std.testing.expectEqual(expected, loaded_hasher.final());
+    try std.testing.expectEqual(@as(usize, 1), session.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 1), session.edges().len);
+}
+
+test "content fingerprints allocate independently of file size" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    const contents = try std.testing.allocator.alloc(u8, 512 * 1024);
+    defer std.testing.allocator.free(contents);
+    @memset(contents, 0xa5);
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/large.scss", .data = contents });
+    const path = try fixture.path("large.scss");
+    defer std.testing.allocator.free(path);
+    const url = try fileUrl(path);
+    defer std.testing.allocator.free(url);
+
+    var expected_hasher = std.hash.XxHash64.init(0);
+    expected_hasher.update(contents);
+
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
+    defer confined.deinit();
+    var fixed_storage: [16 * 1024]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&fixed_storage);
+    var session = confined.createSession(fixed.allocator(), .{});
+    defer session.deinit();
+    try std.testing.expectEqual(expected_hasher.final(), try session.contentFingerprint(url));
+    try std.testing.expectEqual(
+        resolver.Stats{ .attempts = 1, .files = 0, .bytes = contents.len },
+        session.stats(),
+    );
+}
+
 test "canonical URLs percent-encode path bytes and round-trip Unicode input" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
@@ -507,6 +572,213 @@ test "enforces canonical ancestry depth cycles and graph-level cycle safety" {
     try std.testing.expectEqualStrings(second.url, session.edges()[1].child_url);
 }
 
+test "indexed admission preserves wide fan-out order duplicates and linear cycle work" {
+    const child_count = 48;
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try fixture.tmp.dir.writeFile(.{
+        .sub_path = "root/fan-root.scss",
+        .data = "fan-root",
+    });
+    var name_buffer: [32]u8 = undefined;
+    for (0..child_count) |index| {
+        const name = try std.fmt.bufPrint(&name_buffer, "fan-{d}.scss", .{index});
+        const relative = try std.fs.path.join(std.testing.allocator, &.{ "root", name });
+        defer std.testing.allocator.free(relative);
+        try fixture.tmp.dir.writeFile(.{ .sub_path = relative, .data = name });
+    }
+
+    const root_path = try fixture.path("fan-root.scss");
+    defer std.testing.allocator.free(root_path);
+    const root_url = try fileUrl(root_path);
+    defer std.testing.allocator.free(root_url);
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
+    defer confined.deinit();
+    var session = confined.createSession(std.testing.allocator, .{});
+    defer session.deinit();
+
+    var root_loaded = try session.load(root_url, .{ .kind = .import, .ancestry = &.{} });
+    defer root_loaded.deinit();
+    for (0..child_count) |index| {
+        const name = try std.fmt.bufPrint(&name_buffer, "fan-{d}.scss", .{index});
+        const path = try fixture.path(name);
+        defer std.testing.allocator.free(path);
+        const url = try fileUrl(path);
+        defer std.testing.allocator.free(url);
+
+        var loaded = try session.load(url, .{
+            .kind = .use,
+            .ancestry = &.{session.dependencies()[0].url},
+        });
+        defer loaded.deinit();
+        try std.testing.expectEqualStrings(url, session.dependencies()[index + 1].url);
+        try std.testing.expectEqual(resolver.DependencyKind.use, session.dependencies()[index + 1].kind);
+        try std.testing.expectEqualStrings(
+            session.dependencies()[0].url,
+            session.edges()[index + 1].parent_url.?,
+        );
+        try std.testing.expectEqualStrings(url, session.edges()[index + 1].child_url);
+
+        var duplicate = try session.load(url, .{
+            .kind = .forward,
+            .ancestry = &.{session.dependencies()[0].url},
+        });
+        defer duplicate.deinit();
+        try std.testing.expectEqualStrings(loaded.url, duplicate.url);
+    }
+
+    try std.testing.expectEqual(@as(usize, child_count + 1), session.dependencies().len);
+    try std.testing.expectEqual(@as(usize, child_count + 1), session.edges().len);
+    try std.testing.expectEqual(
+        resolver.IndexOperations{
+            .dependency_lookups = 1 + 2 * child_count,
+            .edge_lookups = 1 + 2 * child_count,
+            .cycle_nodes = child_count,
+            .cycle_edges = 0,
+        },
+        session.indexOperations(),
+    );
+
+    const dependency_count = session.dependencies().len;
+    const edge_count = session.edges().len;
+    try std.testing.expectError(
+        error.Cycle,
+        session.load(session.dependencies()[0].url, .{
+            .kind = .reference,
+            .ancestry = &.{session.dependencies()[child_count].url},
+        }),
+    );
+    try std.testing.expectEqual(dependency_count, session.dependencies().len);
+    try std.testing.expectEqual(edge_count, session.edges().len);
+    try std.testing.expectEqual(
+        resolver.IndexOperations{
+            .dependency_lookups = 2 + 2 * child_count,
+            .edge_lookups = 2 + 2 * child_count,
+            .cycle_nodes = 2 * child_count + 1,
+            .cycle_edges = child_count,
+        },
+        session.indexOperations(),
+    );
+}
+
+test "indexed cycle traversal visits each chain and diamond fact once" {
+    const chain_count = 32;
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    var chain_urls: [chain_count][]u8 = undefined;
+    var chain_urls_len: usize = 0;
+    defer for (chain_urls[0..chain_urls_len]) |url| std.testing.allocator.free(url);
+    var name_buffer: [32]u8 = undefined;
+    for (0..chain_count) |index| {
+        const name = try std.fmt.bufPrint(&name_buffer, "chain-{d}.scss", .{index});
+        const relative = try std.fs.path.join(std.testing.allocator, &.{ "root", name });
+        defer std.testing.allocator.free(relative);
+        try fixture.tmp.dir.writeFile(.{ .sub_path = relative, .data = name });
+        const path = try fixture.path(name);
+        defer std.testing.allocator.free(path);
+        chain_urls[index] = try fileUrl(path);
+        chain_urls_len += 1;
+    }
+    const diamond_names = [_][]const u8{
+        "diamond-a.scss",
+        "diamond-b.scss",
+        "diamond-c.scss",
+        "diamond-d.scss",
+        "diamond-x.scss",
+    };
+    var diamond_urls: [diamond_names.len][]u8 = undefined;
+    var diamond_urls_len: usize = 0;
+    defer for (diamond_urls[0..diamond_urls_len]) |url| std.testing.allocator.free(url);
+    for (diamond_names, 0..) |name, index| {
+        const relative = try std.fs.path.join(std.testing.allocator, &.{ "root", name });
+        defer std.testing.allocator.free(relative);
+        try fixture.tmp.dir.writeFile(.{ .sub_path = relative, .data = name });
+        const path = try fixture.path(name);
+        defer std.testing.allocator.free(path);
+        diamond_urls[index] = try fileUrl(path);
+        diamond_urls_len += 1;
+    }
+
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
+    defer confined.deinit();
+    var session = confined.createSession(std.testing.allocator, .{});
+    defer session.deinit();
+    var chain_root = try session.load(chain_urls[0], .{ .kind = .import, .ancestry = &.{} });
+    defer chain_root.deinit();
+    for (1..chain_count) |index| {
+        var loaded = try session.load(chain_urls[index], .{
+            .kind = .use,
+            .ancestry = &.{session.dependencies()[index - 1].url},
+        });
+        defer loaded.deinit();
+    }
+    const before_chain_cycle = session.indexOperations();
+    const chain_dependency_count = session.dependencies().len;
+    const chain_edge_count = session.edges().len;
+    try std.testing.expectError(
+        error.Cycle,
+        session.load(chain_urls[0], .{
+            .kind = .forward,
+            .ancestry = &.{session.dependencies()[chain_count - 1].url},
+        }),
+    );
+    const after_chain_cycle = session.indexOperations();
+    try std.testing.expectEqual(@as(u64, chain_count), after_chain_cycle.cycle_nodes - before_chain_cycle.cycle_nodes);
+    try std.testing.expectEqual(@as(u64, chain_count - 1), after_chain_cycle.cycle_edges - before_chain_cycle.cycle_edges);
+    try std.testing.expectEqual(chain_dependency_count, session.dependencies().len);
+    try std.testing.expectEqual(chain_edge_count, session.edges().len);
+
+    const diamond_base = session.dependencies().len;
+    var diamond_a = try session.load(diamond_urls[0], .{ .kind = .import, .ancestry = &.{} });
+    defer diamond_a.deinit();
+    var diamond_b = try session.load(diamond_urls[1], .{
+        .kind = .use,
+        .ancestry = &.{session.dependencies()[diamond_base].url},
+    });
+    defer diamond_b.deinit();
+    var diamond_c = try session.load(diamond_urls[2], .{
+        .kind = .forward,
+        .ancestry = &.{session.dependencies()[diamond_base].url},
+    });
+    defer diamond_c.deinit();
+    var diamond_d_from_b = try session.load(diamond_urls[3], .{
+        .kind = .reference,
+        .ancestry = &.{session.dependencies()[diamond_base + 1].url},
+    });
+    defer diamond_d_from_b.deinit();
+    var diamond_d_from_c = try session.load(diamond_urls[3], .{
+        .kind = .import,
+        .ancestry = &.{session.dependencies()[diamond_base + 2].url},
+    });
+    defer diamond_d_from_c.deinit();
+    try std.testing.expectEqual(
+        resolver.DependencyKind.reference,
+        session.dependencies()[diamond_base + 3].kind,
+    );
+    var diamond_x = try session.load(diamond_urls[4], .{ .kind = .import, .ancestry = &.{} });
+    defer diamond_x.deinit();
+
+    const before_diamond = session.indexOperations();
+    var linked = try session.load(diamond_urls[0], .{
+        .kind = .reference,
+        .ancestry = &.{session.dependencies()[diamond_base + 4].url},
+    });
+    defer linked.deinit();
+    const after_diamond = session.indexOperations();
+    try std.testing.expectEqual(@as(u64, 4), after_diamond.cycle_nodes - before_diamond.cycle_nodes);
+    try std.testing.expectEqual(@as(u64, 4), after_diamond.cycle_edges - before_diamond.cycle_edges);
+    try std.testing.expectEqual(@as(usize, diamond_base + 5), session.dependencies().len);
+    try std.testing.expectEqual(@as(usize, diamond_base + 7), session.edges().len);
+    try std.testing.expectEqualStrings(
+        session.dependencies()[diamond_base + 4].url,
+        session.edges()[session.edges().len - 1].parent_url.?,
+    );
+    try std.testing.expectEqualStrings(
+        session.dependencies()[diamond_base].url,
+        session.edges()[session.edges().len - 1].child_url,
+    );
+}
+
 test "enforces per-file cumulative unique-file and attempt ceilings" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
@@ -533,6 +805,10 @@ test "enforces per-file cumulative unique-file and attempt ceilings" {
         error.FileLimitExceeded,
         per_file_session.load(first_url, .{ .kind = .import, .ancestry = &.{} }),
     );
+    try std.testing.expectError(
+        error.FileLimitExceeded,
+        per_file_session.contentFingerprint(first_url),
+    );
 
     var total = try resolver.Resolver.init(
         std.testing.allocator,
@@ -547,6 +823,24 @@ test "enforces per-file cumulative unique-file and attempt ceilings" {
     try std.testing.expectError(
         error.TotalLimitExceeded,
         total_session.load(second_url, .{ .kind = .import, .ancestry = &.{} }),
+    );
+
+    var fingerprint_total = try resolver.Resolver.init(
+        std.testing.allocator,
+        &.{fixture.root},
+        .{ .max_total_bytes = 5 },
+    );
+    defer fingerprint_total.deinit();
+    var fingerprint_total_session = fingerprint_total.createSession(std.testing.allocator, .{});
+    defer fingerprint_total_session.deinit();
+    _ = try fingerprint_total_session.contentFingerprint(first_url);
+    try std.testing.expectError(
+        error.TotalLimitExceeded,
+        fingerprint_total_session.contentFingerprint(second_url),
+    );
+    try std.testing.expectEqual(
+        resolver.Stats{ .attempts = 2, .files = 0, .bytes = 3 },
+        fingerprint_total_session.stats(),
     );
 
     var files = try resolver.Resolver.init(
@@ -582,14 +876,28 @@ test "enforces per-file cumulative unique-file and attempt ceilings" {
         resolver.Stats{ .attempts = 1, .files = 1, .bytes = 3 },
         attempt_session.stats(),
     );
+
+    var fingerprint_attempts = try resolver.Resolver.init(
+        std.testing.allocator,
+        &.{fixture.root},
+        .{ .max_attempts = 1 },
+    );
+    defer fingerprint_attempts.deinit();
+    var fingerprint_attempt_session = fingerprint_attempts.createSession(std.testing.allocator, .{});
+    defer fingerprint_attempt_session.deinit();
+    _ = try fingerprint_attempt_session.contentFingerprint(first_url);
+    try std.testing.expectError(
+        error.AttemptLimitExceeded,
+        fingerprint_attempt_session.contentFingerprint(first_url),
+    );
 }
 
 const CancelContext = struct {
-    checkpoint: resolver.Checkpoint,
+    checkpoint: ?resolver.Checkpoint,
 
     fn check(raw: *anyopaque, checkpoint: resolver.Checkpoint) bool {
         const self: *CancelContext = @ptrCast(@alignCast(raw));
-        return checkpoint == self.checkpoint;
+        return self.checkpoint != null and checkpoint == self.checkpoint.?;
     }
 };
 
@@ -692,10 +1000,15 @@ test "cancellation and unstable reads fail without partial dependency facts" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
     try fixture.tmp.dir.writeFile(.{ .sub_path = "root/mutable.scss", .data = "abc" });
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/child.scss", .data = "child" });
     const path = try fixture.path("mutable.scss");
     defer std.testing.allocator.free(path);
     const url = try fileUrl(path);
     defer std.testing.allocator.free(url);
+    const child_path = try fixture.path("child.scss");
+    defer std.testing.allocator.free(child_path);
+    const child_url = try fileUrl(child_path);
+    defer std.testing.allocator.free(child_url);
     var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
     defer confined.deinit();
 
@@ -725,6 +1038,106 @@ test "cancellation and unstable reads fail without partial dependency facts" {
     try std.testing.expect(mutation_context.fired);
     try std.testing.expectEqual(@as(usize, 0), unstable.dependencies().len);
     try std.testing.expectEqual(@as(u64, 0), unstable.stats().bytes);
+
+    var complete_context = CancelContext{ .checkpoint = .graph };
+    var complete = confined.createSession(std.testing.allocator, .{
+        .context = &complete_context,
+        .check_fn = CancelContext.check,
+    });
+    defer complete.deinit();
+    var complete_root = try complete.load(url, .{ .kind = .import, .ancestry = &.{} });
+    defer complete_root.deinit();
+    complete_context.checkpoint = .complete;
+    try std.testing.expectError(
+        error.Cancelled,
+        complete.load(child_url, .{ .kind = .use, .ancestry = &.{complete_root.url} }),
+    );
+    try std.testing.expectEqual(@as(usize, 1), complete.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 1), complete.edges().len);
+    try std.testing.expectEqual(@as(u64, complete_root.contents.len), complete.stats().bytes);
+    complete_context.checkpoint = null;
+    var complete_child = try complete.load(child_url, .{
+        .kind = .use,
+        .ancestry = &.{complete_root.url},
+    });
+    defer complete_child.deinit();
+    try std.testing.expectEqual(@as(usize, 2), complete.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 2), complete.edges().len);
+    try std.testing.expectEqualStrings(child_url, complete.edges()[1].child_url);
+}
+
+test "content fingerprints fail closed on escape symlink cancellation and mutation" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/mutable.scss", .data = "abc" });
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "outside/escaped.scss", .data = "outside" });
+    const path = try fixture.path("mutable.scss");
+    defer std.testing.allocator.free(path);
+    const url = try fileUrl(path);
+    defer std.testing.allocator.free(url);
+    const escaped_path = try fixture.outsidePath("escaped.scss");
+    defer std.testing.allocator.free(escaped_path);
+    const escaped_url = try fileUrl(escaped_path);
+    defer std.testing.allocator.free(escaped_url);
+
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
+    defer confined.deinit();
+    var escaped = confined.createSession(std.testing.allocator, .{});
+    defer escaped.deinit();
+    try std.testing.expectError(error.PathEscape, escaped.contentFingerprint(escaped_url));
+    try std.testing.expectEqual(@as(usize, 0), escaped.dependencies().len);
+    try std.testing.expectEqual(@as(u64, 0), escaped.stats().bytes);
+
+    var cancel_context = CancelContext{ .checkpoint = .read };
+    var cancelled = confined.createSession(std.testing.allocator, .{
+        .context = &cancel_context,
+        .check_fn = CancelContext.check,
+    });
+    defer cancelled.deinit();
+    try std.testing.expectError(error.Cancelled, cancelled.contentFingerprint(url));
+    try std.testing.expectEqual(@as(usize, 0), cancelled.dependencies().len);
+    try std.testing.expectEqual(@as(u64, 0), cancelled.stats().bytes);
+
+    var mutation_context = MutationContext{ .dir = &fixture.tmp.dir };
+    var unstable = confined.createSession(std.testing.allocator, .{
+        .context = &mutation_context,
+        .check_fn = MutationContext.check,
+    });
+    defer unstable.deinit();
+    try std.testing.expectError(error.FileChanged, unstable.contentFingerprint(url));
+    try std.testing.expect(mutation_context.fired);
+    try std.testing.expectEqual(@as(usize, 0), unstable.dependencies().len);
+    try std.testing.expectEqual(@as(u64, 0), unstable.stats().bytes);
+
+    if (builtin.os.tag != .windows) {
+        try fixture.tmp.dir.symLink(
+            "../outside/escaped.scss",
+            "root/fingerprint-link.scss",
+            .{},
+        );
+        try fixture.tmp.dir.symLink(
+            "../outside",
+            "root/fingerprint-directory-link",
+            .{ .is_directory = true },
+        );
+        const link_path = try fixture.path("fingerprint-link.scss");
+        defer std.testing.allocator.free(link_path);
+        const link_url = try fileUrl(link_path);
+        defer std.testing.allocator.free(link_url);
+        const directory_link_path = try fixture.path("fingerprint-directory-link/escaped.scss");
+        defer std.testing.allocator.free(directory_link_path);
+        const directory_link_url = try fileUrl(directory_link_path);
+        defer std.testing.allocator.free(directory_link_url);
+        var linked = confined.createSession(std.testing.allocator, .{});
+        defer linked.deinit();
+        try std.testing.expectError(error.Symlink, linked.contentFingerprint(link_url));
+        try std.testing.expectError(
+            error.Symlink,
+            linked.contentFingerprint(directory_link_url),
+        );
+        try std.testing.expectEqual(@as(usize, 0), linked.dependencies().len);
+        try std.testing.expectEqual(@as(u64, 0), linked.stats().bytes);
+    }
 }
 
 test "canonical root replacement invalidates the pinned capability" {
@@ -748,6 +1161,7 @@ test "canonical root replacement invalidates the pinned capability" {
         error.FileChanged,
         session.load(url, .{ .kind = .import, .ancestry = &.{} }),
     );
+    try std.testing.expectError(error.FileChanged, session.contentFingerprint(url));
     try std.testing.expectEqual(@as(usize, 0), session.dependencies().len);
 }
 
@@ -770,12 +1184,15 @@ test "closed sessions reject work while preserving already-owned results" {
         error.SessionClosed,
         session.load(url, .{ .kind = .reference, .ancestry = &.{} }),
     );
+    try std.testing.expectError(error.SessionClosed, session.contentFingerprint(url));
     try std.testing.expectEqualStrings("owned", loaded.contents);
 }
 
 const AllocationContext = struct {
     root: []const u8,
-    url: []const u8,
+    first_url: []const u8,
+    second_url: []const u8,
+    third_url: []const u8,
 };
 
 fn exerciseResolverAllocationFailures(
@@ -786,9 +1203,35 @@ fn exerciseResolverAllocationFailures(
     defer confined.deinit();
     var session = confined.createSession(allocator, .{});
     defer session.deinit();
-    var loaded = try session.load(context.url, .{ .kind = .import, .ancestry = &.{} });
-    defer loaded.deinit();
-    try std.testing.expectEqualStrings("allocation", loaded.contents);
+    var expected = std.hash.XxHash64.init(0);
+    expected.update("allocation");
+    try std.testing.expectEqual(expected.final(), try session.contentFingerprint(context.first_url));
+    try std.testing.expectEqual(@as(usize, 0), session.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), session.edges().len);
+    var first = try session.load(context.first_url, .{ .kind = .import, .ancestry = &.{} });
+    defer first.deinit();
+    var second = try session.load(context.second_url, .{
+        .kind = .use,
+        .ancestry = &.{session.dependencies()[0].url},
+    });
+    defer second.deinit();
+    var duplicate_second = try session.load(context.second_url, .{
+        .kind = .forward,
+        .ancestry = &.{session.dependencies()[0].url},
+    });
+    defer duplicate_second.deinit();
+    var third = try session.load(context.third_url, .{
+        .kind = .reference,
+        .ancestry = &.{session.dependencies()[1].url},
+    });
+    defer third.deinit();
+    try std.testing.expectEqualStrings("allocation", first.contents);
+    try std.testing.expectEqualStrings("second", second.contents);
+    try std.testing.expectEqualStrings(second.url, duplicate_second.url);
+    try std.testing.expectEqualStrings("third", third.contents);
+    try std.testing.expectEqual(@as(usize, 3), session.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 3), session.edges().len);
+    try std.testing.expectEqual(resolver.DependencyKind.use, session.dependencies()[1].kind);
 }
 
 fn optionalStringsEqual(left: ?[]const u8, right: ?[]const u8) bool {
@@ -800,13 +1243,28 @@ test "resolver handles every initialization resolution graph and result allocati
     var fixture = try Fixture.init();
     defer fixture.deinit();
     try fixture.tmp.dir.writeFile(.{ .sub_path = "root/file.scss", .data = "allocation" });
-    const path = try fixture.path("file.scss");
-    defer std.testing.allocator.free(path);
-    const url = try fileUrl(path);
-    defer std.testing.allocator.free(url);
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/second.scss", .data = "second" });
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/third.scss", .data = "third" });
+    const first_path = try fixture.path("file.scss");
+    defer std.testing.allocator.free(first_path);
+    const second_path = try fixture.path("second.scss");
+    defer std.testing.allocator.free(second_path);
+    const third_path = try fixture.path("third.scss");
+    defer std.testing.allocator.free(third_path);
+    const first_url = try fileUrl(first_path);
+    defer std.testing.allocator.free(first_url);
+    const second_url = try fileUrl(second_path);
+    defer std.testing.allocator.free(second_url);
+    const third_url = try fileUrl(third_path);
+    defer std.testing.allocator.free(third_url);
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseResolverAllocationFailures,
-        .{AllocationContext{ .root = fixture.root, .url = url }},
+        .{AllocationContext{
+            .root = fixture.root,
+            .first_url = first_url,
+            .second_url = second_url,
+            .third_url = third_url,
+        }},
     );
 }

@@ -8,10 +8,12 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
 import { nativeTargetContract } from './native-target-contract.mjs'
+import { inspectNpmPackageArchive } from './npm-package-artifact.mjs'
 import {
   expectedPackedFiles,
   validatePackageDescription,
 } from './validate-preprocessor-package.mjs'
+import { validateNativeIntegritySources } from './validate-native-integrity.mjs'
 import { parseReleaseVersion } from './validate-release-version.mjs'
 import { assertArtifactMatchesTarget } from './verify-artifact-target.mjs'
 
@@ -25,6 +27,30 @@ const maximumInstalledBytes = 128 * 1024 * 1024
 const maximumInstalledEntries = 20_000
 const maximumRuntimeTraceBytes = 64 * 1024
 const childTimeoutMs = 60 * 1000
+const posixArchivePolicies = Object.freeze({
+  darwin: Object.freeze({
+    candidates: Object.freeze(['/usr/bin/tar']),
+    resolved: Object.freeze(['/usr/bin/tar', '/usr/bin/bsdtar']),
+  }),
+  linux: Object.freeze({
+    candidates: Object.freeze(['/usr/bin/tar', '/bin/tar']),
+    resolved: Object.freeze([
+      '/usr/bin/tar',
+      '/bin/tar',
+      '/usr/bin/bsdtar',
+      '/bin/bsdtar',
+      '/usr/bin/gtar',
+      '/bin/gtar',
+      '/usr/bin/busybox',
+      '/bin/busybox',
+    ]),
+  }),
+})
+const posixArchiveEnvironment = Object.freeze({
+  LANG: 'C',
+  LC_ALL: 'C',
+  PATH: '/usr/bin:/bin',
+})
 const runtimeTraceLauncher = [
   "const { spawn } = require('node:child_process')",
   "const child = spawn(process.argv[1], process.argv.slice(2), { stdio: 'inherit', cwd: process.cwd() })",
@@ -68,6 +94,7 @@ export const nativePreprocessorSmokeCases = Object.freeze([
 ])
 
 const nativeTargetLanguages = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])
+const packagedNodeApiModules = Object.freeze(['commonjs', 'esm'])
 const nativeTargetEvidenceDirectory = 'native-target-evidence'
 
 function fail(message) {
@@ -81,18 +108,251 @@ export function compilerWarningForVersion(version) {
     : `Warning: ZigCSS ${parsed.value} is an experimental release candidate; do not use it for production CSS.\n`
 }
 
-export function archiveExecutable(platform = process.platform, systemRoot = process.env.SystemRoot) {
-  if (platform !== 'win32') return 'tar'
-  // Git Bash can shadow Windows' ZIP-capable bsdtar with GNU tar.
-  if (
-    typeof systemRoot !== 'string'
-    || systemRoot.includes('\0')
-    || !/^[A-Za-z]:[\\/]/.test(systemRoot)
-    || !path.win32.isAbsolute(systemRoot)
-  ) {
-    fail('Windows system root must be an absolute local drive path')
+function trustedPosixArchiveExecutable(platform, fileSystem = fs) {
+  const policy = posixArchivePolicies[platform]
+  if (policy === undefined) fail(`unsupported archive platform ${platform}`)
+  for (const candidate of policy.candidates) {
+    let descriptor
+    try {
+      const resolved = fileSystem.realpathSync(candidate)
+      if (!path.posix.isAbsolute(resolved) || !policy.resolved.includes(resolved)) continue
+      const before = fileSystem.lstatSync(resolved)
+      if (!trustedPosixExecutableStat(before)) continue
+      fileSystem.accessSync(resolved, fs.constants.X_OK)
+      descriptor = fileSystem.openSync(
+        resolved,
+        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      )
+      const opened = fileSystem.fstatSync(descriptor)
+      const after = fileSystem.lstatSync(resolved)
+      const resolvedAfter = fileSystem.realpathSync(candidate)
+      if (
+        resolvedAfter !== resolved
+        || !trustedPosixExecutableStat(opened)
+        || !trustedPosixExecutableStat(after)
+        || !samePosixExecutableIdentity(before, opened)
+        || !samePosixExecutableIdentity(opened, after)
+      ) {
+        continue
+      }
+      return candidate
+    } catch {
+      // Try only the next finite system candidate; never consult PATH.
+    } finally {
+      if (descriptor !== undefined) fileSystem.closeSync(descriptor)
+    }
   }
-  return path.win32.join(systemRoot, 'System32', 'tar.exe')
+  fail(`no trusted system tar executable is available for ${platform}`)
+}
+
+function trustedPosixExecutableStat(stat) {
+  return stat.isFile()
+    && !stat.isSymbolicLink()
+    && stat.uid === 0
+    && (stat.mode & 0o022) === 0
+    && (stat.mode & 0o111) !== 0
+}
+
+function samePosixExecutableIdentity(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.uid === right.uid
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs
+}
+
+const maximumSystemExecutableBytes = 256 * 1024 * 1024
+
+function normalizedWindowsPathKey(input) {
+  if (typeof input !== 'string') return null
+  const withoutNamespace = /^\\\\\?\\[A-Za-z]:\\/.test(input) ? input.slice(4) : input
+  let normalized = path.win32.normalize(withoutNamespace)
+  const root = path.win32.parse(normalized).root
+  while (normalized.length > root.length && /[\\/]$/.test(normalized)) {
+    normalized = normalized.slice(0, -1)
+  }
+  return normalized.toLowerCase()
+}
+
+function sameWindowsPath(left, right) {
+  const leftKey = normalizedWindowsPathKey(left)
+  return leftKey !== null && leftKey === normalizedWindowsPathKey(right)
+}
+
+function canonicalWindowsPath(fileSystem, candidate) {
+  const nativeRealpath = fileSystem.realpathSync?.native
+  const resolver = typeof nativeRealpath === 'function' ? nativeRealpath : fileSystem.realpathSync
+  if (typeof resolver !== 'function') throw new Error('canonical path resolution is unavailable')
+  return Reflect.apply(resolver, fileSystem, [candidate])
+}
+
+function trustedWindowsDirectoryStat(stat) {
+  return stat !== null && typeof stat === 'object'
+    && typeof stat.isDirectory === 'function' && stat.isDirectory()
+    && typeof stat.isSymbolicLink === 'function' && !stat.isSymbolicLink()
+}
+
+function trustedWindowsExecutableStat(stat) {
+  if (
+    stat === null || typeof stat !== 'object' ||
+    typeof stat.isFile !== 'function' || !stat.isFile() ||
+    typeof stat.isSymbolicLink !== 'function' || stat.isSymbolicLink()
+  ) return false
+  const size = stat.size
+  return typeof size === 'bigint'
+    ? size > 0n && size <= BigInt(maximumSystemExecutableBytes)
+    : Number.isSafeInteger(size) && size > 0 && size <= maximumSystemExecutableBytes
+}
+
+function sameWindowsStatFields(left, right, fields) {
+  return fields.every(name => left[name] !== undefined && right[name] !== undefined && left[name] === right[name])
+}
+
+function sameWindowsDirectoryIdentity(left, right) {
+  return sameWindowsStatFields(left, right, ['dev', 'ino', 'mode'])
+}
+
+function sameWindowsExecutableIdentity(left, right) {
+  return sameWindowsStatFields(left, right, [
+    'dev',
+    'ino',
+    'mode',
+    'nlink',
+    'size',
+    'mtimeNs',
+    'ctimeNs',
+  ])
+}
+
+function validatedWindowsSystemRoot(systemRoot) {
+  if (
+    typeof systemRoot !== 'string' || systemRoot.length === 0 || systemRoot.length > 32_767 ||
+    /[\0-\x1f"]/.test(systemRoot) || !/^[A-Za-z]:[\\/]/.test(systemRoot) ||
+    !path.win32.isAbsolute(systemRoot) || systemRoot.slice(2).includes(':')
+  ) fail('Windows system root must be an absolute local drive path')
+  const normalized = path.win32.normalize(systemRoot)
+  const driveRoot = path.win32.parse(normalized).root
+  if (
+    sameWindowsPath(normalized, driveRoot) ||
+    !sameWindowsPath(path.win32.dirname(normalized), driveRoot) ||
+    path.win32.basename(normalized).toLowerCase() !== 'windows'
+  ) fail('Windows system root must identify the Windows directory')
+  return normalized
+}
+
+function trustedWindowsSystemExecutable(systemRoot, executableName, fileSystem = fs) {
+  const normalizedRoot = validatedWindowsSystemRoot(systemRoot)
+  const system32Candidate = path.win32.join(normalizedRoot, 'System32')
+  const executableCandidate = path.win32.join(system32Candidate, executableName)
+  let descriptor
+  try {
+    const resolvedRoot = canonicalWindowsPath(fileSystem, normalizedRoot)
+    if (!sameWindowsPath(resolvedRoot, normalizedRoot)) throw new Error('system root is redirected')
+    const rootBefore = fileSystem.lstatSync(resolvedRoot, { bigint: true })
+    if (!trustedWindowsDirectoryStat(rootBefore)) throw new Error('system root is not a regular directory')
+
+    const resolvedSystem32 = canonicalWindowsPath(fileSystem, system32Candidate)
+    if (
+      !sameWindowsPath(resolvedSystem32, system32Candidate) ||
+      !sameWindowsPath(path.win32.dirname(resolvedSystem32), resolvedRoot)
+    ) throw new Error('System32 is redirected or is not a direct system-root child')
+    const system32Before = fileSystem.lstatSync(resolvedSystem32, { bigint: true })
+    if (!trustedWindowsDirectoryStat(system32Before)) throw new Error('System32 is not a regular directory')
+
+    const resolvedExecutable = canonicalWindowsPath(fileSystem, executableCandidate)
+    if (
+      !sameWindowsPath(resolvedExecutable, executableCandidate) ||
+      !sameWindowsPath(path.win32.dirname(resolvedExecutable), resolvedSystem32)
+    ) throw new Error(`${executableName} is redirected or is not a direct System32 child`)
+    const before = fileSystem.lstatSync(resolvedExecutable, { bigint: true })
+    if (!trustedWindowsExecutableStat(before)) throw new Error(`${executableName} is not a bounded regular file`)
+    fileSystem.accessSync(resolvedExecutable, fs.constants.R_OK)
+    descriptor = fileSystem.openSync(
+      resolvedExecutable,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    )
+    const opened = fileSystem.fstatSync(descriptor, { bigint: true })
+    const after = fileSystem.lstatSync(resolvedExecutable, { bigint: true })
+    const system32After = fileSystem.lstatSync(resolvedSystem32, { bigint: true })
+    const rootAfter = fileSystem.lstatSync(resolvedRoot, { bigint: true })
+    if (
+      !trustedWindowsExecutableStat(opened) || !trustedWindowsExecutableStat(after) ||
+      !sameWindowsExecutableIdentity(before, opened) ||
+      !sameWindowsExecutableIdentity(opened, after) ||
+      !trustedWindowsDirectoryStat(system32After) ||
+      !sameWindowsDirectoryIdentity(system32Before, system32After) ||
+      !trustedWindowsDirectoryStat(rootAfter) ||
+      !sameWindowsDirectoryIdentity(rootBefore, rootAfter) ||
+      !sameWindowsPath(canonicalWindowsPath(fileSystem, normalizedRoot), resolvedRoot) ||
+      !sameWindowsPath(canonicalWindowsPath(fileSystem, system32Candidate), resolvedSystem32) ||
+      !sameWindowsPath(canonicalWindowsPath(fileSystem, executableCandidate), resolvedExecutable)
+    ) throw new Error(`${executableName} or its system directory changed identity`)
+    return executableCandidate
+  } catch (error) {
+    fail(`trusted Windows system ${executableName} is unavailable: ${error.message}`)
+  } finally {
+    if (descriptor !== undefined) fileSystem.closeSync(descriptor)
+  }
+}
+
+export function archiveExecutable(
+  platform = process.platform,
+  systemRoot = process.env.SystemRoot,
+  fileSystem = fs,
+) {
+  if (platform === 'linux' || platform === 'darwin') {
+    return trustedPosixArchiveExecutable(platform, fileSystem)
+  }
+  if (platform !== 'win32') fail(`unsupported archive platform ${platform}`)
+  // Git Bash can shadow Windows' ZIP-capable bsdtar with GNU tar.
+  return trustedWindowsSystemExecutable(systemRoot, 'tar.exe', fileSystem)
+}
+
+export function lifecycleShellExecutable(
+  platform = process.platform,
+  systemRoot = process.env.SystemRoot,
+  fileSystem = fs,
+) {
+  if (platform === 'linux' || platform === 'darwin') {
+    const candidate = '/bin/sh'
+    let descriptor
+    try {
+      const resolved = fileSystem.realpathSync(candidate)
+      const before = fileSystem.lstatSync(resolved)
+      if (!path.posix.isAbsolute(resolved) || !trustedPosixExecutableStat(before)) {
+        fail('trusted lifecycle shell is unavailable')
+      }
+      fileSystem.accessSync(resolved, fs.constants.X_OK)
+      descriptor = fileSystem.openSync(
+        resolved,
+        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      )
+      const opened = fileSystem.fstatSync(descriptor)
+      const after = fileSystem.lstatSync(resolved)
+      if (
+        !trustedPosixExecutableStat(opened) || !trustedPosixExecutableStat(after) ||
+        !samePosixExecutableIdentity(before, opened) ||
+        !samePosixExecutableIdentity(opened, after) ||
+        fileSystem.realpathSync(candidate) !== resolved
+      ) fail('trusted lifecycle shell changed identity')
+      return candidate
+    } catch (error) {
+      if (error.message.startsWith('release smoke integrity:')) throw error
+      fail(`trusted lifecycle shell is unavailable: ${error.message}`)
+    } finally {
+      if (descriptor !== undefined) fileSystem.closeSync(descriptor)
+    }
+  }
+  if (platform !== 'win32') fail(`unsupported lifecycle shell platform ${platform}`)
+  return trustedWindowsSystemExecutable(systemRoot, 'cmd.exe', fileSystem)
+}
+
+function archiveProcessEnvironment(platform = process.platform) {
+  return platform === 'linux' || platform === 'darwin'
+    ? posixArchiveEnvironment
+    : process.env
 }
 
 function same(left, right) {
@@ -200,12 +460,28 @@ export function validateReleaseSmokeWorkflowSources(buildSource, releaseSource) 
         'native target evidence receipt',
       )
     } else {
-      expectLiteralCount(source, '--version "$RELEASE_VERSION"', 1, 'release smoke version argument')
+      expectLiteralCount(source, '--version "$RELEASE_VERSION" \\', 1, 'release smoke version argument')
+      expectLiteralCount(source, '--npm-package "$NPM_PACKAGE_ARCHIVE"', 1, 'release exact npm package argument')
+      expectLiteralCount(
+        source,
+        '          NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}',
+        1,
+        'release exact npm package environment',
+      )
       if (source.includes('--commit') || source.includes('--evidence')) {
         fail('release smoke must not create unsigned native target evidence')
       }
     }
   }
+
+  const nodeApiStep = 'Verify packaged Node API'
+  const nodeApiCommand = 'npm run test:node-api'
+  const buildNodeApi = namedStep(buildSource, nodeApiStep, 'build packaged Node API gate')
+  const releaseNodeApi = namedStep(releaseSource, nodeApiStep, 'release packaged Node API gate')
+  expectLiteralCount(buildSource, nodeApiCommand, 1, 'build packaged Node API command')
+  expectLiteralCount(releaseSource, nodeApiCommand, 1, 'release packaged Node API command')
+  expectLiteralCount(buildNodeApi, `        run: ${nodeApiCommand}`, 1, 'build packaged Node API gate')
+  expectLiteralCount(releaseNodeApi, `        run: ${nodeApiCommand}`, 1, 'release packaged Node API gate')
 
   const buildUpload = namedStep(buildSource, 'Upload Artifact', 'build native receipt upload')
   expectLiteralCount(
@@ -227,6 +503,10 @@ export function validateReleaseSmokeWorkflowSources(buildSource, releaseSource) 
     '- name: Upload Artifact',
   ], 'build native smoke pipeline')
   expectOrdered(releaseSource, [
+    '- name: Pack exact npm package',
+    '- name: Upload exact npm package',
+    '  release:',
+    '- name: Download exact npm package for smoke',
     '- name: Verify Release Metadata',
     smokeStep,
     '- name: Attest Release Provenance',
@@ -239,15 +519,16 @@ export function validateReleaseSmokeWorkflowSources(buildSource, releaseSource) 
     releaseTargets: release.length,
     smokeCommands: 2,
     buildTargetReceipts: build.length,
+    nodeApiCommands: 2,
   }
 }
 
 export function parseSmokeArguments(args) {
-  if (!Array.isArray(args) || (args.length !== 8 && args.length !== 12)) {
-    fail('expected four smoke inputs with an optional commit/evidence pair')
+  if (!Array.isArray(args) || ![8, 10, 12, 14].includes(args.length)) {
+    fail('expected four smoke inputs with optional npm-package and commit/evidence inputs')
   }
   const required = ['--archive', '--binary', '--target', '--version']
-  const allowed = new Set([...required, '--commit', '--evidence'])
+  const allowed = new Set([...required, '--npm-package', '--commit', '--evidence'])
   const values = {}
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index]
@@ -266,6 +547,16 @@ export function parseSmokeArguments(args) {
   if (!nativeSmokeTargets.some(item => item.target === values['--target'])) {
     fail(`unsupported release smoke target ${JSON.stringify(values['--target'])}`)
   }
+  const hasNpmPackage = Object.hasOwn(values, '--npm-package')
+  if (
+    hasNpmPackage
+    && (
+      !path.isAbsolute(values['--npm-package'])
+      || path.basename(values['--npm-package']) !== `zigcss-${values['--version']}.tgz`
+    )
+  ) {
+    fail('npm package smoke input must be the absolute versioned zigcss archive path')
+  }
   const hasCommit = Object.hasOwn(values, '--commit')
   const hasEvidence = Object.hasOwn(values, '--evidence')
   if (hasCommit !== hasEvidence) fail('commit and evidence arguments must be supplied together')
@@ -282,6 +573,7 @@ export function parseSmokeArguments(args) {
     target: values['--target'],
     version: values['--version'],
   }
+  if (hasNpmPackage) options.npmPackage = values['--npm-package']
   if (hasCommit) {
     options.commit = values['--commit']
     options.evidence = values['--evidence']
@@ -338,12 +630,70 @@ function hashFile(filename) {
   return hash.digest('hex')
 }
 
+export function stageDevelopmentPackage(root, destination, target, archiveSha256) {
+  const canonical = canonicalRoot(root)
+  if (!nativeSmokeTargets.some(item => item.target === target)) {
+    fail(`unsupported development package target ${JSON.stringify(target)}`)
+  }
+  if (typeof archiveSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(archiveSha256)) {
+    fail('development package archive digest must contain 64 lowercase hexadecimal characters')
+  }
+  if (typeof destination !== 'string' || destination.length === 0 || destination.includes('\0')) {
+    fail('development package destination must be a nonempty path')
+  }
+  const parent = canonicalRoot(path.dirname(destination))
+  const candidate = path.resolve(parent, path.basename(destination))
+  if (path.dirname(candidate) !== parent || fs.existsSync(candidate)) {
+    fail('development package destination must be a new direct child directory')
+  }
+
+  const packageManifestPath = confinedRegularFile(canonical, 'package.json', 'development package manifest', 256 * 1024)
+  const integrityPath = confinedRegularFile(canonical, 'native-integrity.json', 'development native integrity manifest', 64 * 1024)
+  let integrity
+  try {
+    integrity = JSON.parse(fs.readFileSync(integrityPath, 'utf8'))
+  } catch (error) {
+    fail(`development native integrity manifest is not valid JSON: ${error.message}`)
+  }
+  const entry = Array.isArray(integrity.archives)
+    ? integrity.archives.find(item => item?.target === target)
+    : undefined
+  if (entry === undefined) fail(`development native integrity manifest has no ${target} entry`)
+  entry.sha256 = archiveSha256
+  const integritySource = `${JSON.stringify(integrity, null, 2)}\n`
+  validateNativeIntegritySources({
+    manifest: integritySource,
+    packageManifest: fs.readFileSync(packageManifestPath, 'utf8'),
+    version: `${integrity.version}\n`,
+  })
+
+  fs.mkdirSync(candidate, { mode: 0o700 })
+  try {
+    for (const relativePath of expectedPackedFiles) {
+      const source = confinedRegularFile(canonical, relativePath, `development package ${relativePath}`, 2 * 1024 * 1024)
+      const output = path.join(candidate, relativePath)
+      fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o700 })
+      if (relativePath === 'native-integrity.json') {
+        fs.writeFileSync(output, integritySource, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+      } else {
+        fs.copyFileSync(source, output, fs.constants.COPYFILE_EXCL)
+        fs.chmodSync(output, fs.statSync(source).mode & 0o777)
+      }
+    }
+  } catch (error) {
+    fs.rmSync(candidate, { recursive: true, force: true })
+    throw error
+  }
+  return candidate
+}
+
 function child(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: 'utf8',
     input: options.input,
+    killSignal: options.killSignal,
     maxBuffer: maximumOutputBytes,
     timeout: childTimeoutMs,
     windowsHide: true,
@@ -476,6 +826,96 @@ function checkNativePreprocessors(command, argsPrefix, working, environment, ver
   return nativePreprocessorSmokeCases.length
 }
 
+function checkInstalledNodeApis(working, environment) {
+  const cjsProgram = [
+    "const path = require('node:path')",
+    "const zigcss = require('zigcss')",
+    "const source = '.empty{}.a{user-select:none;color:#ffffff}.b{user-select:none;color:#fff}'",
+    "const expected = '.a,.b{-webkit-user-select:none;-ms-user-select:none;user-select:none;color:#fff}'",
+    'zigcss.compile(source, {',
+    "  syntax: 'scss',",
+    "  sourcePath: path.join(process.cwd(), 'release-cjs.scss'),",
+    "  format: 'minified',",
+    '  optimize: true,',
+    "  browsers: 'safari >= 7, ie >= 11',",
+    '}).then(result => {',
+    "  if (result.css !== expected) throw new Error('CommonJS CSS mismatch')",
+    "  if (result.sourceMap !== null) throw new Error('CommonJS source map mismatch')",
+    "  if (result.diagnostics.length !== 0 || result.dependencies.length !== 0) throw new Error('CommonJS result facts mismatch')",
+    "  if (!Object.isFrozen(result) || !Object.isFrozen(result.diagnostics) || !Object.isFrozen(result.dependencies)) throw new Error('CommonJS ownership mismatch')",
+    "  process.stdout.write('cjs-node-api-ok\\n')",
+    '}).catch(error => { process.stderr.write(`${error.stack || error.message}\\n`); process.exitCode = 1 })',
+  ].join('\n')
+  const cjs = child(process.execPath, ['-e', cjsProgram], {
+    cwd: working,
+    env: environment,
+    label: 'offline installed CommonJS API smoke',
+  })
+  if (cjs.stdout !== 'cjs-node-api-ok\n' || cjs.stderr !== '') {
+    fail('offline installed CommonJS API returned an unexpected contract')
+  }
+
+  const invalidBrowsersProgram = [
+    "const path = require('node:path')",
+    "const zigcss = require('zigcss')",
+    "zigcss.compile('.invalid { color: red; }', {",
+    "  syntax: 'css',",
+    "  sourcePath: path.join(process.cwd(), 'release-invalid-browsers.css'),",
+    "  browsers: 'defaults',",
+    '}).then(',
+    "  () => { throw new Error('invalid browser target unexpectedly compiled') },",
+    '  error => {',
+    "    if (!(error instanceof zigcss.ZigCssCompileError)) throw new Error('invalid browser target returned the wrong error type')",
+    "    if (error.code !== 'NODE_OPTIONS') throw new Error(`invalid browser target returned ${error.code}`)",
+    "    if ('css' in error || 'result' in error) throw new Error('invalid browser target exposed partial output')",
+    "    if (!Array.isArray(error.diagnostics) || error.diagnostics.length !== 0 || !Object.isFrozen(error.diagnostics)) throw new Error('invalid browser target diagnostics changed')",
+    "    process.stdout.write('cjs-node-api-options-ok\\n')",
+    '  },',
+    ').catch(error => { process.stderr.write(`${error.stack || error.message}\n`); process.exitCode = 1 })',
+  ].join('\n')
+  const invalidBrowsers = child(process.execPath, ['-e', invalidBrowsersProgram], {
+    cwd: working,
+    env: environment,
+    label: 'offline installed CommonJS API invalid browser target smoke',
+  })
+  if (invalidBrowsers.stdout !== 'cjs-node-api-options-ok\n' || invalidBrowsers.stderr !== '') {
+    fail('offline installed CommonJS API invalid browser target returned an unexpected contract')
+  }
+
+  const dependency = path.join(working, 'release-esm-tokens.less')
+  const entry = path.join(working, 'release-esm.less')
+  fs.writeFileSync(dependency, '@color: red;\n')
+  fs.writeFileSync(entry, '@import "release-esm-tokens.less"; .esm { color: @color; }\n')
+  const esmProgram = [
+    "import path from 'node:path'",
+    "import { pathToFileURL } from 'node:url'",
+    "import zigcss, { compileFile } from 'zigcss'",
+    "if (zigcss.compileFile !== compileFile) throw new Error('ESM root exports diverged')",
+    "const entry = path.join(process.cwd(), 'release-esm.less')",
+    "const dependency = path.join(process.cwd(), 'release-esm-tokens.less')",
+    "const result = await compileFile(entry, { format: 'minified', sourceMap: true })",
+    "if (result.css !== '.esm{color:red}') throw new Error('ESM CSS mismatch')",
+    "if (result.sourceMap === null || !result.sourceMap.sources.includes(pathToFileURL(entry).href)) throw new Error('ESM source map mismatch')",
+    "if (result.diagnostics.length !== 0 || result.dependencies.length !== 1) throw new Error('ESM result facts mismatch')",
+    "if (result.dependencies[0].kind !== 'import' || result.dependencies[0].url !== pathToFileURL(dependency).href) throw new Error('ESM dependency mismatch')",
+    "if (!Object.isFrozen(result) || !Object.isFrozen(result.sourceMap) || !Object.isFrozen(result.dependencies) || !Object.isFrozen(result.dependencies[0])) throw new Error('ESM ownership mismatch')",
+    "process.stdout.write('esm-node-api-ok\\n')",
+  ].join('\n')
+  const esm = child(process.execPath, ['--input-type=module', '-e', esmProgram], {
+    cwd: working,
+    env: environment,
+    label: 'offline installed ESM API smoke',
+  })
+  if (esm.stdout !== 'esm-node-api-ok\n' || esm.stderr !== '') {
+    fail('offline installed ESM API returned an unexpected contract')
+  }
+  return Object.freeze({
+    compilations: packagedNodeApiModules.length,
+    optionRejections: 1,
+    invocations: packagedNodeApiModules.length + 1,
+  })
+}
+
 function nodeOptionsRequire(filename) {
   if (filename.includes('\0') || filename.includes('"')) fail('preload path cannot be represented safely in NODE_OPTIONS')
   return `--require="${filename.replaceAll('\\', '/')}"`
@@ -584,7 +1024,7 @@ export function validateNativeTargetEvidence(evidence) {
     ],
     'native target evidence',
   )
-  if (evidence.schemaVersion !== 1) fail('native target evidence schema changed')
+  if (evidence.schemaVersion !== 2) fail('native target evidence schema changed')
   if (!/^[0-9a-f]{40}$/.test(evidence.commit)) fail('native target evidence commit is invalid')
   const version = parseReleaseVersion(evidence.version, 'native target evidence version').value
   const policy = nativeSmokeTargets.find(item => item.target === evidence.target)
@@ -654,10 +1094,24 @@ export function validateNativeTargetEvidence(evidence) {
       'nativeSpawns',
       'networkAttempts',
       'deniedProcessAttempts',
+      'nodeApi',
       'entries',
       'bytes',
     ],
     'native target offline package evidence',
+  )
+  exactRecordKeys(
+    evidence.offlineInstalledPackage.nodeApi,
+    [
+      'modules',
+      'compilations',
+      'optionRejections',
+      'tracedInvocations',
+      'nativeSpawns',
+      'networkAttempts',
+      'deniedProcessAttempts',
+    ],
+    'native target offline package Node API evidence',
   )
   if (
     evidence.offlineInstalledPackage.stylesheetCompilations !== nativeTargetLanguages.length
@@ -665,6 +1119,15 @@ export function validateNativeTargetEvidence(evidence) {
     || evidence.offlineInstalledPackage.nativeSpawns !== nativeTargetLanguages.length + 1
     || evidence.offlineInstalledPackage.networkAttempts !== 0
     || evidence.offlineInstalledPackage.deniedProcessAttempts !== 0
+    || !same(evidence.offlineInstalledPackage.nodeApi, {
+      modules: packagedNodeApiModules,
+      compilations: packagedNodeApiModules.length,
+      optionRejections: 1,
+      tracedInvocations: packagedNodeApiModules.length + 1,
+      nativeSpawns: packagedNodeApiModules.length + 1,
+      networkAttempts: 0,
+      deniedProcessAttempts: 0,
+    })
     || !Number.isSafeInteger(evidence.offlineInstalledPackage.entries)
     || evidence.offlineInstalledPackage.entries <= 0
     || evidence.offlineInstalledPackage.entries > maximumInstalledEntries
@@ -705,9 +1168,18 @@ export function nativeTargetEvidence(result, options = {}) {
     networkAttempts: 0,
     deniedProcessAttempts: 0,
   }
+  const expectedNodeApiTrace = {
+    invocations: packagedNodeApiModules.length + 1,
+    nativeSpawns: packagedNodeApiModules.length + 1,
+    networkAttempts: 0,
+    deniedProcessAttempts: 0,
+  }
   if (
     !same(result.directRuntimeTrace, expectedRuntimeTrace)
     || !same(result.offlinePackageRuntimeTrace, expectedRuntimeTrace)
+    || result.offlineNodeApiSmokes !== packagedNodeApiModules.length
+    || result.offlineNodeApiOptionRejections !== 1
+    || !same(result.offlineNodeApiRuntimeTrace, expectedNodeApiTrace)
   ) {
     fail('native target evidence requires the complete process/network trace')
   }
@@ -720,7 +1192,7 @@ export function nativeTargetEvidence(result, options = {}) {
   }
   const assets = releaseAssetsFor(version, policy.target)
   return validateNativeTargetEvidence({
-    schemaVersion: 1,
+    schemaVersion: 2,
     commit: options.commit,
     version,
     target: policy.target,
@@ -752,6 +1224,15 @@ export function nativeTargetEvidence(result, options = {}) {
       nativeSpawns: result.offlinePackageRuntimeTrace.nativeSpawns,
       networkAttempts: result.offlinePackageRuntimeTrace.networkAttempts,
       deniedProcessAttempts: result.offlinePackageRuntimeTrace.deniedProcessAttempts,
+      nodeApi: {
+        modules: [...packagedNodeApiModules],
+        compilations: result.offlineNodeApiSmokes,
+        optionRejections: result.offlineNodeApiOptionRejections,
+        tracedInvocations: result.offlineNodeApiRuntimeTrace.invocations,
+        nativeSpawns: result.offlineNodeApiRuntimeTrace.nativeSpawns,
+        networkAttempts: result.offlineNodeApiRuntimeTrace.networkAttempts,
+        deniedProcessAttempts: result.offlineNodeApiRuntimeTrace.deniedProcessAttempts,
+      },
       entries: result.installedEntries,
       bytes: result.installedBytes,
     },
@@ -847,13 +1328,24 @@ export function smokeReleaseArtifact(options) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-native-release-smoke-'))
   try {
     const archiveReader = archiveExecutable()
-    const listing = child(archiveReader, ['-tf', archive], { cwd: temporary, label: 'release archive listing' })
+    const archiveEnvironment = archiveProcessEnvironment()
+    const listing = child(archiveReader, ['-tf', archive], {
+      cwd: temporary,
+      env: archiveEnvironment,
+      killSignal: 'SIGKILL',
+      label: 'release archive listing',
+    })
     if (listing.stdout.replaceAll('\r\n', '\n') !== `${policy.binaryName}\n` || listing.stderr !== '') {
       fail(`release archive must contain exactly ${policy.binaryName}`)
     }
     const directDirectory = path.join(temporary, 'direct')
     fs.mkdirSync(directDirectory)
-    child(archiveReader, ['-xf', archive, '-C', directDirectory], { cwd: temporary, label: 'release archive extraction' })
+    child(archiveReader, ['-xf', archive, '-C', directDirectory], {
+      cwd: temporary,
+      env: archiveEnvironment,
+      killSignal: 'SIGKILL',
+      label: 'release archive extraction',
+    })
     const directBinary = confinedRegularFile(directDirectory, policy.binaryName, 'direct archive binary', maximumBinaryBytes)
     if (hashFile(directBinary) !== hashFile(binary)) fail('direct archive binary differs from the release binary')
     if (process.platform !== 'win32') fs.chmodSync(directBinary, 0o755)
@@ -886,8 +1378,6 @@ export function smokeReleaseArtifact(options) {
     )
     const directTrace = validateRuntimeTrace(directRuntimeTrace, 6, 'direct archive runtime trace')
 
-    const packDirectory = path.join(temporary, 'pack')
-    fs.mkdirSync(packDirectory)
     const npmEnvironment = {
       ...process.env,
       npm_config_audit: 'false',
@@ -895,15 +1385,35 @@ export function smokeReleaseArtifact(options) {
       npm_config_fund: 'false',
       npm_config_update_notifier: 'false',
     }
-    const packed = runNpm([
-      'pack', root,
-      '--ignore-scripts',
-      '--json',
-      '--pack-destination', packDirectory,
-    ], { cwd: temporary, env: npmEnvironment, label: 'npm pack smoke' })
-    const packageName = validatePackageInventory(packed, version)
-    const packageArchive = path.join(packDirectory, packageName)
-    confinedRegularFile(packDirectory, packageName, 'npm package archive', 2 * 1024 * 1024)
+    let packageName
+    let packageArchive
+    if (options.npmPackage === undefined) {
+      const packDirectory = path.join(temporary, 'pack')
+      fs.mkdirSync(packDirectory)
+      const developmentPackage = stageDevelopmentPackage(
+        root,
+        path.join(temporary, 'development-package'),
+        policy.target,
+        hashFile(archive),
+      )
+      const packed = runNpm([
+        'pack', developmentPackage,
+        '--ignore-scripts',
+        '--json',
+        '--pack-destination', packDirectory,
+      ], { cwd: temporary, env: npmEnvironment, label: 'npm pack smoke' })
+      packageName = validatePackageInventory(packed, version)
+      packageArchive = path.join(packDirectory, packageName)
+      confinedRegularFile(packDirectory, packageName, 'npm package archive', 2 * 1024 * 1024)
+    } else {
+      const inspected = inspectNpmPackageArchive(
+        options.npmPackage,
+        version,
+        path.join(root, 'package.json'),
+      )
+      packageName = inspected.filename
+      packageArchive = options.npmPackage
+    }
 
     const warmConsumer = path.join(temporary, 'lifecycle-disabled-consumer')
     fs.mkdirSync(warmConsumer)
@@ -929,6 +1439,7 @@ export function smokeReleaseArtifact(options) {
       ...releaseSmokeEnvironment,
       ...npmEnvironment,
       NODE_OPTIONS: nodeOptionsRequire(preload),
+      npm_config_script_shell: lifecycleShellExecutable(),
     }
     runNpm([
       'install', packageArchive,
@@ -973,6 +1484,17 @@ export function smokeReleaseArtifact(options) {
       'offline npm wrapper',
     )
     const offlineTrace = validateRuntimeTrace(offlineRuntimeTrace, 6, 'offline package runtime trace')
+    const nodeApiRuntimeTrace = createRuntimeTrace(temporary, 'node-api-runtime-trace')
+    const nodeApiEnvironment = runtimeTraceEnvironment({
+      ...installEnvironment,
+      npm_config_offline: 'true',
+    }, preload, temporary, nodeApiRuntimeTrace, installedBinary)
+    const nodeApiSmokes = checkInstalledNodeApis(consumer, nodeApiEnvironment)
+    const nodeApiTrace = validateRuntimeTrace(
+      nodeApiRuntimeTrace,
+      nodeApiSmokes.invocations,
+      'offline package Node API runtime trace',
+    )
     const installed = measureInstalledTree(path.join(consumer, 'node_modules'))
 
     return {
@@ -987,8 +1509,12 @@ export function smokeReleaseArtifact(options) {
       offlinePackageStylesheetSmokes: 1 + offlineNativeSmokes,
       directRuntimeTraces: directTrace.invocations,
       offlinePackageRuntimeTraces: offlineTrace.invocations,
+      offlineNodeApiSmokes: nodeApiSmokes.compilations,
+      offlineNodeApiOptionRejections: nodeApiSmokes.optionRejections,
+      offlineNodeApiRuntimeTraces: nodeApiTrace.invocations,
       directRuntimeTrace: directTrace,
       offlinePackageRuntimeTrace: offlineTrace,
+      offlineNodeApiRuntimeTrace: nodeApiTrace,
     }
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -1009,7 +1535,7 @@ function main() {
       writeNativeTargetEvidence(repositoryRoot, options.evidence, evidence)
     }
     process.stdout.write(
-      `Native release smoke passed for ${result.target}: direct archive compiled ${result.directStylesheetSmokes} languages under ${result.directRuntimeTraces} process/network traces, lifecycle-disabled clean install, offline postinstall compiled ${result.offlinePackageStylesheetSmokes} languages under ${result.offlinePackageRuntimeTraces} process/network traces, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
+      `Native release smoke passed for ${result.target}: direct archive compiled ${result.directStylesheetSmokes} languages under ${result.directRuntimeTraces} process/network traces, lifecycle-disabled clean install, offline postinstall compiled ${result.offlinePackageStylesheetSmokes} languages under ${result.offlinePackageRuntimeTraces} process/network traces, packaged CommonJS/ESM APIs passed ${result.offlineNodeApiSmokes} compilations and ${result.offlineNodeApiOptionRejections} option rejection under ${result.offlineNodeApiRuntimeTraces} process/network traces, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
     )
   } catch (error) {
     process.stderr.write(`${error.message}\n`)

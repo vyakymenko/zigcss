@@ -9,6 +9,7 @@
 const std = @import("std");
 const native_compiler = @import("preprocessor/compiler.zig");
 const native_resolver = @import("preprocessor/resolver.zig");
+const target_query = @import("prefixing/target_query.zig");
 
 pub const max_entry_input_bytes: usize = 10 * 1024 * 1024;
 
@@ -23,6 +24,8 @@ pub const OutputFormat = enum {
     pretty,
     minified,
 };
+
+pub const TargetQuery = target_query.Query;
 
 pub const DiagnosticSeverity = enum {
     err,
@@ -120,6 +123,14 @@ pub const Options = struct {
     /// Compose the core-emitter and native-frontend mapping stages into one
     /// result-owned Source Map v3 document over original sources.
     source_map: bool = false,
+    /// Apply the closed verified CSS optimizer preset to generated CSS before
+    /// the native transaction commits. Source maps remain incompatible with
+    /// fixed-point reparse rounds.
+    optimize: bool = false,
+    /// Apply the verified eight-feature target-prefix pass after any fixed-point
+    /// optimization. Requires one borrowed canonical `targets` query.
+    prefix: bool = false,
+    targets: ?*const TargetQuery = null,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -185,11 +196,11 @@ const WatchState = struct {
         for (dependencies, 0..) |dependency, index| {
             const url = try allocator.dupe(u8, dependency.url);
             errdefer allocator.free(url);
-            const bytes = dependencySourceBytes(compiled, dependency.url) orelse
+            const source_file = compiled.sourceTable().findByName(dependency.url) orelse
                 return error.CompilationFailed;
             items[index] = .{
                 .url = url,
-                .fingerprint = .{ .contents = contentHash(bytes) },
+                .fingerprint = .{ .contents = contentHash(source_file.bytes) },
             };
             initialized += 1;
         }
@@ -229,10 +240,7 @@ const WatchState = struct {
 
         var changed = false;
         for (self.items) |*item| {
-            var loaded = session.load(item.url, .{
-                .kind = .reference,
-                .ancestry = &.{},
-            }) catch |err| switch (err) {
+            const hash = session.contentFingerprint(item.url) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
                     const next = WatchFingerprint{ .unavailable = err };
@@ -243,8 +251,7 @@ const WatchState = struct {
                     continue;
                 },
             };
-            defer loaded.deinit();
-            const next = WatchFingerprint{ .contents = contentHash(loaded.contents) };
+            const next = WatchFingerprint{ .contents = hash };
             if (!item.fingerprint.eql(next)) {
                 item.fingerprint = next;
                 changed = true;
@@ -258,18 +265,6 @@ fn contentHash(bytes: []const u8) u64 {
     var hasher = std.hash.XxHash64.init(0);
     hasher.update(bytes);
     return hasher.final();
-}
-
-fn dependencySourceBytes(
-    compiled: *const native_compiler.Result,
-    dependency_url: []const u8,
-) ?[]const u8 {
-    const sources = compiled.sourceTable();
-    for (0..sources.count()) |index| {
-        const source = sources.get(.{ .value = @intCast(index) }) catch return null;
-        if (std.mem.eql(u8, source.name, dependency_url)) return source.bytes;
-    }
-    return null;
 }
 
 fn mapWatchPathError(err: native_resolver.Error) Error {
@@ -342,6 +337,13 @@ pub fn compile(
     input: []const u8,
     options: Options,
 ) Error!CompileResult {
+    if ((options.source_map and options.optimize) or
+        (options.prefix and options.targets == null) or
+        (!options.prefix and options.targets != null) or
+        (options.targets != null and !options.targets.?.validate()))
+    {
+        return error.InvalidOptions;
+    }
     if (options.max_input_bytes == 0 or
         options.max_input_bytes > max_entry_input_bytes)
     {
@@ -366,6 +368,9 @@ pub fn compile(
             .minified => .minified,
         },
         .source_map = options.source_map,
+        .optimize = options.optimize,
+        .prefix = options.prefix,
+        .targets = options.targets,
         .limits = .{
             .sass_parser = .{ .lexer = .{ .max_input_bytes = options.max_input_bytes } },
             .less_parser = .{ .lexer = .{ .max_input_bytes = options.max_input_bytes } },
@@ -402,7 +407,10 @@ pub fn compile(
             else
                 null;
             errdefer if (watch_state) |*state| state.deinit();
-            const css = try allocator.dupe(u8, compiled.css());
+            // Every fallible clone/map/watch operation is complete. Transfer
+            // the validated core emitter buffer instead of copying all CSS a
+            // second time; `compiled.deinit()` sees an empty moved-from slice.
+            const css = compiled.takeCss();
             break :success .{
                 .result_allocator = allocator,
                 .css = css,
@@ -617,7 +625,7 @@ fn mapCompileError(err: native_compiler.Error) Error {
     if (err == error.OutOfMemory) return error.OutOfMemory;
     if (err == error.InvalidRoot) return error.InvalidRoot;
     if (err == error.PathEscape) return error.PathEscape;
-    if (err == error.InvalidLimits) return error.InvalidOptions;
+    if (err == error.InvalidLimits or err == error.InvalidOptions) return error.InvalidOptions;
     const name = @errorName(err);
     if (std.mem.endsWith(u8, name, "LimitExceeded") or
         std.mem.eql(u8, name, "SourceTooLarge"))

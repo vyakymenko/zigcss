@@ -58,6 +58,7 @@ describe('public recovery claims', () => {
 
     expect(published).toEqual([
       'guide/build-from-source.md',
+      'guide/builder-integrations.md',
       'guide/css-compatibility.md',
       'guide/css-modules.md',
       'guide/format-compatibility.md',

@@ -1,0 +1,9 @@
+**
+!Dockerfile.release
+!package.json
+!install.js
+!native-integrity.json
+!scripts
+!scripts/prepare-release-container.mjs
+!release-assets
+!release-assets/**

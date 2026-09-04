@@ -4,6 +4,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { nativeTargetContract } from './native-target-contract.mjs'
+import {
+  manifestPackageFiles,
+  packageBins,
+  packageExports,
+  packageTypesVersions,
+} from './validate-preprocessor-package.mjs'
+import {
+  compareReleaseVersionPrecedence,
+  parseReleaseVersion,
+} from './validate-release-version.mjs'
 import { validateBuildTestGraph } from './validate-workflows.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
@@ -48,7 +58,7 @@ const expectedReferenceOracles = Object.freeze([
   Object.freeze({
     id: 'less',
     package: 'less',
-    version: '4.6.7',
+    version: '4.9.0',
     license: 'Apache-2.0',
     adapters: Object.freeze(['less']),
     currentReferencePackage: false,
@@ -242,7 +252,8 @@ const expectedLessConformance = Object.freeze({
   oracle: Object.freeze({
     id: 'less',
     package: 'less',
-    version: '4.6.7',
+    developmentVersion: '4.9.0',
+    baselineVersion: '4.6.7',
     selection: 'tests/preprocessors/less/corpus/selection.json',
     caseCount: 88,
   }),
@@ -440,12 +451,15 @@ const expectedProductRouting = Object.freeze({
       'zig-api',
       'binary-cli',
       'javascript-wrapper',
+      'programmatic-node-api',
       'files-and-stdin',
       'batch',
       'watch',
       'parallel',
       'diagnostics-and-dependencies',
       'source-maps',
+      'verified-optimizer',
+      'verified-target-prefix',
     ]),
     providerProcesses: 0,
   }),
@@ -489,6 +503,24 @@ const expectedProductRouting = Object.freeze({
       evidenceTests: Object.freeze([
         'javascript wrapper routes the finite native syntax set through the installed binary',
         'javascript wrapper keeps native routing explicit and ungated preprocessors fail closed',
+      ]),
+    }),
+    Object.freeze({
+      id: 'programmatic-node-api',
+      releaseGapFamily: 'native-programmatic-node-api-routing',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'programmatic Node API exposes matching CommonJS and real ESM surfaces',
+        'binary hidden Node route dispatches one typed bounded frame',
+        'detectSyntax owns the closed five-syntax extension set',
+        'string API routes all five syntaxes through one exact framed request',
+        'file APIs infer all five syntaxes and default roots to the entry directory',
+        'request normalization carries maps, dependencies, optimizer, prefix query, and roots',
+        'source parents and explicit roots are canonical across directory symlinks',
+        'validation is closed and rejects unsafe combinations before process launch',
+        'compile failures expose immutable diagnostics and never partial CSS',
+        'malformed, truncated, mismatched, oversized, and invalid typed responses fail closed',
+        'async API enforces timeout and AbortSignal termination',
       ]),
     }),
     Object.freeze({
@@ -551,7 +583,34 @@ const expectedProductRouting = Object.freeze({
         'external Zig API composes imported Unicode source positions without intermediate leaks',
         'binary CLI routes composed native source maps through files stdin and parallel batches',
         'binary CLI native watch atomically replaces CSS and its composed source map',
+        'binary CLI routes stable CSS source maps through files stdin and parallel batches',
+        'binary CLI stable CSS watch atomically replaces CSS and its inline source map',
         'javascript wrapper routes the finite native syntax set through the installed binary',
+      ]),
+    }),
+    Object.freeze({
+      id: 'verified-optimizer',
+      releaseGapFamily: 'native-verified-optimizer-routing',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'native compiler applies the closed optimizer after every private frontend',
+        'external Zig API applies the verified optimizer to the finite native syntax set',
+        'binary CLI applies the verified optimizer to native files stdin and parallel batches',
+        'binary CLI native optimizer watch commits only byte-stable output',
+        'binary CLI rejects native maps plus optimizer before reading any syntax',
+        'javascript wrapper forwards native optimizer requests unchanged',
+      ]),
+    }),
+    Object.freeze({
+      id: 'verified-target-prefix',
+      releaseGapFamily: 'native-verified-target-prefix-routing',
+      state: 'verified',
+      evidenceTests: Object.freeze([
+        'native compiler applies verified target prefixing after every private frontend',
+        'external Zig API applies verified target prefixing to the finite native syntax set',
+        'binary CLI applies verified target prefixing to native files stdin maps optimize and parallel batches',
+        'binary CLI native target prefix watch retains output recovers and shares one immutable query',
+        'javascript wrapper forwards verified target prefix requests unchanged',
       ]),
     }),
   ]),
@@ -578,7 +637,7 @@ const expectedPackageMigration = Object.freeze({
       state: 'verified',
       evidenceTests: Object.freeze([
         'native npm package has zero production and optional dependencies',
-        'native npm archive excludes provider host and JavaScript API bytes',
+        'native npm archive includes only the bounded runtime declaration metadata and trust inventory',
         'javascript wrapper cannot reach the provider host',
       ]),
     }),
@@ -623,6 +682,9 @@ const expectedPackageMigration = Object.freeze({
       state: 'verified',
       evidenceTests: Object.freeze([
         'npm installer derives exactly the release workflow asset contract',
+        'npm package binds every native archive to one exact version and digest inventory',
+        'npm installer rejects same-origin checksum substitution before downloading an archive',
+        'npm installer reads its trust manifest only from a bounded regular stable UTF-8 file',
         'npm installer independently validates all five executable target headers',
         'npm package runs one installer lifecycle and CI gates it before dependency installation',
       ]),
@@ -918,7 +980,7 @@ const expectedNativeExampleRows = Object.freeze([
 const expectedNativeCapabilityOracles = Object.freeze({
   scss: 'Dart Sass 1.101.0 development oracle',
   sass: 'Dart Sass 1.101.0 development oracle',
-  less: 'Less 4.6.7 development oracle',
+  less: 'Less 4.9.0 development oracle over frozen 4.6.7 baseline',
   stylus: 'Stylus 0.64.0 development oracle',
 })
 
@@ -952,8 +1014,7 @@ const expectedDifferentialAdapterSources = Object.freeze({
 })
 
 const expectedReferenceDevelopmentDependencies = Object.freeze({
-  'image-size': '0.5.5',
-  less: '4.6.7',
+  less: '4.9.0',
   sass: '1.101.0',
   stylus: '0.64.0',
 })
@@ -1463,6 +1524,15 @@ const expectedImplementations = Object.freeze([
       'pre-graduation-native-batch',
       'deterministic-native-batch',
       'compile-before-write-native-batch',
+      'verified-fixed-point-optimizer',
+      'all-native-syntax-optimizer',
+      'optimizer-map-fail-fast',
+      'optimized-watch-and-batch',
+      'verified-target-prefix',
+      'strict-explicit-target-query',
+      'all-native-syntax-prefix',
+      'prefix-map-and-optimizer-composition',
+      'prefixed-watch-and-batch',
     ]),
     nativeSources: Object.freeze([
       'src/preprocessor/compiler.zig',
@@ -1577,8 +1647,9 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   )
   requireText(home, 'STABLE RELEASE · VERIFIED', 'website stable publication boundary')
   requireText(home, 'The providers are ', 'website development-oracle heading')
-  requireText(home, 'REL-010 · 0.6.0 · 25 signed assets · npm latest', 'website stable publication evidence')
+  requireText(home, 'REL-010 · 0.6.0 · 15 attested subjects + 10 bundles · npm latest', 'website stable publication evidence')
   requireText(home, 'CLI · JS wrapper · Zig API', 'website thin wrapper interface claim')
+  requireText(home, 'Next.js · Turbopack + Webpack', 'website pinned Next.js host proof inventory')
   requireText(
     gettingStarted,
     'The source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig frontends and one strict output boundary.',
@@ -1586,7 +1657,7 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   )
   requireText(
     gettingStarted,
-    'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles; they do not run during compilation.',
+    'Dart Sass 1.101.0, Less 4.9.0, and Stylus 0.64.0 remain development-only reference oracles; Less forward-checks the frozen 4.6.7 native baseline, and none of them runs during compilation.',
     'website development-only oracle boundary',
   )
   requireText(
@@ -1612,7 +1683,7 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   requireText(showcase, '{selected.frontend}', 'website native lab frontend label')
   requireText(
     features,
-    'The compatibility table below records the native-graduated contract promoted by REL-010; the non-prerelease GitHub Release and npm latest publication are verified, while the immutable RC remains on next.',
+    'The table mixes explicitly labeled published-stable rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; rows whose contract says current, source-checkout, or Unreleased remain Unreleased even after their gates pass.',
     'website published compatibility boundary',
   )
   requireText(playground, 'Playground unavailable', 'website public compile service boundary')
@@ -1663,13 +1734,18 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   for (const [id, oracle] of [
     ['scss', 'Dart Sass 1.101.0'],
     ['sass', 'Dart Sass 1.101.0'],
-    ['less', 'Less 4.6.7'],
+    ['less', 'Less 4.9.0'],
     ['stylus', 'Stylus 0.64.0'],
   ]) {
     const example = formatExamples.find(row => row.id === id)
     requireText(example?.note ?? '', 'development-only', `website ${id} lab oracle role`)
     requireText(example?.note ?? '', oracle, `website ${id} lab oracle identity`)
   }
+  requireText(
+    formatExamples.find(row => row.id === 'less')?.note ?? '',
+    'frozen 4.6.7 conformance baseline',
+    'website Less lab frozen baseline identity',
+  )
 
   for (const [needle, label] of [
     ["import { spawnSync } from 'node:child_process'", 'website lab native process harness'],
@@ -1679,7 +1755,9 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
     ],
     ['assert.equal(result.status, 0', 'website lab native exit evidence'],
     ['assert.equal(result.stdout, example.output, example.id)', 'website lab exact output evidence'],
-    ['assert.doesNotMatch(result.stderr, /experimental release candidate/)', 'website stable warning boundary'],
+    ["const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()", 'website prerelease version identity'],
+    ['const prereleaseNotice = `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\\n`', 'website prerelease warning identity'],
+    ['assert.equal(result.stderr, prereleaseNotice)', 'website prerelease warning boundary'],
   ]) {
     requireText(siteExamplesTests, needle, label)
   }
@@ -1715,6 +1793,7 @@ function validateCapabilityGraduation(
   formatMatrix,
   capabilityMetadata,
   changelog,
+  buildWorkflow,
 ) {
   if (!same(graduation, expectedCapabilityGraduation)) {
     fail('capability graduation contract drifted')
@@ -1729,8 +1808,13 @@ function validateCapabilityGraduation(
   )
   requireText(
     help,
-    '--source-map             Embed a composed map for a native stylesheet syntax',
+    '--source-map             Embed a deterministic inline source map',
     'stable native source-map help',
+  )
+  requireText(
+    help,
+    '--depfile <path>         Write one bounded Make/Ninja dependency file',
+    'stable native depfile help',
   )
   for (const forbidden of ['--experimental-native', 'gated native syntax', 'pre-graduation']) {
     if (help.includes(forbidden)) fail(`native binary help retains pre-graduation option ${JSON.stringify(forbidden)}`)
@@ -1751,6 +1835,8 @@ function validateCapabilityGraduation(
     'ungated stable native syntax evidence',
   )
   requireText(evidence, '--syntax <syntax>        Select css (default), scss, sass, less, or stylus', 'stable help evidence')
+  requireText(evidence, '--source-map             Embed a deterministic inline source map', 'stable source-map help evidence')
+  requireText(evidence, '--depfile <path>         Write one bounded Make/Ninja dependency file', 'stable depfile help evidence')
 
   for (const [needle, label] of [
     [
@@ -1758,8 +1844,12 @@ function validateCapabilityGraduation(
       'README native five-language source snapshot',
     ],
     [
-      'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles.',
+      'Dart Sass 1.101.0 and Stylus 0.64.0 remain exact development-only reference oracles.',
       'README development-only oracle boundary',
+    ],
+    [
+      'Less 4.9.0 is the current development oracle over the frozen 4.6.7 native conformance baseline; advancing that forward oracle does not regraduate or rewrite the published native behavior.',
+      'README Less forward-oracle boundary',
     ],
     [
       'zero `dependencies` and zero `optionalDependencies`',
@@ -1794,8 +1884,60 @@ function validateCapabilityGraduation(
       'README native plugin boundary',
     ],
     [
+      '`--autoprefix` and `--browsers` require each other.',
+      'README explicit target-query pairing',
+    ],
+    [
+      'The pass covers a reviewed eight-feature subset rather than general autoprefixing.',
+      'README bounded target-prefix claim',
+    ],
+    [
       'The package JavaScript wrapper only locates and invokes the installed native binary; it does not host language semantics.',
       'README thin JavaScript wrapper boundary',
+    ],
+    [
+      'In a direct checkout with regular `build.zig` and `src/node_protocol.zig` markers, it accepts only a regular, non-symlink `zig-out/bin/zigcss` whose real path stays inside that checkout',
+      'README confined source-checkout JavaScript wrapper boundary',
+    ],
+    [
+      'The current `Unreleased` source package also exports a typed programmatic Node.js API from its package root for both CommonJS and real ESM consumers.',
+      'README programmatic Node API module boundary',
+    ],
+    [
+      '`compile`, `compileSync`, `compileFile`, `compileFileSync`, `detectSyntax`, and `ZigCssCompileError`',
+      'README programmatic Node API export inventory',
+    ],
+    [
+      'The API deliberately provides no watch mode, incremental cache, plugin execution, provider fallback, or private transport access.',
+      'README programmatic Node API negative boundary',
+    ],
+    [
+      'The current `Unreleased` source package adds explicit, typed adapter subpaths on top of the programmatic compiler.',
+      'README explicit build-tool adapter boundary',
+    ],
+    [
+      'preserve authored CSS imports for the downstream CSS layer',
+      'README downstream CSS ownership boundary',
+    ],
+    [
+      'reuses only `zigcss/webpack` for one global `app/styles.scss` entry',
+      'README bounded Next.js Turbopack reuse boundary',
+    ],
+    [
+      'The separate `next build --webpack` proof uses one path-confined `enforce: \'pre\'` rule',
+      'README bounded Next.js Webpack reuse boundary',
+    ],
+    [
+      'Next.js/Webpack does not preserve the original ZigCSS source-map chain in the final stylesheet, so no source-map delivery claim is made.',
+      'README Next.js Webpack source-map boundary',
+    ],
+    [
+      'routes one external `.module.scss` file through `zigcss/vite`',
+      'README bounded SvelteKit Vite reuse boundary',
+    ],
+    [
+      'No PostCSS adapter is shipped',
+      'README PostCSS parser-order boundary',
     ],
     ['`nativeReleaseReady: true`', 'README release-ready native interlock'],
     [
@@ -1873,6 +2015,9 @@ function validateCapabilityGraduation(
     ['var result = try native.compile(', 'native Zig API example compile call'],
     ['.root_paths = &.{root}', 'native Zig API example confined root'],
     ['.format = .minified', 'native Zig API example deterministic format'],
+    ['zigcss.prefixing.target_query.parse(', 'native Zig API example strict target query'],
+    ['.prefix = true', 'native Zig API example verified target prefix'],
+    ['.targets = &targets', 'native Zig API example borrowed target query'],
   ]) {
     requireText(nativeApiExample, needle, label)
   }
@@ -1939,6 +2084,178 @@ function validateCapabilityGraduation(
     'Immutable tag `v0.6.0-rc.2` produced one GitHub prerelease with five architecture-matched archives and 25 exact assets',
     'capability metadata published release terminal',
   )
+  const nodeApi = capabilities.get('node-api')
+  if (nodeApi?.status !== 'Experimental, package-tested' || nodeApi.statusKind !== 'experimental') {
+    fail('capability metadata programmatic Node API status drifted')
+  }
+  for (const needle of [
+    'CommonJS and ESM',
+    '`compile`',
+    '`compileSync`',
+    '`compileFile`',
+    '`compileFileSync`',
+    '`detectSyntax`',
+    '`ZigCssCompileError`',
+    'all five syntaxes',
+    'canonicalizes source/root paths',
+    'parsed maps',
+    'optimizer',
+    'target-prefix',
+    '`AbortSignal`',
+    'zero production dependencies',
+    'strict TypeScript 7.0.2 consumer',
+    'lifecycle-disabled offline local-tarball matrix',
+    "npm, pnpm 11.25.0, Yarn Classic 1.22.22, Yarn Modern 4.9.4 in both `node-modules` and default Plug'n'Play modes, and Bun 1.4.0",
+    'All six execution variants',
+    'The five `node_modules` variants use ordinary CommonJS, ESM, and declaration package resolution',
+    "The default-PnP route uses Yarn's loader for CommonJS and ESM export resolution",
+    'verifies exact import/require declaration bytes',
+    'path-maps those files for a condition-specific strict compile',
+    'exact unpatched TypeScript 7.0.2 without a Yarn SDK or patch',
+    '`TS2307` for no-paths PnP package resolution',
+    'native TypeScript PnP resolution is not claimed',
+    "[Yarn's official SDK guidance](https://yarnpkg.com/getting-started/editor-sdks)",
+    '`preferUnplugged`',
+    'no `node_modules`',
+    'confined Yarn and Corepack state',
+    'release-independent local-fixture recovery',
+  ]) {
+    requireText(nodeApi.behavior, needle, 'capability metadata programmatic Node API')
+  }
+  if (!same(nodeApi.evidence, ['node-api', 'preprocessor-product', 'preprocessor-package', 'package-managers', 'typescript-surface'])) {
+    fail('capability metadata programmatic Node API evidence drifted')
+  }
+  const buildToolAdapters = capabilities.get('alternate-ecosystem-formats')
+  if (
+    buildToolAdapters?.status !== 'Experimental, adapter-tested' ||
+    buildToolAdapters.statusKind !== 'experimental'
+  ) {
+    fail('capability metadata build-tool adapter status drifted')
+  }
+  for (const needle of [
+    'Vite, Rollup, esbuild, and Bun plugins',
+    'Webpack/Rspack raw loader',
+    'Deterministic protocol-fixture tests',
+    'After the native Debug suite builds `zig-out/bin/zigcss`',
+    'real Vite, Rollup, esbuild, pinned Bun 1.4.0, Webpack 5.110.2, and Rspack 2.2.2 builds all compile SCSS through that exact current-checkout binary',
+    'Bun deliberately makes no native-import watch claim',
+    'pinned Next.js 16.3.4 Turbopack build reuses only `zigcss/webpack`',
+    'Next.js 16.2+ module types are required',
+    'does not claim CSS Modules, indented Sass, Less, Stylus, arbitrary SCSS globs',
+    'a `zigcss/turbopack` export, a general Turbopack plugin, or wider framework support',
+    'pinned SvelteKit 2.70.3, Svelte 5.57.0, and Vite 8.2.2 source-checkout gate',
+    'external `.module.scss` file through `zigcss/vite`',
+    'does not claim embedded `<style lang="scss">` blocks, Svelte preprocessors, framework HMR or watch invalidation',
+    'real Parcel 2.16.4 local-transformer example',
+    "Parcel's naming rule prevents a `zigcss/parcel` export",
+    'Exact Next.js Webpack, Astro, and Nuxt host proofs are tracked as separate current-source capability rows',
+    'TypeScript 7.0.2 strictly compiles every public adapter subpath',
+    'Bazel, Nx, other framework adapters',
+  ]) {
+    requireText(buildToolAdapters.behavior, needle, 'capability metadata build-tool adapters')
+  }
+  if (!same(buildToolAdapters.evidence, ['bundler-adapters', 'turbopack-example', 'sveltekit-example', 'parcel-example', 'node-api', 'typescript-surface', 'documentation'])) {
+    fail('capability metadata build-tool adapter evidence drifted')
+  }
+  const nextWebpackHost = capabilities.get('next-webpack-host-example')
+  if (nextWebpackHost?.status !== 'Experimental, pinned host-tested' || nextWebpackHost.statusKind !== 'experimental') {
+    fail('capability metadata Next.js Webpack host status drifted')
+  }
+  for (const needle of [
+    'Next.js 16.3.4 current-source Webpack gate',
+    '`zigcss/webpack`',
+    "exact-project-file `enforce: 'pre'` rule",
+    'exact Sass 1.101.0 remains only the downstream parser',
+    'repeats `npm ci` offline',
+    'blocking public Node network entry points',
+    'exact Node 22.22.0 CI host',
+    'canonical staged ZigCSS `--internal-node-v1` invocation',
+    'dependency-only warm rebuild',
+    'unchanged persistent-cache hit with zero native invocations',
+    'not an OS sandbox',
+    'invokes native ZigCSS again',
+    'source-map delivery is not claimed',
+    'not stable 0.6.0 adapter delivery',
+    'development HMR or watch invalidation',
+    'a `zigcss/next` export',
+    'other Next.js/Webpack versions',
+  ]) requireText(nextWebpackHost.behavior, needle, 'capability metadata Next.js Webpack host')
+  if (!same(nextWebpackHost.evidence, ['next-webpack-example', 'bundler-adapters', 'node-api', 'documentation'])) {
+    fail('capability metadata Next.js Webpack host evidence drifted')
+  }
+  const astroHost = capabilities.get('astro-host-example')
+  if (astroHost?.status !== 'Experimental, pinned host-tested' || astroHost.statusKind !== 'experimental') {
+    fail('capability metadata Astro host status drifted')
+  }
+  for (const needle of [
+    'Astro 7.2.10 current-source gate',
+    '`zigcss/vite`',
+    'cached-offline, deny-network static production build',
+    'same scoped binding in rendered HTML and emitted JavaScript',
+    'one native Sass partial',
+    'one fingerprinted SVG asset',
+    'exact composed source-map content',
+    'not stable 0.6.0 adapter delivery',
+    '`zigcss/astro` export',
+  ]) requireText(astroHost.behavior, needle, 'capability metadata Astro host')
+  if (!same(astroHost.evidence, ['astro-example', 'bundler-adapters', 'node-api', 'documentation'])) {
+    fail('capability metadata Astro host evidence drifted')
+  }
+  const nuxtHost = capabilities.get('nuxt-host-example')
+  if (nuxtHost?.status !== 'Experimental, pinned host-tested' || nuxtHost.statusKind !== 'experimental') {
+    fail('capability metadata Nuxt host status drifted')
+  }
+  for (const needle of [
+    'Nuxt 4.5.2 current-source gate',
+    '`zigcss/vite`',
+    'deny-network production build',
+    'client bundle, Nitro server bundle, and prerender output',
+    'one native Sass partial',
+    'one emitted SVG asset',
+    "Nuxt's intermediate Vite output",
+    'public output retains client JavaScript maps',
+    'no public production CSS map or runtime SSR request is claimed',
+    'not stable 0.6.0 adapter delivery',
+    '`zigcss/nuxt` export',
+  ]) requireText(nuxtHost.behavior, needle, 'capability metadata Nuxt host')
+  if (!same(nuxtHost.evidence, ['nuxt-example', 'bundler-adapters', 'node-api', 'documentation'])) {
+    fail('capability metadata Nuxt host evidence drifted')
+  }
+  requireText(
+    buildWorkflow,
+    'run: npm run test:bundler-adapters',
+    'build workflow builder-adapter evidence gate',
+  )
+  requireText(
+    buildWorkflow,
+    'run: npm run test:turbopack-example',
+    'build workflow Next.js Turbopack evidence gate',
+  )
+  requireText(
+    buildWorkflow,
+    'run: npm run test:next-webpack-example',
+    'build workflow Next.js Webpack evidence gate',
+  )
+  requireText(
+    buildWorkflow,
+    'run: npm run test:sveltekit-example',
+    'build workflow SvelteKit evidence gate',
+  )
+  requireText(
+    buildWorkflow,
+    'run: npm run test:astro-example',
+    'build workflow Astro evidence gate',
+  )
+  requireText(
+    buildWorkflow,
+    'run: npm run test:nuxt-example',
+    'build workflow Nuxt evidence gate',
+  )
+  requireText(
+    buildWorkflow,
+    'run: npm run test:parcel-example',
+    'build workflow Parcel local-transformer evidence gate',
+  )
 
   for (const [document, label, needles] of [
     [
@@ -1948,6 +2265,24 @@ function validateCapabilityGraduation(
         'The four preprocessor rows are `native-graduated` on the published stable release',
         'These exact providers are development-only reference oracles.',
         'they do not run during compilation',
+        'The current `Unreleased` package-root Node.js API exposes the same closed five-syntax set',
+        'Explicit experimental adapters now expose the current-checkout compiler through `zigcss/vite`, `zigcss/rollup`, `zigcss/esbuild`, `zigcss/bun`, `zigcss/webpack`, and `zigcss/rspack`',
+        'These integrations do not add new source languages or imply a published Parcel transformer, framework-specific adapter, Nx executor, Bazel rule, Angular integration, or general framework compatibility.',
+        'A pinned Next.js 16.3.4 Turbopack example reuses only `zigcss/webpack`',
+        'Next.js 16.2+ loader output module types are required',
+        'The same exact host now has a separate Webpack proof with Sass 1.101.0 only as the downstream parser',
+        'cached-offline `next build --webpack` production builds while blocking public Node network entry points',
+        'unchanged zero-native-invocation cache hit',
+        'not an OS sandbox',
+        'The final Webpack stylesheet does not retain the original ZigCSS source-map chain.',
+        'npm run test:next-webpack-example',
+        'A separate pinned SvelteKit 2.70.3/Svelte 5.57.0/Vite 8.2.2 example reuses `zigcss/vite`',
+        'Embedded styles, Svelte preprocessors, framework HMR/watch invalidation',
+        'A pinned Astro 7.2.10 static example registers `zigcss/vite`',
+        'repeats `npm ci` offline, denies network access during the production build',
+        'A pinned Nuxt 4.5.2 example also registers `zigcss/vite`',
+        'no public production CSS map or runtime SSR request is claimed',
+        'No PostCSS adapter is shipped',
         'CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavailable.',
       ],
     ],
@@ -1956,7 +2291,34 @@ function validateCapabilityGraduation(
       'status guide',
       [
         'SCSS, indented Sass, Less, and Stylus route through self-contained native Zig parser/evaluators',
-        'The package JavaScript wrapper only locates and invokes that binary',
+        'The JavaScript command launcher only locates and invokes that binary.',
+        'The current `Unreleased` source package additionally exposes a typed programmatic Node.js API',
+        '## Programmatic Node.js API boundary',
+        'The closed export set is `compile`, `compileSync`, `compileFile`, `compileFileSync`, `detectSyntax`, and `ZigCssCompileError`.',
+        'A string `sourcePath` may name a virtual file, but its parent must exist and is realpath-canonicalized.',
+        'This is a generic compiler API, not an incremental service.',
+        '## Tooling integration boundary',
+        'Webpack and Rspack share one async raw loader with strict rightmost-loader ordering',
+        'The two Next.js modes are deliberately narrower than a framework adapter',
+        'they remain source-checkout-only until a future release ships the current native protocol',
+        'development HMR/watch invalidation',
+        '`zigcss/turbopack` or `zigcss/next` export',
+        'The SvelteKit example is equally narrow',
+        'embedded `<style lang="scss">`, Svelte preprocessors, framework HMR/watch invalidation',
+        'The Astro example claims only one external CSS Module in an exact Astro 7.2.10 static build',
+        'The Nuxt example claims only one external CSS Module in the exact Nuxt 4.5.2 client, Nitro bundle, and prerender build',
+        'Both remain current-source-checkout proofs rather than stable 0.6.0 delivery.',
+        'No PostCSS adapter is shipped',
+        'A separately published Parcel transformer or framework-specific adapter, Bazel rule, Nx executor, and Angular integration remain unclaimed',
+        'A separate pinned Next.js 16.3.4 Webpack gate uses one exact-project-file `enforce: \'pre\'` rule',
+        'blocks public Node network entry points during `next build --webpack`',
+        'unchanged cache hit with zero native invocations',
+        'dependency-only warm rebuild',
+        'the final stylesheet does not retain the original ZigCSS source-map chain',
+        'seven independently locked npm surfaces',
+        'The local Parcel example is an eighth exact package manifest',
+        'it must stay dependency-free and script-free',
+        "The ordinary build workflow's Test job uses exact Node 22.22.0",
         'The explicit `zigcss.experimental_native` namespace admits exactly SCSS, indented Sass, Less, and Stylus.',
         '`NATIVE-009` published candidate `0.6.0-rc.2` is verified on the GitHub prerelease and npm `next` channels',
       ],
@@ -1967,8 +2329,11 @@ function validateCapabilityGraduation(
       [
         'SCSS, indented Sass, Less, and Stylus enter self-contained native Zig parser/evaluators',
         'The root JavaScript launcher only locates and invokes the binary',
-        'Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 are development-only reference oracles.',
-        'They do not run during compilation',
+        'Dart Sass 1.101.0, Less 4.9.0, and Stylus 0.64.0 are development-only reference oracles.',
+        'Less 4.9.0 forward-checks the frozen 4.6.7 native conformance baseline rather than changing the published native contract.',
+        'These providers do not run during compilation',
+        '`--depfile` writes the authored output path as its target',
+        'This does not claim a two-file filesystem transaction.',
         'Matching a development oracle does not grant those extension points implicitly.',
       ],
     ],
@@ -1976,9 +2341,13 @@ function validateCapabilityGraduation(
       buildGuide,
       'build-from-source guide',
       [
-        'Exact Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 providers remain development-only reference oracles',
+        'Exact Dart Sass 1.101.0, Less 4.9.0, and Stylus 0.64.0 providers remain development-only reference oracles',
+        'Less 4.9.0 is a forward oracle over the frozen 4.6.7 native conformance baseline, not a new native graduation.',
         'do not run during compilation',
         'examples/native/styles.styl',
+        'seven exact npm manifest/version-3-lockfile pairs',
+        'one exact dependency-free and script-free manifest whose Parcel toolchain is owned by the root lockfile',
+        "The build workflow's Test job uses exact Node 22.22.0",
       ],
     ],
     [
@@ -1990,6 +2359,11 @@ function validateCapabilityGraduation(
         'one immutable tag workflow produced the verified GitHub prerelease, 25 release assets, and npm `next` package with provenance',
         'remain exact development-only reference oracles and do not run during compilation',
         'zero production dependencies and zero optional dependencies',
+        'Add a typed zero-production-dependency Node.js API at the package root',
+        'Add a private length-framed `zigcss-node-v1` native transport',
+        'Add a bounded Astro source-checkout example',
+        'Add a bounded Nuxt source-checkout example',
+        'Add `--depfile <path>` for one explicit file-to-file compilation.',
         'The former programmatic provider-backed JavaScript preprocessor API is not part of this source contract.',
         'Keep arbitrary preprocessor plugins, custom functions/importers, Less JavaScript, Stylus evaluator hooks, executable project code',
       ],
@@ -2018,7 +2392,7 @@ function validateReleaseGraduation(release, buildWorkflow, releaseWorkflow) {
     ['needs: npm-preflight', 'artifact dependency on npm preflight'],
     ['needs: [npm-preflight, release]', 'GitHub release dependency on preflight and artifacts'],
     ['needs: [npm-preflight, create-release]', 'npm publication dependency on preflight and GitHub release'],
-    ['npm publish --tag "$RELEASE_CHANNEL" --provenance', 'channel-aware npm provenance publication'],
+    ['npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance', 'exact channel-aware npm provenance publication'],
     ['prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}', 'SemVer-derived GitHub release boundary'],
   ]) {
     requireText(
@@ -2123,6 +2497,7 @@ function validateProductRouting(
   cliTests,
   nodeWrapperSource,
   nodeWrapperTests,
+  nodeApiTests,
   sassConformanceTests,
   lessConformanceTests,
   stylusConformanceTests,
@@ -2145,6 +2520,8 @@ function validateProductRouting(
             ? cliTests
             : route.id === 'javascript-wrapper'
               ? nodeWrapperTests
+              : route.id === 'programmatic-node-api'
+                ? `${nodeApiTests}\n${cliTests}`
               : route.id === 'files-and-stdin' || route.id === 'batch' || route.id === 'parallel'
                 ? cliTests
                 : route.id === 'watch'
@@ -2153,10 +2530,19 @@ function validateProductRouting(
                     ? `${zigApiTests}\n${cliTests}\n${nodeWrapperTests}`
                     : route.id === 'source-maps'
                       ? `${zigApiTests}\n${cliTests}\n${nodeWrapperTests}`
+                      : route.id === 'verified-optimizer'
+                        ? `${compilerTests}\n${zigApiTests}\n${cliTests}\n${nodeWrapperTests}`
+                        : route.id === 'verified-target-prefix'
+                          ? `${compilerTests}\n${zigApiTests}\n${cliTests}\n${nodeWrapperTests}`
                       : ''
       for (const evidenceTest of route.evidenceTests) {
         const testDeclaration = route.id === 'javascript-wrapper' ||
-          ((route.id === 'diagnostics-and-dependencies' || route.id === 'source-maps') &&
+          (route.id === 'programmatic-node-api' &&
+            !evidenceTest.startsWith('binary hidden Node route ')) ||
+          ((route.id === 'diagnostics-and-dependencies' ||
+            route.id === 'source-maps' ||
+            route.id === 'verified-optimizer' ||
+            route.id === 'verified-target-prefix') &&
             evidenceTest.startsWith('javascript wrapper '))
           ? `test('${evidenceTest}'`
           : `test "${evidenceTest}"`
@@ -2209,6 +2595,8 @@ function validatePackageMigration(
   packageTests,
   nodeWrapperSource,
   nodeWrapperTests,
+  nodeApiSource,
+  nodeApiTests,
   releaseSmokeSource,
   releaseSmokeTests,
   nativePackageEvidenceTests,
@@ -2281,18 +2669,22 @@ function validatePackageMigration(
   if (!same(referenceDependencies, expectedReferenceDevelopmentDependencies)) {
     fail('native package migration development oracle graph drifted')
   }
-  if (!same(manifest.exports, {
-    '.': './index.js',
-    './package.json': './package.json',
-  })) {
+  if (
+    manifest.main !== 'api.cjs' ||
+    manifest.types !== 'api.d.ts' ||
+    manifest.preferUnplugged !== true ||
+    !same(manifest.bin, packageBins) ||
+    !same(manifest.exports, packageExports) ||
+    !same(manifest.typesVersions, packageTypesVersions)
+  ) {
     fail('native package migration export inventory drifted')
   }
-  if (!Array.isArray(manifest.files) || manifest.files.some(relativePath => (
-    relativePath === 'api.mjs' ||
-    relativePath === 'preprocessor' ||
-    relativePath.startsWith('preprocessor/')
-  ))) {
-    fail('native package migration retained provider host or JavaScript API bytes')
+  if (!same(manifest.files, manifestPackageFiles) ||
+    manifest.files.some(relativePath => (
+      relativePath === 'preprocessor' ||
+      relativePath.startsWith('preprocessor/')
+    ))) {
+    fail('native package migration programmatic API or provider-host boundary drifted')
   }
   for (const forbidden of ['preprocessor/', 'shouldUseProductCli', 'import(']) {
     if (nodeWrapperSource.includes(forbidden)) {
@@ -2304,6 +2696,71 @@ function validatePackageMigration(
     'runNative(binaryPath, args);',
     'native package migration JavaScript wrapper binary dispatch',
   )
+  for (const [needle, label] of [
+    [
+      "for (const marker of ['build.zig', path.join('src', 'node_protocol.zig')]) {",
+      'native package migration JavaScript wrapper source-checkout markers',
+    ],
+    [
+      "const candidate = regularExecutable(path.join(root, 'zig-out', 'bin', binaryName));",
+      'native package migration JavaScript wrapper source-checkout executable',
+    ],
+    [
+      'return candidate !== null && containsLocalPath(root, candidate) ? candidate : null;',
+      'native package migration JavaScript wrapper source-checkout confinement',
+    ],
+    [
+      'return packagedBinary !== null && containsLocalPath(root, packagedBinary) ? packagedBinary : null;',
+      'native package migration JavaScript wrapper packaged confinement',
+    ],
+  ]) {
+    requireText(nodeWrapperSource, needle, label)
+  }
+  requireText(
+    nodeWrapperTests,
+    "test('javascript wrapper selects only a marker-verified confined source-checkout binary'",
+    'native package migration JavaScript wrapper source-checkout evidence',
+  )
+  for (const [needle, label] of [
+    [
+      "for (const marker of ['build.zig', path.join('src', 'node_protocol.zig')]) {",
+      'native package migration programmatic Node API source-checkout markers',
+    ],
+    [
+      "const candidate = regularExecutable(path.join(root, 'zig-out', 'bin', binaryName));",
+      'native package migration programmatic Node API source-checkout executable',
+    ],
+    [
+      'return candidate !== null && containsLocalPath(root, candidate) ? candidate : null;',
+      'native package migration programmatic Node API source-checkout confinement',
+    ],
+  ]) {
+    requireText(nodeApiSource, needle, label)
+  }
+  for (const [needle, label] of [
+    [
+      "test('a direct source checkout selects only its marker-verified confined freshly built native binary'",
+      'native package migration programmatic Node API source-checkout evidence',
+    ],
+    [
+      'source-checkout API must reject a missing protocol marker',
+      'native package migration programmatic Node API missing-marker evidence',
+    ],
+    [
+      'source-checkout API must reject a symlink protocol marker',
+      'native package migration programmatic Node API symlink-marker evidence',
+    ],
+    [
+      'source-checkout API must reject a final binary symlink',
+      'native package migration programmatic Node API binary-symlink evidence',
+    ],
+    [
+      'source-checkout API must reject an intermediate-directory escape',
+      'native package migration programmatic Node API confinement evidence',
+    ],
+  ]) {
+    requireText(nodeApiTests, needle, label)
+  }
   requireText(
     releaseSmokeSource,
     'const directNativeSmokes = checkNativePreprocessors(',
@@ -2337,30 +2794,34 @@ function validatePackageMigration(
     )
   }
   for (const [needle, label] of [
-    ['childProcess.spawn = function tracedNativeSpawn', 'admitted native child trace'],
-    ['childProcess.ChildProcess.prototype.spawn = function guardedChildSpawn', 'direct ChildProcess denial'],
+    ["immutableFunction(childProcess, 'spawn', function tracedNativeSpawn", 'admitted native child trace'],
+    ["immutableFunction(childProcess.ChildProcess.prototype, 'spawn', function guardedChildSpawn", 'direct ChildProcess denial'],
     ['Reflect.ownKeys(options)', 'native child option inventory'],
-    ['optionKeys.length !== 2', 'native child exact option boundary'],
+    ['optionKeys.length === 2', 'CLI launcher native child exact option boundary'],
+    ["args[0] === '--internal-node-v1'", 'programmatic API private native route'],
+    ['optionKeys.length === 3', 'programmatic API native child exact option boundary'],
     ["['spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork', '_forkChild']", 'alternate child denial'],
     ["record('native-spawn')", 'native spawn event'],
     ["record('network-denied')", 'network denial event'],
-    ['http.request =', 'HTTP denial'],
-    ['https.request =', 'HTTPS denial'],
-    ['net.connect =', 'TCP denial'],
-    ['net.Server.prototype.listen =', 'listener denial'],
-    ['net.createServer =', 'TCP server denial'],
-    ['http.createServer =', 'HTTP server denial'],
-    ['https.createServer =', 'HTTPS server denial'],
-    ['tls.connect =', 'TLS denial'],
-    ['tls.createServer =', 'TLS server denial'],
-    ['http2.connect =', 'HTTP2 denial'],
-    ['http2.createServer =', 'HTTP2 server denial'],
-    ['http2.createSecureServer =', 'secure HTTP2 server denial'],
-    ['dgram.createSocket =', 'datagram denial'],
-    ["dns.lookup = denyDnsCallback('dns.lookup')", 'DNS denial'],
-    ['dns.Resolver = class DisabledDnsResolver', 'callback DNS resolver denial'],
-    ['dnsPromises.Resolver = class DisabledDnsPromisesResolver', 'promise DNS resolver denial'],
-    ['globalThis.fetch =', 'fetch denial'],
+    ["immutableFunction(http, 'request'", 'HTTP denial'],
+    ["immutableFunction(https, 'request'", 'HTTPS denial'],
+    ["immutableFunction(net, 'connect'", 'TCP denial'],
+    ["immutableFunction(net.Server.prototype, 'listen'", 'listener denial'],
+    ["immutableFunction(net, 'createServer'", 'TCP server denial'],
+    ["immutableFunction(http, 'createServer'", 'HTTP server denial'],
+    ["immutableFunction(https, 'createServer'", 'HTTPS server denial'],
+    ["immutableFunction(tls, 'connect'", 'TLS denial'],
+    ["immutableFunction(tls, 'createServer'", 'TLS server denial'],
+    ["immutableFunction(http2, 'connect'", 'HTTP2 denial'],
+    ["immutableFunction(http2, 'createServer'", 'HTTP2 server denial'],
+    ["immutableFunction(http2, 'createSecureServer'", 'secure HTTP2 server denial'],
+    ["immutableFunction(dgram, 'createSocket'", 'datagram denial'],
+    ['for (const name of Object.keys(dns))', 'dynamic callback DNS denial'],
+    ['allowedDnsConfigurationFunctions', 'finite DNS configuration allowlist'],
+    ["immutableValue(dns, 'Resolver'", 'callback DNS resolver denial'],
+    ["immutableValue(dnsPromises, 'Resolver'", 'promise DNS resolver denial'],
+    ["immutableValue(\n    globalThis,\n    'fetch'", 'fetch denial'],
+    ["immutableValue(workerThreads, 'Worker'", 'worker denial'],
     ["event: 'runtime-summary'", 'runtime summary'],
   ]) {
     requireText(
@@ -2523,7 +2984,8 @@ function validateLessConformance(
   }
   const oracle = contract.referenceOracles.find(candidate => candidate.id === conformance.oracle.id)
   if (oracle === undefined || oracle.package !== conformance.oracle.package ||
-      oracle.version !== conformance.oracle.version) {
+      oracle.version !== conformance.oracle.developmentVersion ||
+      selection.upstream?.packageVersion !== conformance.oracle.baselineVersion) {
     fail('native Less conformance oracle drifted')
   }
   if (!Array.isArray(selection.cases) || selection.cases.length !== conformance.oracle.caseCount) {
@@ -2823,6 +3285,8 @@ function validateInternalReachability(implementations, buildFile, productionSour
   const libraryRoot = sourceByPath.get('src/lib.zig') ?? ''
   const nativeApi = sourceByPath.get('src/native_api.zig') ?? ''
   const nativeCompiler = sourceByPath.get('src/preprocessor/compiler.zig') ?? ''
+  const nativeEvaluator = sourceByPath.get('src/preprocessor/evaluator.zig') ?? ''
+  const nativeSource = sourceByPath.get('src/preprocessor/source.zig') ?? ''
   const nativeSourceMap = sourceByPath.get('src/preprocessor/sourcemap.zig') ?? ''
   const binaryCli = sourceByPath.get('src/main.zig') ?? ''
   const sassEvaluator = sourceByPath.get('src/preprocessor/sass_evaluator.zig') ?? ''
@@ -2841,8 +3305,18 @@ function validateInternalReachability(implementations, buildFile, productionSour
   }
   requireText(
     nativeApi,
-    'const css = try allocator.dupe(u8, compiled.css());',
-    'native Zig API owned CSS promotion',
+    'const css = compiled.takeCss();',
+    'native Zig API zero-copy owned CSS promotion',
+  )
+  requireText(
+    nativeCompiler,
+    'return self.validated.takeCss();',
+    'native compiler owned CSS transfer',
+  )
+  requireText(
+    nativeEvaluator,
+    'self.core.css = &.{};',
+    'native evaluator moved-from CSS teardown safety',
   )
   requireText(
     nativeApi,
@@ -2874,6 +3348,22 @@ function validateInternalReachability(implementations, buildFile, productionSour
     'native_sourcemap.composeCoreMap(',
     'native compiler two-stage source-map composition',
   )
+  for (const [source, needle, label] of [
+    [nativeApi, '(options.source_map and options.optimize) or', 'native Zig API optimizer/map fail-fast'],
+    [nativeApi, '.optimize = options.optimize,', 'native Zig API optimizer promotion'],
+    [nativeApi, '(options.prefix and options.targets == null) or', 'native Zig API prefix/target fail-fast'],
+    [nativeApi, '.prefix = options.prefix,', 'native Zig API target-prefix promotion'],
+    [nativeApi, '.targets = options.targets,', 'native Zig API target-query promotion'],
+    [nativeCompiler, '(options.source_map and options.optimize) or', 'native compiler optimizer/map fail-fast'],
+    [nativeCompiler, '.optimize = options.optimize,', 'native compiler optimizer promotion'],
+    [nativeCompiler, '(options.prefix and options.targets == null) or', 'native compiler prefix/target fail-fast'],
+    [nativeCompiler, '.prefix = options.prefix,', 'native compiler target-prefix promotion'],
+    [nativeCompiler, '.targets = options.targets,', 'native compiler target-query promotion'],
+    [nativeEvaluator, 'verified_optimizer.applyToFixedPoint(', 'native evaluator verified fixed-point optimizer'],
+    [nativeEvaluator, 'prefix_rewrite.applyToStylesheet(', 'native evaluator verified target-prefix rewrite'],
+  ]) {
+    requireText(source, needle, label)
+  }
   for (const [needle, label] of [
     ['pub fn composeCoreMap(', 'native source-map bounded composition'],
     ['core_sourcemap.decodeMappings(', 'native source-map strict core decoding'],
@@ -2883,10 +3373,12 @@ function validateInternalReachability(implementations, buildFile, productionSour
     requireText(nativeSourceMap, needle, label)
   }
   for (const [needle, label] of [
+    ['fn renderCssWithInlineSourceMap(', 'all-syntax binary CLI source-map renderer'],
     ['fn renderNativeCss(', 'native binary CLI source-map renderer'],
     ['std.base64.standard.Encoder.encode(', 'native binary CLI inline source-map encoding'],
+    ['task.rendered_css = renderCssWithInlineSourceMap(', 'stable CSS binary CLI parallel map preparation'],
     ['task.rendered_css = renderNativeCss(', 'native binary CLI parallel map preparation'],
-    ['--source-map             Embed a composed map for a native stylesheet syntax', 'native binary CLI source-map help'],
+    ['--source-map             Embed a deterministic inline source map', 'native binary CLI source-map help'],
   ]) {
     requireText(binaryCli, needle, label)
   }
@@ -2912,15 +3404,33 @@ function validateInternalReachability(implementations, buildFile, productionSour
     'native Zig API opaque watch dependency snapshot',
   )
   requireText(
-    nativeApi,
-    'const bytes = dependencySourceBytes(compiled, dependency.url)',
+    nativeSource,
+    'name_index: std.StringHashMapUnmanaged(SourceId)',
+    'native source-table owned-name index',
+  )
+  requireText(
+    nativeSource,
+    'pub fn findByName(',
+    'native source-table indexed exact lookup',
+  )
+  requireText(
+    nativeWatchState[0],
+    'compiled.sourceTable().findByName(dependency.url)',
+    'native Zig API watch snapshot indexed compiler-owned lookup',
+  )
+  requireText(
+    nativeWatchState[0],
+    'contentHash(source_file.bytes)',
     'native Zig API watch snapshot compiler-owned bytes',
   )
   requireText(
     nativeWatchState[0],
-    'var loaded = session.load(item.url,',
-    'native Zig API confined watch polling',
+    'const hash = session.contentFingerprint(item.url)',
+    'native Zig API confined streaming watch fingerprint',
   )
+  if (nativeWatchState[0].includes('session.load(item.url')) {
+    fail('native Zig API watch polling regressed to full dependency loads')
+  }
   requireText(
     nativeWatchState[0],
     'var loaded = session.load(self.entry_url,',
@@ -2994,8 +3504,30 @@ function validateInternalReachability(implementations, buildFile, productionSour
   )
   requireText(
     binaryCli,
-    '"optimize and profile are unavailable for native stylesheet syntax"',
-    'native binary CLI pending execution-mode boundary',
+    '"--profile is unavailable for native stylesheet syntax"',
+    'native binary CLI profile boundary',
+  )
+  requireText(
+    binaryCli,
+    '--optimize               Run the closed verified optimizer preset',
+    'all-syntax binary CLI optimizer help',
+  )
+  for (const [needle, label] of [
+    ['--autoprefix             Run verified eight-feature target prefixing', 'all-syntax binary CLI target-prefix help'],
+    ['--browsers <query>       Set explicit browser minima (requires --autoprefix)', 'all-syntax binary CLI target-query help'],
+    ['zigcss.prefixing.target_query.parse(allocator, value, .{})', 'binary CLI strict target-query parser'],
+    ['"--autoprefix requires --browsers <query>"', 'binary CLI prefix/query pairing'],
+    ['.transforms = .{ .optimize = optimize, .prefix = prefix.enabled },', 'stable CSS binary CLI target-prefix dispatch'],
+    ['.targets = prefix.targets,', 'stable CSS binary CLI target-query dispatch'],
+    ['.prefix = prefix.enabled,', 'native binary CLI target-prefix dispatch'],
+    ['.targets = prefix.targets,', 'native binary CLI target-query dispatch'],
+  ]) {
+    requireText(binaryCli, needle, label)
+  }
+  requireText(
+    nodeWrapperTests,
+    "test('javascript wrapper forwards verified target prefix requests unchanged'",
+    'native JavaScript wrapper target-prefix forwarding',
   )
   requireText(
     binaryCli,
@@ -3270,6 +3802,11 @@ export function validateContract(
       repositoryFile('scripts/verify-node-wrapper.test.mjs'),
       'utf8',
     ),
+    nodeApiTests = fs.readFileSync(
+      repositoryFile('scripts/verify-node-api.test.mjs'),
+      'utf8',
+    ),
+    nodeApiSource = fs.readFileSync(repositoryFile('api.cjs'), 'utf8'),
     packageTests = fs.readFileSync(
       repositoryFile('scripts/validate-preprocessor-package.test.mjs'),
       'utf8',
@@ -3328,7 +3865,7 @@ export function validateContract(
     ],
     'root',
   )
-  if (contract.schemaVersion !== 9) fail('schemaVersion must be 9')
+  if (contract.schemaVersion !== 10) fail('schemaVersion must be 10')
   if (contract.state !== 'native-graduated') {
     fail('state must be native-graduated for the release-ready candidate')
   }
@@ -3391,6 +3928,7 @@ export function validateContract(
     cliTests,
     nodeWrapperSource,
     nodeWrapperTests,
+    nodeApiTests,
     sassConformanceTests,
     lessConformanceTests,
     stylusConformanceTests,
@@ -3401,6 +3939,8 @@ export function validateContract(
     packageTests,
     nodeWrapperSource,
     nodeWrapperTests,
+    nodeApiSource,
+    nodeApiTests,
     releaseSmokeSource,
     releaseSmokeTests,
     nativePackageEvidenceTests,
@@ -3428,6 +3968,7 @@ export function validateContract(
     formatMatrix,
     capabilityMetadata,
     changelog,
+    buildWorkflow,
   )
   validateReleaseGraduation(
     contract.releaseGraduation,
@@ -3445,19 +3986,35 @@ export function validateContract(
     fail(`adapter inventory must contain ${expectedAdapterIds.length} rows`)
   }
 
-  const stablePromotionOwnsCurrentVersion =
+  const activePackageVersion = parseReleaseVersion(manifest.version, 'active package version')
+  const publishedStableVersion = parseReleaseVersion(
+    stablePromotion?.candidateVersion,
+    'immutable published stable version',
+  )
+  const stablePromotionOwnsPublishedEvidence =
     stablePromotion?.ownerPackage === 'REL-010'
     && stablePromotion?.releaseGapFamily === 'stable-release-promotion'
-    && stablePromotion?.candidateVersion === manifest.version
-    && stablePromotion?.candidateTag === `v${manifest.version}`
+    && stablePromotion?.state === 'closed'
+    && stablePromotion?.packageState === 'verified'
+    && stablePromotion?.stableReleaseReady === false
+    && publishedStableVersion.prerelease === null
+    && publishedStableVersion.build === null
+    && stablePromotion?.candidateTag === `v${publishedStableVersion.value}`
     && stablePromotion?.previousPrerelease?.version === contract.releaseGraduation.candidateVersion
     && stablePromotion?.previousPrerelease?.tag === contract.releaseGraduation.candidateTag
-    && ['in-progress', 'candidate-ready', 'closed'].includes(stablePromotion?.state)
-  if (
-    manifest.version !== contract.releaseGraduation.candidateVersion
-    && !stablePromotionOwnsCurrentVersion
-  ) {
-    fail('package version is neither the selected native prerelease nor its bounded stable promotion')
+    && stablePromotion?.publicationEvidence?.npmVersion === publishedStableVersion.value
+    && stablePromotion?.publicationEvidence?.npmLatest === publishedStableVersion.value
+    && stablePromotion?.publicationEvidence?.npmDistTag === 'latest'
+    && stablePromotion?.publicationEvidence?.npmNext === contract.releaseGraduation.candidateVersion
+    && stablePromotion?.publicationEvidence?.githubPrerelease === false
+    && stablePromotion?.publicationEvidence?.githubDraft === false
+    && stablePromotion?.publicationEvidence?.githubReleaseUrl === `https://github.com/vyakymenko/zigcss/releases/tag/v${publishedStableVersion.value}`
+    && /^[0-9a-f]{40}$/.test(stablePromotion?.publicationEvidence?.tagCommit ?? '')
+  if (!stablePromotionOwnsPublishedEvidence) {
+    fail('immutable stable promotion no longer binds the published native prerelease and stable publication')
+  }
+  if (compareReleaseVersionPrecedence(activePackageVersion.value, publishedStableVersion.value) < 0) {
+    fail(`active package version ${activePackageVersion.value} is older than immutable stable publication ${publishedStableVersion.value}`)
   }
   if (!same(manifest.dependencies ?? {}, {})) {
     fail('native package production dependency graph is not empty')
@@ -3483,7 +4040,37 @@ export function validateContract(
   if (manifest.scripts?.['test:native-package-evidence'] !== 'node --test scripts/validate-native-package-evidence.test.mjs') {
     fail('package script test:native-package-evidence is missing or changed')
   }
-  if (manifest.scripts?.['test:workflows'] !== 'node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/validate-workflows.test.mjs') {
+  if (manifest.scripts?.['test:bundler-adapters'] !== 'node --test scripts/verify-bundler-adapters.test.mjs') {
+    fail('package script test:bundler-adapters is missing or changed')
+  }
+  if (manifest.scripts?.['test:turbopack-example'] !== 'node --test scripts/verify-turbopack-example.test.mjs') {
+    fail('package script test:turbopack-example is missing or changed')
+  }
+  if (manifest.scripts?.['test:next-webpack-example'] !== 'node --test scripts/verify-next-webpack-example.test.mjs') {
+    fail('package script test:next-webpack-example is missing or changed')
+  }
+  if (manifest.scripts?.['test:sveltekit-example'] !== 'node --test scripts/verify-sveltekit-example.test.mjs') {
+    fail('package script test:sveltekit-example is missing or changed')
+  }
+  if (manifest.scripts?.['test:astro-example'] !== 'node --test scripts/verify-astro-example.test.mjs') {
+    fail('package script test:astro-example is missing or changed')
+  }
+  if (manifest.scripts?.['test:nuxt-example'] !== 'node --test scripts/verify-nuxt-example.test.mjs') {
+    fail('package script test:nuxt-example is missing or changed')
+  }
+  if (manifest.scripts?.['test:parcel-example'] !== 'node --test scripts/verify-parcel-example.test.mjs') {
+    fail('package script test:parcel-example is missing or changed')
+  }
+  if (manifest.scripts?.['test:types'] !== 'tsc -p tests/typescript/tsconfig.json') {
+    fail('package script test:types is missing or changed')
+  }
+  if (manifest.scripts?.['test:build-systems'] !== 'node --test scripts/verify-build-system-examples.test.mjs') {
+    fail('package script test:build-systems is missing or changed')
+  }
+  if (manifest.scripts?.['test:package-managers'] !== 'node --test scripts/verify-package-managers.test.mjs') {
+    fail('package script test:package-managers is missing or changed')
+  }
+  if (manifest.scripts?.['test:workflows'] !== 'node --test scripts/run-zig-test-suite.test.mjs scripts/setup-zig-action.test.mjs scripts/smoke-development-container.test.mjs scripts/test-release-container.test.mjs scripts/validate-workflows.test.mjs scripts/verify-build-workflow-run.test.mjs') {
     fail('package script test:workflows must retain the Zig suite runner contract')
   }
 
@@ -3511,17 +4098,125 @@ export function validateContract(
   const buildGate = 'npm run test:native-contract && npm run test:native-package-evidence && npm run check:native-contract'
   requireText(buildWorkflow, buildGate, 'build workflow')
   requireText(buildWorkflow, 'npm run test:node-wrapper', 'native JavaScript wrapper workflow')
+  requireText(buildWorkflow, 'run: npm run test:package-managers', 'package-manager recovery workflow')
+  requireText(buildWorkflow, 'run: npm run test:bundler-adapters', 'builder adapter workflow')
+  requireText(buildWorkflow, 'run: npm run test:turbopack-example', 'Turbopack example workflow')
+  requireText(buildWorkflow, 'run: npm run test:next-webpack-example', 'Next.js Webpack example workflow')
+  requireText(buildWorkflow, 'run: npm run test:sveltekit-example', 'SvelteKit example workflow')
+  requireText(buildWorkflow, 'run: npm run test:astro-example', 'Astro example workflow')
+  requireText(buildWorkflow, 'run: npm run test:nuxt-example', 'Nuxt example workflow')
+  requireText(buildWorkflow, 'run: npm run test:parcel-example', 'Parcel example workflow')
+  requireText(buildWorkflow, 'run: npm run test:types', 'TypeScript package-surface workflow')
+  requireText(buildWorkflow, 'run: npm run test:build-systems', 'dependency-file build-system workflow')
   requireText(buildWorkflow, 'node scripts/run-zig-test-suite.mjs --mode Debug', 'build workflow')
   requireText(buildWorkflow, 'node scripts/run-zig-test-suite.mjs --mode ReleaseSafe', 'build workflow')
   if (buildWorkflow.includes('zig build test-native-preprocessor --summary all')) {
     fail('build workflow must not duplicate native frontend coverage before the complete root test graph')
   }
+  const runTestsStep = [
+    '      - name: Run Tests',
+    '        run: node scripts/run-zig-test-suite.mjs --mode Debug',
+  ].join('\n')
+  if (buildWorkflow.split(runTestsStep).length !== 2) {
+    fail('build workflow must own one exact Run Tests gate')
+  }
+  const adapterStep = [
+    '      - name: Verify build-tool adapters',
+    '        env:',
+    '          ZIGCSS_ADAPTER_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:bundler-adapters',
+  ].join('\n')
+  const turbopackStep = [
+    '      - name: Verify Next.js Turbopack global SCSS integration',
+    '        env:',
+    '          ZIGCSS_TURBOPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:turbopack-example',
+  ].join('\n')
+  const nextWebpackStep = [
+    '      - name: Verify Next.js Webpack global SCSS integration',
+    '        env:',
+    '          ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:next-webpack-example',
+  ].join('\n')
+  const sveltekitStep = [
+    '      - name: Verify SvelteKit external CSS Module integration',
+    '        env:',
+    '          ZIGCSS_SVELTEKIT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:sveltekit-example',
+  ].join('\n')
+  const astroStep = [
+    '      - name: Verify Astro external CSS Module integration',
+    '        env:',
+    '          ZIGCSS_ASTRO_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:astro-example',
+  ].join('\n')
+  const nuxtStep = [
+    '      - name: Verify Nuxt external CSS Module integration',
+    '        env:',
+    '          ZIGCSS_NUXT_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:nuxt-example',
+  ].join('\n')
+  const parcelStep = [
+    '      - name: Verify Parcel local transformer integration',
+    '        env:',
+    '          ZIGCSS_PARCEL_NATIVE_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    '        run: npm run test:parcel-example',
+  ].join('\n')
+  const buildSystemsStep = [
+    '      - name: Verify dependency-file build-system integrations',
+    '        env:',
+    '          ZIGCSS_REAL_BINARY: ${{ github.workspace }}/zig-out/bin/zigcss',
+    "          ZIGCSS_REQUIRE_BUILD_SYSTEMS: '1'",
+    '        run: npm run test:build-systems',
+  ].join('\n')
+  if (buildWorkflow.split(buildSystemsStep).length !== 2) {
+    fail('build workflow build-system gate must own exact ZIGCSS_REAL_BINARY env')
+  }
+  if (buildWorkflow.split(adapterStep).length !== 2) {
+    fail('build workflow adapter gate must own exact ZIGCSS_ADAPTER_NATIVE_BINARY env')
+  }
+  if (buildWorkflow.split(turbopackStep).length !== 2) {
+    fail('build workflow Turbopack gate must own exact ZIGCSS_TURBOPACK_NATIVE_BINARY env')
+  }
+  if (buildWorkflow.split(nextWebpackStep).length !== 2) {
+    fail('build workflow Next.js Webpack gate must own exact ZIGCSS_NEXT_WEBPACK_NATIVE_BINARY env')
+  }
+  if (buildWorkflow.split(sveltekitStep).length !== 2) {
+    fail('build workflow SvelteKit gate must own exact ZIGCSS_SVELTEKIT_NATIVE_BINARY env')
+  }
+  if (buildWorkflow.split(astroStep).length !== 2) {
+    fail('build workflow Astro gate must own exact ZIGCSS_ASTRO_NATIVE_BINARY env')
+  }
+  if (buildWorkflow.split(nuxtStep).length !== 2) {
+    fail('build workflow Nuxt gate must own exact ZIGCSS_NUXT_NATIVE_BINARY env')
+  }
+  if (buildWorkflow.split(parcelStep).length !== 2) {
+    fail('build workflow Parcel gate must own exact ZIGCSS_PARCEL_NATIVE_BINARY env')
+  }
+  if (
+    buildWorkflow.indexOf(adapterStep) <= buildWorkflow.indexOf(runTestsStep)
+    || buildWorkflow.indexOf(turbopackStep) <= buildWorkflow.indexOf(adapterStep)
+    || buildWorkflow.indexOf(nextWebpackStep) <= buildWorkflow.indexOf(turbopackStep)
+    || buildWorkflow.indexOf(sveltekitStep) <= buildWorkflow.indexOf(nextWebpackStep)
+    || buildWorkflow.indexOf(astroStep) <= buildWorkflow.indexOf(sveltekitStep)
+    || buildWorkflow.indexOf(nuxtStep) <= buildWorkflow.indexOf(astroStep)
+    || buildWorkflow.indexOf(parcelStep) <= buildWorkflow.indexOf(nuxtStep)
+    || buildWorkflow.indexOf(buildSystemsStep) <= buildWorkflow.indexOf(parcelStep)
+  ) {
+    fail('build workflow native adapter, Turbopack, Next.js Webpack, SvelteKit, Astro, Nuxt, Parcel, and dependency-file build-system gates must run after Run Tests')
+  }
   validateBuildTestGraph(buildFile)
   const candidateCommitLookup = 'git rev-parse "${GITHUB_SHA}^{commit}"'
   const originMainLookup = 'git ls-remote --exit-code --refs origin refs/heads/main'
   const releaseGate = '--release-tag "$GITHUB_REF_NAME"'
-  requireText(releaseWorkflow, 'npm run check:stable-release -- \\', 'release workflow')
-  requireText(releaseWorkflow, candidateCommitLookup, 'release workflow candidate commit lookup')
+  requireText(
+    releaseWorkflow,
+    'node scripts/validate-release-admission.mjs --check \\',
+    'release workflow candidate admission',
+  )
+  if (releaseWorkflow.split(candidateCommitLookup).length !== 3) {
+    fail('release workflow candidate commit lookup must appear exactly twice')
+  }
   requireText(releaseWorkflow, originMainLookup, 'release workflow exact origin main lookup')
   requireText(releaseWorkflow, releaseGate, 'release workflow')
   requireText(
@@ -3534,12 +4229,16 @@ export function validateContract(
     '--origin-main-commit "$origin_main_commit"',
     'release workflow origin main commit',
   )
-  requireText(releaseWorkflow, 'npm publish --tag "$RELEASE_CHANNEL" --provenance', 'release workflow')
-  if (releaseWorkflow.indexOf(candidateCommitLookup) > releaseWorkflow.indexOf(releaseGate)) {
-    fail('release candidate commit lookup must run before stable tag admission')
+  requireText(
+    releaseWorkflow,
+    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+    'release workflow exact npm archive publication',
+  )
+  if (releaseWorkflow.lastIndexOf(candidateCommitLookup) > releaseWorkflow.indexOf(releaseGate)) {
+    fail('both release candidate commit lookups must run before candidate admission')
   }
   if (releaseWorkflow.indexOf(originMainLookup) > releaseWorkflow.indexOf(releaseGate)) {
-    fail('release exact origin main lookup must run before stable tag admission')
+    fail('release exact origin main lookup must run before candidate admission')
   }
   if (releaseWorkflow.indexOf(releaseGate) > releaseWorkflow.indexOf('npm whoami')) {
     fail('release interlock must run before npm authentication/publication preflight')

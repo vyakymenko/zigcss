@@ -39,6 +39,7 @@ test('protocol and production provider metadata are exact and matrix-bound', () 
 
 test('host core has no outbound network, shell, eval, or ambient module-loading authority', () => {
   const hostSources = [
+    'preprocessor/host-boundary.mjs',
     'preprocessor/protocol.mjs',
     'preprocessor/environment.mjs',
     'preprocessor/resolver.mjs',
@@ -56,14 +57,41 @@ test('host core has no outbound network, shell, eval, or ambient module-loading 
   )
   const runner = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/runner.mjs'), 'utf8')
 
+  assert.match(
+    fs.readFileSync(path.join(repositoryRoot, 'preprocessor/host.mjs'), 'utf8'),
+    /^import \{ disableNetworkAccess \} from '\.\/host-boundary\.mjs'/,
+  )
+  assert.match(
+    fs.readFileSync(path.join(repositoryRoot, 'preprocessor/host-boundary.mjs'), 'utf8'),
+    /disableNetworkAccess\(\)/,
+  )
   assert.doesNotMatch(hostSources, /node:(?:child_process|http|https|net|tls|dgram)/)
   assert.doesNotMatch(hostSources, /\beval\s*\(|new\s+Function\s*\(|import\s*\(/)
-  for (const builtin of ['dgram', 'dns', 'http', 'https', 'net', 'tls']) {
+  for (const builtin of [
+    'cluster',
+    'dgram',
+    'dns',
+    'dns/promises',
+    'http',
+    'http2',
+    'https',
+    'inspector',
+    'module',
+    'net',
+    'tls',
+    'worker_threads',
+  ]) {
     assert.match(networkPolicy, new RegExp(`node:${builtin}`))
   }
   assert.match(networkPolicy, /ZIGCSS_NETWORK_DISABLED/)
-  assert.match(networkPolicy, /replaceMethod\(net\.Socket\?\.prototype, 'connect', throwDenied\)/)
-  assert.match(networkPolicy, /Object\.defineProperty\(globalThis, 'fetch'/)
+  assert.match(networkPolicy, /ZIGCSS_PROCESS_DISABLED/)
+  assert.match(networkPolicy, /process\.getBuiltinModule\('child_process'\)/)
+  assert.match(networkPolicy, /syncBuiltinESMExports\(\)/)
+  assert.match(networkPolicy, /immutableFunction\(net\.Socket\?\.prototype, 'connect', throwNetworkDenied\)/)
+  assert.match(networkPolicy, /immutableValue\(globalThis, 'fetch', rejectNetworkDenied\)/)
+  assert.match(networkPolicy, /Object\.getOwnPropertyNames\(resolver\)/)
+  assert.match(networkPolicy, /configurable: false/)
+  assert.match(networkPolicy, /writable: false/)
   assert.doesNotMatch(networkPolicy, /node:child_process|\beval\s*\(|new\s+Function\s*\(|import\s*\(/)
   assert.match(runner, /spawn\(process\.execPath/)
   assert.match(runner, /shell: false/)
@@ -85,6 +113,7 @@ test('protocol documentation publishes the wire, limit, lifecycle, and reference
     'Stable 0.6 compilation uses the self-contained native Zig frontends',
     'excluded from package files and runtime compilation',
     'never command arguments or shell text',
+    'not an OS sandbox',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

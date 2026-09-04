@@ -604,6 +604,7 @@ fn validateEmittable(
     context: *pass_manager.Context,
     rules: *const ast.RuleList,
 ) pass_manager.Error!void {
+    if (context.hasExactMinifiedMappedEmissionProof(rules)) return;
     var output = emitter.emitWithSourceMap(
         context.scratchAllocator(),
         context.file(),
@@ -615,6 +616,7 @@ fn validateEmittable(
         else => return error.ValidationFailed,
     };
     output.deinit();
+    context.commitExactMinifiedMappedEmissionProof(rules, 1);
 }
 
 fn validateSameEmission(
@@ -622,6 +624,7 @@ fn validateSameEmission(
     expected: *const ast.RuleList,
     actual: *const ast.RuleList,
 ) pass_manager.Error!void {
+    if (expected == actual) return validateEmittable(context, actual);
     var expected_output = emitter.emitWithSourceMap(
         context.scratchAllocator(),
         context.file(),
@@ -649,6 +652,7 @@ fn validateSameEmission(
     {
         return error.ValidationFailed;
     }
+    context.commitExactMinifiedMappedEmissionProof(actual, 2);
 }
 
 const pipeline = @import("../css/pipeline.zig");
@@ -773,6 +777,30 @@ test "math folding returns the exact root when every value is conservatively ine
     var result = try parsed.emitResult(std.testing.allocator, .{ .mode = .minified });
     defer result.deinit();
     try std.testing.expectEqualStrings(css, result.css);
+}
+
+test "math folding proof cache retains differential emission for changed roots" {
+    var parsed = try pipeline.parse(
+        std.testing.allocator,
+        "math-proof-cache-changed.css",
+        ".a{width:calc(1px + 2px)}",
+    );
+    defer parsed.deinit();
+    var plan = try testPlan(std.testing.allocator);
+    defer plan.deinit();
+    var context = try pass_manager.Context.init(
+        &parsed.compilation,
+        parsed.source_id,
+        std.testing.allocator,
+    );
+
+    const result = try plan.run(&context, parsed.rules, .{ .verify_idempotence = true });
+
+    try std.testing.expect(result != parsed.rules);
+    // One precondition proof plus the expected/actual differential proof.
+    // The idempotence phase then hits the exact-root cache.
+    try std.testing.expectEqual(@as(usize, 3), context.structuralProofEmitCount());
+    try std.testing.expect(context.hasExactMinifiedMappedEmissionProof(result));
 }
 
 test "math folding preserves an existing declaration-level proof boundary" {

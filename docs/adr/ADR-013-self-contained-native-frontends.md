@@ -44,6 +44,8 @@ The exact ADR-012 baselines remain differential oracles during migration:
 | Less | Less 4.6.7 | Zig implementation |
 | Stylus | Stylus 0.64.0 | Zig implementation |
 
+Maintenance note (2026-09-02): Less 4.6.7 remains the frozen native conformance baseline recorded by this decision. Exact Less 4.9.0 is now the development-only forward oracle used for current differential and security maintenance; it does not regraduate the native row or rewrite the published 0.6 contract. CI separately runs `npm run audit:development` across the complete root development graph. The development host also replaces its former direct `image-size` 0.5.5 dependency with a shared bounded PNG/GIF/JPEG/SVG dimension parser used by Less and Stylus over resolver-owned buffers. Production dependencies and runtime provider execution remain zero.
+
 Upstream source code is not copied into the production implementation. License-reviewed corpora and black-box differential output may be used under their recorded licenses. Every semantic choice that intentionally differs from the reference must be an explicit closed limitation with a diagnostic; it cannot silently fall back to CSS or approximate behavior.
 
 “Native support” is a per-language graduated state. “Full native support” requires all four preprocessor rows to pass on one commit. It does not include arbitrary plugins, custom executable functions/importers, Less JavaScript, Stylus `use()` hooks, project code execution, or future upstream versions.
@@ -63,12 +65,12 @@ No migration step may replace a green path with a partial native parser. The pub
 
 The active machine compatibility strategy supersedes the four provider-runtime rows without rewriting their reference evidence:
 
-| Adapter | Strategy | Development oracle |
-|---|---|---|
-| `scss` | `native-reimplementation` | Dart Sass 1.101.0 |
-| `sass` | `native-reimplementation` | Dart Sass 1.101.0 |
-| `less` | `native-reimplementation` | Less 4.6.7 |
-| `stylus` | `native-reimplementation` | Stylus 0.64.0 |
+| Adapter | Strategy | Current development oracle | Frozen conformance baseline |
+|---|---|---|---|
+| `scss` | `native-reimplementation` | Dart Sass 1.101.0 | Dart Sass 1.101.0 |
+| `sass` | `native-reimplementation` | Dart Sass 1.101.0 | Dart Sass 1.101.0 |
+| `less` | `native-reimplementation` | Less 4.9.0 forward oracle | Less 4.6.7 |
+| `stylus` | `native-reimplementation` | Stylus 0.64.0 | Stylus 0.64.0 |
 
 The exact providers remain development-only differential oracles. They do not enter production archives, the installed production graph, or stylesheet compilation.
 

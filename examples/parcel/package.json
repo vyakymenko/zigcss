@@ -1,0 +1,10 @@
+{
+  "name": "zigcss-parcel-local-example",
+  "private": true,
+  "browserslist": ">= 0.5%, not dead",
+  "targets": {
+    "default": {
+      "sourceMap": true
+    }
+  }
+}

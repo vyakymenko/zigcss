@@ -11,6 +11,7 @@ const SIDEBAR = [
       { text: "Format compatibility", link: "/docs/guide/format-compatibility" },
       { text: "CSS Modules subset", link: "/docs/guide/css-modules" },
       { text: "Build from source", link: "/docs/guide/build-from-source" },
+      { text: "Builder integrations", link: "/docs/guide/builder-integrations" },
       { text: "Recovery CLI", link: "/docs/guide/recovery-cli" },
     ],
   },
@@ -18,6 +19,7 @@ const SIDEBAR = [
 
 export function DocsLayout() {
   const location = useLocation();
+  const currentPath = location.pathname === "/" ? "/" : location.pathname.replace(/\/+$/, "");
 
   return (
     <div className="min-h-screen bg-[#f3f0e7] px-5 py-10 text-[#172019] sm:px-8 lg:px-10">
@@ -34,11 +36,12 @@ export function DocsLayout() {
                   </div>
                   <ul className="space-y-0.5">
                     {section.items.map((item) => {
-                      const isActive = location.pathname === item.link;
+                      const isActive = currentPath === item.link;
                       return (
                         <li key={item.link}>
                           <Link
                             to={item.link}
+                            aria-current={isActive ? "page" : undefined}
                             className={`block px-3 py-2 text-sm transition-colors ${
                               isActive
                                 ? "bg-[#b7f34a] font-medium text-[#101914]"

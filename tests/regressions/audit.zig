@@ -213,12 +213,6 @@ fn replaceFileAtomically(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !
     try atomic_file.finish();
 }
 
-fn expectNonVerifiedTransformsDisabled(result: Child.RunResult) !void {
-    try std.testing.expect(!succeeded(result.term));
-    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "legacy and non-verified transform paths are disabled") != null);
-}
-
 test "stable CLI preserves compound selectors separately from descendants" {
     var compound = try runCompiler(@embedFile("fixtures/compound.css"), &.{"--minify"});
     defer deinitRun(&compound);
@@ -253,7 +247,8 @@ test "LSP transport accepts sequential frames and bodies above 8 KiB (LSP-001)" 
     defer deinitRun(&result);
     try expectSuccess(result);
     try std.testing.expectEqualStrings(
-        "Warning: ZigCSS LSP is experimental; evaluate before production editor use.\n",
+        "Warning: ZigCSS 0.7.0-rc.1 is an experimental release candidate; do not use it for production CSS.\n" ++
+            "Warning: ZigCSS LSP is experimental; evaluate before production editor use.\n",
         result.stderr,
     );
 
@@ -1341,13 +1336,28 @@ test "profiling lifecycle reports measured API stages and allocator bytes once (
     try std.testing.expect((try profileMetric(invalid.stderr, "  retained_result_bytes: ")) > 0);
 }
 
-test "CLI strictness: unavailable source maps are rejected explicitly (CLI-002)" {
+test "CLI stable CSS source maps use the bounded inline policy (CLI-002)" {
     var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "--source-map", "--minify" });
     defer deinitRun(&result);
 
-    try expectFailureContaining(result, "--source-map is unavailable");
-    try expectExitCode(result, 2);
-    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+    try expectSuccess(result);
+    try std.testing.expect(std.mem.startsWith(u8, result.stdout, ".simple{color:red}\n"));
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        countOccurrences(
+            result.stdout,
+            "/*# sourceMappingURL=data:application/json;charset=utf-8;base64,",
+        ),
+    );
+
+    var incompatible = try runCompiler(
+        @embedFile("fixtures/simple.css"),
+        &.{ "--source-map", "--optimize", "--minify" },
+    );
+    defer deinitRun(&incompatible);
+    try expectFailureContaining(incompatible, "--source-map cannot be combined with --optimize");
+    try expectExitCode(incompatible, 2);
+    try std.testing.expectEqual(@as(usize, 0), incompatible.stdout.len);
 }
 
 test "CLI informational and failure modes have stable streams and exit codes (CLI-011)" {
@@ -1363,7 +1373,7 @@ test "CLI informational and failure modes have stable streams and exit codes (CL
     var version = try runInDir(tmp.dir, &.{"--version"});
     defer deinitRun(&version);
     try expectExitCode(version, 0);
-    try std.testing.expectEqualStrings("zigcss 0.6.0\n", version.stdout);
+    try std.testing.expectEqualStrings("zigcss 0.7.0-rc.1\n", version.stdout);
     try std.testing.expectEqual(@as(usize, 0), version.stderr.len);
 
     var no_input = try runInDir(tmp.dir, &.{});
@@ -1435,7 +1445,7 @@ test "CLI stdin and explicit stdout share the public compile contract (CLI-011)"
     defer deinitRun(&stream);
     try expectExitCode(stream, 0);
     try std.testing.expectEqualStrings(".stream{width:3px;color:#fff}", stream.stdout);
-    try std.testing.expect(std.mem.indexOf(u8, stream.stderr, "experimental release candidate") == null);
+    try std.testing.expect(std.mem.indexOf(u8, stream.stderr, "experimental release candidate") != null);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1590,15 +1600,244 @@ test "CLI watch reports unchanged invalid CSS once instead of looping (WATCH-001
     try std.testing.expectEqualStrings(".fixed{color:red}", output);
 }
 
-test "target prefix CLI remains separate from the verified optimizer preset" {
-    const input = @embedFile("fixtures/prefix.css");
-    var modern = try runCompiler(input, &.{ "--autoprefix", "--browsers", "chrome120", "--minify" });
-    defer deinitRun(&modern);
-    var legacy = try runCompiler(input, &.{ "--autoprefix", "--browsers", "ie11", "--minify" });
-    defer deinitRun(&legacy);
+test "verified optimizer CSS watch retains output across failure and commits one fixed point" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
 
-    try expectNonVerifiedTransformsDisabled(modern);
-    try expectNonVerifiedTransformsDisabled(legacy);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{
+        .sub_path = "input.css",
+        .data = ".empty{}.a{color:#ffffff}.b{color:#fff}",
+    });
+
+    const argv = [_][]const u8{
+        audit_options.compiler_path,
+        "input.css",
+        "-o",
+        "output.css",
+        "--watch",
+        "--optimize",
+        "--minify",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer if (running) {
+        _ = child.kill() catch {};
+    };
+
+    const captured_handle = try std.posix.dup(child.stderr.?.handle);
+    var captured = std.fs.File{ .handle = captured_handle };
+    defer captured.close();
+    const initial = try waitForOutputStamp(tmp.dir, "output.css", null);
+    const initial_output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(initial_output);
+    try std.testing.expectEqualStrings(".a,.b{color:#fff}", initial_output);
+
+    try replaceFileAtomically(tmp.dir, "input.css", ".broken{color}");
+    std.Thread.sleep(1600 * std.time.ns_per_ms);
+    const retained_stat = try tmp.dir.statFile("output.css");
+    try std.testing.expect(initial.eql(.{
+        .inode = retained_stat.inode,
+        .mtime = retained_stat.mtime,
+        .ctime = retained_stat.ctime,
+    }));
+    const retained_output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(retained_output);
+    try std.testing.expectEqualStrings(initial_output, retained_output);
+
+    try replaceFileAtomically(tmp.dir, "input.css", ".next{width:calc(1px + 2px)}");
+    const recovered = try waitForOutputStamp(tmp.dir, "output.css", initial);
+    const recovered_output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(recovered_output);
+    try std.testing.expectEqualStrings(".next{width:3px}", recovered_output);
+    std.Thread.sleep(1200 * std.time.ns_per_ms);
+    const stable_stat = try tmp.dir.statFile("output.css");
+    try std.testing.expect(recovered.eql(.{
+        .inode = stable_stat.inode,
+        .mtime = stable_stat.mtime,
+        .ctime = stable_stat.ctime,
+    }));
+
+    _ = try child.kill();
+    running = false;
+    const stderr = try captured.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(stderr, "error CSS0007"));
+}
+
+test "verified target prefix CSS watch retains output recovers and stays byte-stable" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{
+        .sub_path = "input.css",
+        .data = ".a{user-select:none;display:flex}",
+    });
+
+    const argv = [_][]const u8{
+        audit_options.compiler_path,
+        "input.css",
+        "-o",
+        "output.css",
+        "--watch",
+        "--autoprefix",
+        "--browsers",
+        "safari >= 7, ie >= 11",
+        "--minify",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer if (running) {
+        _ = child.kill() catch {};
+    };
+
+    const captured_handle = try std.posix.dup(child.stderr.?.handle);
+    var captured = std.fs.File{ .handle = captured_handle };
+    defer captured.close();
+    const initial = try waitForOutputStamp(tmp.dir, "output.css", null);
+    const initial_output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(initial_output);
+    try std.testing.expectEqualStrings(
+        ".a{-webkit-user-select:none;-ms-user-select:none;user-select:none;display:-webkit-flex;display:flex}",
+        initial_output,
+    );
+
+    try replaceFileAtomically(tmp.dir, "input.css", ".broken{color}");
+    std.Thread.sleep(1600 * std.time.ns_per_ms);
+    const retained_stat = try tmp.dir.statFile("output.css");
+    try std.testing.expect(initial.eql(.{
+        .inode = retained_stat.inode,
+        .mtime = retained_stat.mtime,
+        .ctime = retained_stat.ctime,
+    }));
+    const retained_output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(retained_output);
+    try std.testing.expectEqualStrings(initial_output, retained_output);
+
+    try replaceFileAtomically(tmp.dir, "input.css", ".next{user-select:text}");
+    const recovered = try waitForOutputStamp(tmp.dir, "output.css", initial);
+    const recovered_output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(recovered_output);
+    try std.testing.expectEqualStrings(
+        ".next{-webkit-user-select:text;-ms-user-select:text;user-select:text}",
+        recovered_output,
+    );
+    std.Thread.sleep(1200 * std.time.ns_per_ms);
+    const stable_stat = try tmp.dir.statFile("output.css");
+    try std.testing.expect(recovered.eql(.{
+        .inode = stable_stat.inode,
+        .mtime = stable_stat.mtime,
+        .ctime = stable_stat.ctime,
+    }));
+
+    _ = try child.kill();
+    running = false;
+    const stderr = try captured.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(stderr, "error CSS0007"));
+}
+
+test "verified target prefix CLI uses explicit pinned queries and composes with optimizer" {
+    const input = @embedFile("fixtures/prefix.css");
+    var modern = try runCompiler(input, &.{
+        "--autoprefix",
+        "--browsers",
+        "chrome >= 120, edge >= 120, firefox >= 120",
+        "--minify",
+    });
+    defer deinitRun(&modern);
+    var legacy = try runCompiler(input, &.{
+        "--autoprefix",
+        "--browsers",
+        "safari >= 7, ie >= 11",
+        "--minify",
+    });
+    defer deinitRun(&legacy);
+    var optimized = try runCompiler(
+        ".empty{}.a{user-select:none;color:#ffffff}.b{user-select:none;color:#fff}",
+        &.{
+            "--autoprefix",
+            "--browsers",
+            "safari >= 7, ie >= 11",
+            "--optimize",
+            "--minify",
+        },
+    );
+    defer deinitRun(&optimized);
+    var mapped = try runCompiler(input, &.{
+        "--autoprefix",
+        "--browsers",
+        "safari >= 7, ie >= 11",
+        "--source-map",
+        "--minify",
+    });
+    defer deinitRun(&mapped);
+    var stdin = try runWithStdin(&.{
+        "-",
+        "--autoprefix",
+        "--browsers",
+        "safari >= 7, ie >= 11",
+        "--minify",
+    }, input);
+    defer deinitRun(&stdin);
+
+    try expectSuccess(modern);
+    try expectSuccess(legacy);
+    try expectSuccess(optimized);
+    try expectSuccess(mapped);
+    try expectSuccess(stdin);
+    try std.testing.expectEqualStrings(".a{display:flex;user-select:none}", modern.stdout);
+    const legacy_css = ".a{display:-webkit-flex;display:flex;-webkit-user-select:none;-ms-user-select:none;user-select:none}";
+    try std.testing.expectEqualStrings(legacy_css, legacy.stdout);
+    try std.testing.expectEqualStrings(legacy_css, stdin.stdout);
+    try std.testing.expectEqualStrings(
+        ".a,.b{-webkit-user-select:none;-ms-user-select:none;user-select:none;color:#fff}",
+        optimized.stdout,
+    );
+    try std.testing.expect(std.mem.startsWith(u8, mapped.stdout, legacy_css));
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        mapped.stdout,
+        "/*# sourceMappingURL=data:application/json;charset=utf-8;base64,",
+    ) != null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "one.css", .data = input });
+    try tmp.dir.writeFile(.{ .sub_path = "two.css", .data = ".b{user-select:text}" });
+    var batch = try runInDir(tmp.dir, &.{
+        "one.css",
+        "two.css",
+        "-o",
+        "out",
+        "--output-dir",
+        "--autoprefix",
+        "--browsers",
+        "safari >= 7, ie >= 11",
+        "--minify",
+    });
+    defer deinitRun(&batch);
+    try expectSuccess(batch);
+    const first = try tmp.dir.readFileAlloc(allocator, "out/one.css", 1024);
+    defer allocator.free(first);
+    const second = try tmp.dir.readFileAlloc(allocator, "out/two.css", 1024);
+    defer allocator.free(second);
+    try std.testing.expectEqualStrings(legacy_css, first);
+    try std.testing.expectEqualStrings(
+        ".b{-webkit-user-select:text;-ms-user-select:text;user-select:text}",
+        second,
+    );
 }
 
 test "CLI path safety: input and output identity is rejected without changing the source (CLI-001)" {
@@ -1832,16 +2071,31 @@ test "CLI strictness: unknown flags and missing values are rejected (CLI-002)" {
     defer deinitRun(&missing);
     var duplicate_optimize = try runCompiler(input, &.{ "--optimize", "--optimize" });
     defer deinitRun(&duplicate_optimize);
+    var duplicate_autoprefix = try runCompiler(input, &.{ "--autoprefix", "--autoprefix" });
+    defer deinitRun(&duplicate_autoprefix);
+    var duplicate_browsers = try runCompiler(input, &.{
+        "--browsers",
+        "ie >= 11",
+        "--browsers",
+        "safari >= 7",
+    });
+    defer deinitRun(&duplicate_browsers);
 
     try expectFailureContaining(unknown, "unknown option: --definitely-unknown");
     try expectFailureContaining(missing, "-o requires a value");
     try expectFailureContaining(duplicate_optimize, "--optimize may only be specified once");
+    try expectFailureContaining(duplicate_autoprefix, "--autoprefix may only be specified once");
+    try expectFailureContaining(duplicate_browsers, "--browsers may only be specified once");
     try expectExitCode(unknown, 2);
     try expectExitCode(missing, 2);
     try expectExitCode(duplicate_optimize, 2);
+    try expectExitCode(duplicate_autoprefix, 2);
+    try expectExitCode(duplicate_browsers, 2);
     try std.testing.expectEqual(@as(usize, 0), unknown.stdout.len);
     try std.testing.expectEqual(@as(usize, 0), missing.stdout.len);
     try std.testing.expectEqual(@as(usize, 0), duplicate_optimize.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), duplicate_autoprefix.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), duplicate_browsers.stdout.len);
 }
 
 test "CLI strictness: valued options diagnose missing values before availability (CLI-002)" {
@@ -1855,17 +2109,75 @@ test "CLI strictness: valued options diagnose missing values before availability
     try expectFailureContaining(critical, "--critical-classes requires a value");
 }
 
-test "CLI strictness: unavailable target and extraction features are rejected (CLI-002)" {
+test "CLI strictness: target query pairing grammar and extraction boundaries fail closed (CLI-002)" {
     const input = @embedFile("fixtures/simple.css");
-    var browsers = try runCompiler(input, &.{ "--browsers", "ie11" });
-    defer deinitRun(&browsers);
+    var browsers_only = try runCompiler(input, &.{ "--browsers", "ie >= 11" });
+    defer deinitRun(&browsers_only);
+    var autoprefix_only = try runCompiler(input, &.{"--autoprefix"});
+    defer deinitRun(&autoprefix_only);
+    var invalid = try runCompiler(input, &.{ "--autoprefix", "--browsers", "ie11" });
+    defer deinitRun(&invalid);
+    var dynamic = try runCompiler(input, &.{ "--autoprefix", "--browsers", "defaults" });
+    defer deinitRun(&dynamic);
     var critical = try runCompiler(input, &.{ "--critical-classes", "critical" });
     defer deinitRun(&critical);
 
-    try expectFailureContaining(browsers, "--browsers is unavailable");
+    try expectFailureContaining(browsers_only, "--browsers requires --autoprefix");
+    try expectFailureContaining(autoprefix_only, "--autoprefix requires --browsers <query>");
+    try expectFailureContaining(invalid, "invalid --browsers query at byte 2: expected_comparator");
+    try expectFailureContaining(dynamic, "invalid --browsers query at byte 0: unknown_browser");
     try expectFailureContaining(critical, "--critical-classes is unavailable");
     try std.testing.expect(std.mem.indexOf(u8, critical.stderr, "library/test-driver only") != null);
+    try expectExitCode(browsers_only, 2);
+    try expectExitCode(autoprefix_only, 2);
+    try expectExitCode(invalid, 2);
+    try expectExitCode(dynamic, 2);
+    try std.testing.expectEqual(@as(usize, 0), browsers_only.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), autoprefix_only.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), invalid.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), dynamic.stdout.len);
     try std.testing.expectEqual(@as(usize, 0), critical.stdout.len);
+}
+
+test "CLI strictness: invalid target queries fail before source reads or output mutation (CLI-002)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "output.css", .data = "target-query-sentinel" });
+
+    var result = try runInDir(tmp.dir, &.{
+        "missing-dir/*.css",
+        "-o",
+        "output.css",
+        "--autoprefix",
+        "--browsers",
+        "defaults",
+    });
+    defer deinitRun(&result);
+
+    try expectFailureContaining(result, "invalid --browsers query at byte 0: unknown_browser");
+    try expectExitCode(result, 2);
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "FileNotFound") == null);
+
+    const output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(output);
+    try std.testing.expectEqualStrings("target-query-sentinel", output);
+
+    var incompatible = try runInDir(tmp.dir, &.{
+        "missing-dir/*.css",
+        "-o",
+        "output.css",
+        "--source-map",
+        "--optimize",
+    });
+    defer deinitRun(&incompatible);
+    try expectFailureContaining(incompatible, "--source-map cannot be combined with --optimize");
+    try expectExitCode(incompatible, 2);
+    try std.testing.expectEqual(@as(usize, 0), incompatible.stdout.len);
+
+    const retained = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(retained);
+    try std.testing.expectEqualStrings("target-query-sentinel", retained);
 }
 
 test "CLI strictness: output-dir is rejected outside explicit batch mode (CLI-002)" {
@@ -1875,30 +2187,29 @@ test "CLI strictness: output-dir is rejected outside explicit batch mode (CLI-00
     try expectFailureContaining(result, "--output-dir requires multiple inputs");
 }
 
-test "recovery CLI identifies the current compiler as stable (SAFE-001)" {
+test "recovery CLI identifies the current compiler as a release candidate (SAFE-001)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var help = try runInDir(tmp.dir, &.{"--help"});
     defer deinitRun(&help);
     try expectSuccess(help);
-    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "ZigCSS 0.6.0 native stylesheet compiler") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "EXPERIMENTAL") == null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "ZigCSS 0.7.0-rc.1 native stylesheet compiler — RELEASE CANDIDATE") != null);
     try std.testing.expect(std.mem.indexOf(u8, help.stdout, "--optimize               Run the closed verified optimizer preset") != null);
     try std.testing.expectEqual(@as(usize, 0), help.stderr.len);
 
     var compile = try runCompiler(@embedFile("fixtures/simple.css"), &.{"--minify"});
     defer deinitRun(&compile);
     try expectSuccess(compile);
-    try std.testing.expect(std.mem.indexOf(u8, compile.stderr, "experimental release candidate") == null);
+    try std.testing.expect(std.mem.indexOf(u8, compile.stderr, "experimental release candidate") != null);
 }
 
-test "recovery CLI rejects experimental format adapters before writing (SAFE-001)" {
+test "recovery CLI requires explicit preprocessor syntax before writing (SAFE-001)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(.{ .sub_path = "input.scss", .data = "$color: red; .a { color: $color; }" });
 
     var result = try runInDir(tmp.dir, &.{ "input.scss", "-o", "output.css" });
     defer deinitRun(&result);
-    try expectFailureContaining(result, "SCSS format adapter is experimental and unavailable");
+    try expectFailureContaining(result, "input.scss input requires --syntax scss");
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("output.css", .{}));
 }

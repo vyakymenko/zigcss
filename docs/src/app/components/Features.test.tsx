@@ -5,7 +5,7 @@ import { Features } from './Features'
 import capabilityMetadata from '../../data/capabilities.json'
 
 function renderFeatures() {
-  render(<BrowserRouter><Features /></BrowserRouter>)
+  return render(<BrowserRouter><Features /></BrowserRouter>)
 }
 
 describe('Features', () => {
@@ -13,8 +13,9 @@ describe('Features', () => {
     renderFeatures()
     expect(screen.getByRole('heading', { name: /current capability status/i })).toBeInTheDocument()
     expect(screen.getByText(/not a compatibility promise/i)).toBeInTheDocument()
-    expect(screen.getByText(/published stable 0\.6\.0 release/i)).toBeInTheDocument()
-    expect(screen.getByText(/GitHub Release and npm latest publication are verified/i)).toBeInTheDocument()
+    expect(screen.getByText(/separates published stable 0\.6\.0 delivery from bounded current-source evidence/i)).toBeInTheDocument()
+    expect(screen.getByText(/REL-010 promotes only the stable 0\.6\.0 rows/i)).toBeInTheDocument()
+    expect(screen.getByText(/rows whose contract says current, source-checkout, or Unreleased remain Unreleased/i)).toBeInTheDocument()
   })
 
   it('marks the core compiler and format adapters experimental', () => {
@@ -29,6 +30,9 @@ describe('Features', () => {
     expect(screen.getByText('Less input')).toBeInTheDocument()
     expect(screen.getByText('Stylus input')).toBeInTheDocument()
     expect(screen.getByText('JavaScript build-tool adapters')).toBeInTheDocument()
+    expect(screen.getByText('Next.js Webpack host example')).toBeInTheDocument()
+    expect(screen.getByText('Astro host example')).toBeInTheDocument()
+    expect(screen.getByText('Nuxt host example')).toBeInTheDocument()
     expect(screen.getAllByText(/experimental/i).length).toBeGreaterThan(1)
   })
 
@@ -60,6 +64,43 @@ describe('Features', () => {
     expect(screen.getAllByText('zigcss.compile', { selector: 'code' })).toHaveLength(2)
     expect(screen.getAllByText('--optimize', { selector: 'code' })).toHaveLength(2)
     expect(document.body.textContent).not.toContain('`')
+  })
+
+  it('renders admitted Markdown links as safe external links', () => {
+    renderFeatures()
+    const link = screen.getByRole('link', { name: "Yarn's official SDK guidance" })
+
+    expect(link).toHaveAttribute('href', 'https://yarnpkg.com/getting-started/editor-sdks')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(document.body.textContent).not.toContain("[Yarn's official SDK guidance]")
+  })
+
+  it('uses labeled cards on mobile while retaining the desktop table layout', () => {
+    const { container } = renderFeatures()
+    const table = screen.getByRole('table')
+    const header = container.querySelector('thead')
+    const body = container.querySelector('tbody')
+    const labels = Array.from(container.querySelectorAll<HTMLElement>('[data-mobile-column-label]'))
+
+    expect(table).toHaveClass('block', 'sm:table')
+    expect(header).toHaveClass('hidden', 'sm:table-header-group')
+    expect(body).toHaveClass('block', 'sm:table-row-group')
+    expect(labels).toHaveLength(capabilityMetadata.capabilities.length * 3)
+    expect(labels.every(label => label.classList.contains('sm:hidden'))).toBe(true)
+
+    for (const column of ['Surface', 'Status', 'Current contract']) {
+      expect(labels.filter(label => label.dataset.mobileColumnLabel === column)).toHaveLength(capabilityMetadata.capabilities.length)
+    }
+  })
+
+  it('keeps small capability copy on WCAG AA contrast colors', () => {
+    const { container } = renderFeatures()
+    const intro = screen.getByText(/table mixes explicitly labeled published-stable rows/i)
+    const mobileLabels = Array.from(container.querySelectorAll<HTMLElement>('[data-mobile-column-label]'))
+
+    expect(intro).toHaveClass('text-[#677067]')
+    expect(mobileLabels.every(label => label.classList.contains('text-[#6c736b]'))).toBe(true)
   })
 
   it('links to the tested CSS compatibility matrix', () => {

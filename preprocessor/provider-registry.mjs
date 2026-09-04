@@ -11,7 +11,7 @@ export const CANONICAL_PROVIDERS = Object.freeze({
   }),
   less: Object.freeze({
     package: 'less',
-    version: '4.6.7',
+    version: '4.9.0',
     license: 'Apache-2.0',
     adapters: Object.freeze(['less']),
   }),

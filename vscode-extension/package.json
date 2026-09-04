@@ -2,7 +2,7 @@
   "name": "zigcss-language-server",
   "displayName": "zigcss Language Server",
   "description": "Experimental Language Server Protocol client for the ZigCSS recovery prototype",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "zigcss",
   "private": true,
   "preview": true,

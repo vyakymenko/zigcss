@@ -14,6 +14,7 @@ pub const sourcemap = @import("preprocessor/sourcemap.zig");
 pub const resolver = @import("preprocessor/resolver.zig");
 pub const evaluator = @import("preprocessor/evaluator.zig");
 pub const compiler = @import("preprocessor/compiler.zig");
+pub const target_query = @import("prefixing/target_query.zig");
 pub const sass = @import("preprocessor/sass.zig");
 pub const less = @import("preprocessor/less.zig");
 pub const stylus = @import("preprocessor/stylus.zig");
@@ -38,6 +39,7 @@ test {
     _ = resolver;
     _ = evaluator;
     _ = compiler;
+    _ = target_query;
     _ = sass;
     _ = less;
     _ = stylus;

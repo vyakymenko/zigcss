@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "ownerPackage": "REL-011",
+  "releaseGapFamily": "next-release-candidate",
+  "state": "planned",
+  "candidateReady": false,
+  "candidateVersion": "0.7.0-rc.1",
+  "candidateTag": "v0.7.0-rc.1",
+  "npmDistTag": "next",
+  "githubPrerelease": true,
+  "immutableHistory": [
+    {
+      "version": "0.6.0-rc.2",
+      "tag": "v0.6.0-rc.2",
+      "commit": "b63e190f7edeccd829abe34bfb96d9e1a8a320e2",
+      "npmDistTag": "next",
+      "githubPrerelease": true
+    },
+    {
+      "version": "0.6.0",
+      "tag": "v0.6.0",
+      "commit": "6786655d66ca65c5a06421c8ed70d84183722dce",
+      "npmDistTag": "latest",
+      "githubPrerelease": false
+    }
+  ],
+  "preTagSurfaces": [
+    "candidate-selection",
+    "version-synchronization",
+    "native-integrity",
+    "local-validation",
+    "documentation-validation",
+    "hosted-validation",
+    "origin-main-integration"
+  ],
+  "postTagSurfaces": [
+    "tag-workflow-publication"
+  ],
+  "gates": [
+    {
+      "id": "candidate-selection",
+      "state": "verified",
+      "evidenceRequirements": [
+        "The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.1 was selected."
+      ],
+      "evidence": [
+        "Verified 2026-09-03: GitHub tag and release v0.7.0-rc.1 and npm zigcss@0.7.0-rc.1 were absent; npm latest remained 0.6.0 and next remained 0.6.0-rc.2."
+      ]
+    },
+    {
+      "id": "version-synchronization",
+      "state": "verified",
+      "evidenceRequirements": [
+        "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.1."
+      ],
+      "evidence": [
+        "Exact version validation passed on 2026-09-03: all 45 active source surfaces agree on 0.7.0-rc.1 while immutable published stable evidence remains 0.6.0."
+      ]
+    },
+    {
+      "id": "native-integrity",
+      "state": "verified",
+      "evidenceRequirements": [
+        "All five architecture-matched release archives reproduce the committed 0.7.0-rc.1 SHA-256 inventory."
+      ],
+      "evidence": [
+        "Two builds from distinct absolute prefix, local-cache, and global-cache roots produced byte-identical ReleaseFast binaries and all five committed 0.7.0-rc.1 archive SHA-256 digests on 2026-09-03."
+      ]
+    },
+    {
+      "id": "local-validation",
+      "state": "verified",
+      "evidenceRequirements": [
+        "The complete Debug, ReleaseSafe, package, consumer, builder, documentation, and audit gates pass for the candidate source."
+      ],
+      "evidence": [
+        "Local validation passed on 2026-09-03: Debug and ReleaseSafe completed 1728/1728 tests each; the final combined Node suite completed 407/407 with no skips; package, consumer, builder, editor, dependency, container, and audit gates passed; exact Nix 2.35.2 completed sandboxed aarch64-linux flake check, build, install checks, and run."
+      ]
+    },
+    {
+      "id": "documentation-validation",
+      "state": "verified",
+      "evidenceRequirements": [
+        "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
+      ],
+      "evidence": [
+        "Documentation validation passed on 2026-09-03: 228/228 tests, production, SEO, bundle, 33-file served-bundle, container, and desktop/mobile browser checks preserved the unpublished 0.7.0-rc.1 versus stable 0.6.0 identity boundary."
+      ]
+    },
+    {
+      "id": "hosted-validation",
+      "state": "pending",
+      "evidenceRequirements": [
+        "A same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for the candidate checkpoint."
+      ],
+      "evidence": []
+    },
+    {
+      "id": "origin-main-integration",
+      "state": "pending",
+      "evidenceRequirements": [
+        "The final candidate is integrated into origin/main; tag admission independently requires the peeled candidate commit to equal the exact origin/main commit."
+      ],
+      "evidence": []
+    },
+    {
+      "id": "tag-workflow-publication",
+      "state": "pending",
+      "evidenceRequirements": [
+        "The immutable tag workflow publishes the five-target GitHub prerelease and exact npm package on next with provenance and complete readback."
+      ],
+      "evidence": []
+    }
+  ]
+}

@@ -150,6 +150,7 @@ export async function prepareReleaseContainer(options) {
       platform: policy.platform,
       arch: policy.arch,
       packageRoot: output,
+      integrityManifestText: options.integrityManifestText,
       downloadFile: async (url, destination, maximumBytes) => {
         const source = localAssets.get(url)
         if (source === undefined) fail(`installer requested unexpected asset ${url}`)

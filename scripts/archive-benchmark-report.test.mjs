@@ -79,7 +79,7 @@ function completeReport() {
       cpuModel: 'Controlled Benchmark CPU',
       logicalCpuCount: 8,
       totalMemoryBytes: '17179869184',
-      nodeVersion: 'v22.0.0',
+      nodeVersion: 'v22.22.0',
       zigVersion: '0.15.2',
       optimizationMode: 'ReleaseFast',
       hostAttestation: {
@@ -132,6 +132,7 @@ test('archive contract and scheduled controlled-runner workflow are closed', () 
   assert.equal(contract.schemaVersion, 2)
   assert.equal(contract.benchmarkId, 'zigcss-benchmark-v1')
   assert.deepEqual(contract.runner.labels, ['self-hosted', 'linux', 'x64', 'zigcss-benchmark-v1'])
+  assert.equal(contract.runner.nodeVersion, '22.22.0')
   assert.equal(contract.artifact.retentionDays, 90)
   assert.equal(validateBenchmarkArchiveWorkflow(repositoryRoot), true)
 })
@@ -188,6 +189,11 @@ test('archive rejects symlink substitution and uncontrolled hardware reports', t
   assert.throws(() => writeBenchmarkArchive(directory, provenance), /controlled hardware platform/)
 
   report.environment.platform = 'linux'
+  report.environment.nodeVersion = 'v22.21.1'
+  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`)
+  assert.throws(() => writeBenchmarkArchive(directory, provenance), /controlled benchmark Node\.js version/)
+
+  report.environment.nodeVersion = 'v22.22.0'
   report.environment.hostAttestation = { schemaVersion: 1, status: 'not-requested' }
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`)
   assert.throws(() => writeBenchmarkArchive(directory, provenance), /verified bare-metal attestation/)
@@ -228,6 +234,13 @@ test('schedule, runner, retention, cleanup, and build-gate drift fail closed', (
       buildWorkflow,
     ),
     /controlled runner/,
+  )
+  assert.throws(
+    () => validateBenchmarkArchiveWorkflowSource(
+      benchmarkWorkflow.replace("node-version: '22.22.0'", 'node-version: 22'),
+      buildWorkflow,
+    ),
+    /exact Node\.js 22\.22\.0/,
   )
   assert.throws(
     () => validateBenchmarkArchiveWorkflowSource(

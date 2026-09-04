@@ -4,6 +4,7 @@ const diagnostics = preprocessor.diagnostics;
 const evaluator = preprocessor.evaluator;
 const resolver = preprocessor.resolver;
 const source = preprocessor.source;
+const target_query = preprocessor.target_query;
 const test_path = @import("test_path.zig");
 
 const Harness = struct {
@@ -142,6 +143,22 @@ test "commits complete CSS with owned diagnostics dependencies and maps" {
     try std.testing.expectEqualStrings("card", frontend_map.names()[0]);
 }
 
+test "validated result transfers its core emitter buffer without copying" {
+    var harness = try Harness.init(.{}, .{});
+    _ = try harness.addSource("owned.scss", ".owned { color: red; }");
+    try harness.transaction.emit(".owned { color: red; }");
+    var result = try harness.transaction.finish(.{ .format = .minified });
+    harness.deinit();
+
+    const original_pointer = result.css().ptr;
+    const owned_css = result.takeCss();
+    result.deinit();
+    defer if (owned_css.len > 0) std.testing.allocator.free(owned_css);
+
+    try std.testing.expectEqual(original_pointer, owned_css.ptr);
+    try std.testing.expectEqualStrings(".owned{color:red}", owned_css);
+}
+
 test "deterministic replay produces identical core and frontend output" {
     var first = try Harness.init(.{}, .{});
     defer first.deinit();
@@ -169,6 +186,113 @@ test "deterministic replay produces identical core and frontend output" {
         first_result.map().?.names()[0],
         second_result.map().?.names()[0],
     );
+}
+
+test "verified optimizer commits one byte-stable native transaction and rejects maps" {
+    var first = try Harness.init(.{}, .{});
+    defer first.deinit();
+    _ = try first.addSource("input.scss", ".empty{}.a{color:#ffffff}.b{color:#fff}");
+    try first.transaction.emit(".empty{}.a{color:#ffffff}.b{color:#fff}");
+    var first_result = try first.transaction.finish(.{
+        .format = .minified,
+        .optimize = true,
+    });
+    defer first_result.deinit();
+    try std.testing.expectEqualStrings(".a,.b{color:#fff}", first_result.css());
+    try std.testing.expect(first_result.sourceMap() == null);
+
+    var repeated = try Harness.init(.{}, .{});
+    defer repeated.deinit();
+    _ = try repeated.addSource("optimized.scss", first_result.css());
+    try repeated.transaction.emit(first_result.css());
+    var repeated_result = try repeated.transaction.finish(.{
+        .format = .minified,
+        .optimize = true,
+    });
+    defer repeated_result.deinit();
+    try std.testing.expectEqualStrings(first_result.css(), repeated_result.css());
+
+    var incompatible = try Harness.init(.{}, .{});
+    defer incompatible.deinit();
+    _ = try incompatible.addSource("mapped.scss", ".a{color:red}");
+    try incompatible.transaction.emit(".a{color:red}");
+    try std.testing.expectError(
+        error.InvalidOptions,
+        incompatible.transaction.finish(.{
+            .format = .minified,
+            .source_map = true,
+            .optimize = true,
+        }),
+    );
+    try std.testing.expectError(error.SessionFailed, incompatible.transaction.emit(".b{}"));
+}
+
+test "verified target prefixing composes with native maps and fails closed" {
+    const parsed_targets = try target_query.parse(
+        std.testing.allocator,
+        "safari >= 7, ie >= 11",
+        .{},
+    );
+    var targets = switch (parsed_targets) {
+        .query => |query| query,
+        .invalid => return error.InvalidQuery,
+    };
+    defer targets.deinit();
+
+    var mapped = try Harness.init(.{}, .{});
+    defer mapped.deinit();
+    const span = try mapped.addSource("input.less", ".a{user-select:none;display:flex}");
+    try mapped.transaction.emitMapped(span, "prefix-rule", ".a{user-select:none;display:flex}");
+    var result = try mapped.transaction.finish(.{
+        .format = .minified,
+        .source_map = true,
+        .prefix = true,
+        .targets = &targets,
+    });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{-webkit-user-select:none;-ms-user-select:none;user-select:none;display:-webkit-flex;display:flex}",
+        result.css(),
+    );
+    try std.testing.expect(result.sourceMap() != null);
+    try std.testing.expect(result.map() != null);
+
+    var missing_targets = try Harness.init(.{}, .{});
+    defer missing_targets.deinit();
+    _ = try missing_targets.addSource("invalid.scss", ".a{}");
+    try missing_targets.transaction.emit(".a{}");
+    try std.testing.expectError(
+        error.InvalidOptions,
+        missing_targets.transaction.finish(.{ .prefix = true }),
+    );
+    try std.testing.expectError(error.SessionFailed, missing_targets.transaction.emit(".b{}"));
+
+    var unexpected_targets = try Harness.init(.{}, .{});
+    defer unexpected_targets.deinit();
+    _ = try unexpected_targets.addSource("invalid.styl", ".a{}");
+    try unexpected_targets.transaction.emit(".a{}");
+    try std.testing.expectError(
+        error.InvalidOptions,
+        unexpected_targets.transaction.finish(.{ .targets = &targets }),
+    );
+
+    var forged_storage = [_]target_query.Target{.{
+        .browser = .safari,
+        .minimum = .{ .major = 0 },
+    }};
+    const forged = target_query.Query{
+        .allocator = std.testing.allocator,
+        .targets = &forged_storage,
+    };
+    var forged_targets = try Harness.init(.{}, .{});
+    defer forged_targets.deinit();
+    _ = try forged_targets.addSource("invalid.less", ".a{}");
+    try forged_targets.transaction.emit(".a{}");
+    try std.testing.expectError(
+        error.InvalidOptions,
+        forged_targets.transaction.finish(.{ .prefix = true, .targets = &forged }),
+    );
+    try std.testing.expectError(error.SessionFailed, forged_targets.transaction.emit(".b{}"));
 }
 
 test "staging restoration removes speculative CSS and source-map ownership" {
@@ -365,6 +489,56 @@ test "cooperative cancellation is terminal before emission and validation" {
         emitted_cancelled.transaction.finish(.{ .format = .minified }),
     );
     try std.testing.expectEqual(@as(usize, 3), emitted_context.matched);
+
+    var optimized_context = CancelContext{ .target = .validate, .cancel_on_match = 3 };
+    var optimized_cancelled = try Harness.init(.{}, .{
+        .context = &optimized_context,
+        .check_fn = CancelContext.check,
+    });
+    defer optimized_cancelled.deinit();
+    _ = try optimized_cancelled.addSource("input.sass", "");
+    try optimized_cancelled.transaction.emit(".empty{}.a{color:#ffffff}.b{color:#fff}");
+    try std.testing.expectError(
+        error.Cancelled,
+        optimized_cancelled.transaction.finish(.{ .format = .minified, .optimize = true }),
+    );
+    try std.testing.expectEqual(@as(usize, 3), optimized_context.matched);
+    try std.testing.expectError(
+        error.SessionFailed,
+        optimized_cancelled.transaction.finish(.{ .format = .minified, .optimize = true }),
+    );
+
+    const parsed_targets = try target_query.parse(
+        std.testing.allocator,
+        "safari >= 7, ie >= 11",
+        .{},
+    );
+    var prefix_targets = switch (parsed_targets) {
+        .query => |query| query,
+        .invalid => return error.InvalidQuery,
+    };
+    defer prefix_targets.deinit();
+    var prefixed_context = CancelContext{ .target = .validate, .cancel_on_match = 3 };
+    var prefixed_cancelled = try Harness.init(.{}, .{
+        .context = &prefixed_context,
+        .check_fn = CancelContext.check,
+    });
+    defer prefixed_cancelled.deinit();
+    _ = try prefixed_cancelled.addSource("input.less", "");
+    try prefixed_cancelled.transaction.emit(".a{user-select:none;display:flex}");
+    try std.testing.expectError(
+        error.Cancelled,
+        prefixed_cancelled.transaction.finish(.{
+            .format = .minified,
+            .prefix = true,
+            .targets = &prefix_targets,
+        }),
+    );
+    try std.testing.expectEqual(@as(usize, 3), prefixed_context.matched);
+    try std.testing.expectError(
+        error.SessionFailed,
+        prefixed_cancelled.transaction.finish(.{ .format = .minified }),
+    );
 
     var commit_context = CancelContext{ .target = .commit };
     var commit_cancelled = try Harness.init(.{}, .{

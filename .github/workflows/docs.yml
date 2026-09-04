@@ -6,6 +6,20 @@ on:
     paths:
       - 'docs/**'
       - 'Dockerfile.docs'
+      - 'Dockerfile.docs.dockerignore'
+      - 'PREPROCESSOR-SBOM.spdx.json'
+      - 'THIRD_PARTY_NOTICES.md'
+      - 'adapters/**'
+      - 'api.cjs'
+      - 'api.mjs'
+      - 'api.d.cts'
+      - 'api.d.mts'
+      - 'api.d.ts'
+      - 'index.js'
+      - 'install.js'
+      - 'native-integrity.json'
+      - 'README.md'
+      - 'LICENSE'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/docs.yml'
@@ -14,25 +28,57 @@ on:
     paths:
       - 'docs/**'
       - 'Dockerfile.docs'
+      - 'Dockerfile.docs.dockerignore'
+      - 'PREPROCESSOR-SBOM.spdx.json'
+      - 'THIRD_PARTY_NOTICES.md'
+      - 'adapters/**'
+      - 'api.cjs'
+      - 'api.mjs'
+      - 'api.d.cts'
+      - 'api.d.mts'
+      - 'api.d.ts'
+      - 'index.js'
+      - 'install.js'
+      - 'native-integrity.json'
+      - 'README.md'
+      - 'LICENSE'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/docs.yml'
-  workflow_dispatch:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+    branches: [main]
 
 permissions: {}
 
 concurrency:
-  group: pages-${{ github.ref }}
+  group: pages-${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && 'deploy' || format('{0}-{1}', github.event_name, github.ref) }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
+    outputs:
+      source-sha: ${{ steps.source-identity.outputs.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Verify checked-out source identity
+        id: source-identity
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          actual_source_sha="$(git rev-parse HEAD)"
+          test "$actual_source_sha" = "$EXPECTED_SOURCE_SHA"
+          echo "sha=$actual_source_sha" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -45,6 +91,10 @@ jobs:
         working-directory: docs
         run: npm ci --ignore-scripts
 
+      - name: Audit complete documentation build graph
+        working-directory: docs
+        run: npm audit --include=prod --include=dev --include=optional --include=peer --package-lock-only --audit-level=high
+
       - name: Test documentation
         working-directory: docs
         run: npm run test:run
@@ -53,14 +103,27 @@ jobs:
         working-directory: docs
         run: npm run build
 
+      - name: Build and smoke-test documentation container
+        run: node docs/scripts/smoke-docs-container.mjs
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: docs/dist
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.name == 'Build' &&
+      github.event.workflow_run.path == '.github/workflows/build.yml' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.repository.full_name == github.repository &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      needs.build.outputs.source-sha == github.event.workflow_run.head_sha
     needs: build
+    timeout-minutes: 15
     permissions:
       pages: write
       id-token: write

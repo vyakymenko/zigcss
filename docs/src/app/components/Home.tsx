@@ -166,7 +166,7 @@ function Endgame() {
           <article>
             <span>REFERENCE</span>
             <strong>DEVELOPMENT ORACLES</strong>
-            <p>Dart Sass 1.101.0 · Less 4.6.7 · Stylus 0.64.0 · tests only</p>
+            <p>Dart Sass 1.101.0 · Less 4.9.0 oracle / 4.6.7 frozen baseline · Stylus 0.64.0 · tests only</p>
           </article>
           <div className="corridor-arrow" aria-hidden="true">→</div>
           <article>
@@ -178,7 +178,7 @@ function Endgame() {
           <article className="endgame-target">
             <span>RELEASE GATE</span>
             <strong>STABLE PUBLISHED</strong>
-            <p>REL-010 · 0.6.0 · 25 signed assets · npm latest</p>
+            <p>REL-010 · 0.6.0 · 15 attested subjects + 10 bundles · npm latest</p>
           </article>
         </div>
       </div>
@@ -252,6 +252,19 @@ function Deploy() {
             </div>
             <p className="mt-9 terminal-label">interfaces</p>
             <p className="mt-3 font-mono text-xs leading-6 text-[#a6b2a4]">CLI · JS wrapper · Zig API · helpers.addCssCompile · CSS LSP</p>
+            <p className="mt-9 terminal-label">0.7.0-rc.1 · unpublished source proofs</p>
+            <p className="mt-3 font-mono text-xs leading-6 text-[#829080]">5/8 admission gates verified · candidateReady=false until seven pre-tag gates pass · stable remains 0.6.0</p>
+            <h4 className="mt-3 text-lg font-semibold">Pinned hosts. Same native binary.</h4>
+            <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.12em] text-[#829080]">direct adapters</p>
+            <div className="mt-2 flex flex-wrap gap-2" aria-label="Direct current-source builder adapters">
+              {['Vite', 'Rollup', 'esbuild', 'Bun', 'Webpack', 'Rspack'].map(host => <span key={host} className="terminal-chip">{host}</span>)}
+            </div>
+            <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.12em] text-[#829080]">pinned hosts</p>
+            <div className="mt-2 flex flex-wrap gap-2" aria-label="Pinned current-source host proofs">
+              {['Next.js · Turbopack + Webpack', 'SvelteKit', 'Astro', 'Nuxt', 'Parcel'].map(host => <span key={host} className="terminal-chip">{host}</span>)}
+            </div>
+            <p className="mt-4 font-mono text-xs leading-6 text-[#829080]">Exact checkout gates, not stable 0.6.0 framework packages.</p>
+            <Link className="terminal-link mt-4 inline-block font-mono text-xs uppercase tracking-[0.14em] text-[#b7f34a]" to="/features">inspect host evidence →</Link>
           </aside>
         </div>
 
@@ -260,7 +273,7 @@ function Deploy() {
           <Link className="deploy-link" to="/getting-started">Get started</Link>
           <a className="deploy-link" href="https://github.com/vyakymenko/zigcss" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a className="deploy-link" href="https://www.npmjs.com/package/zigcss" target="_blank" rel="noopener noreferrer">npm</a>
-          <a className="deploy-link" href="https://marketplace.visualstudio.com/items?itemName=zigcss.zigcss-language-server" target="_blank" rel="noopener noreferrer">VS Code</a>
+          <a className="deploy-link" href="https://github.com/vyakymenko/zigcss/tree/main/vscode-extension" target="_blank" rel="noopener noreferrer">VS Code source</a>
           <a className="deploy-link" href="https://github.com/vyakymenko/zigcss/tree/main/neovim-config" target="_blank" rel="noopener noreferrer">Neovim</a>
         </nav>
       </div>
@@ -279,7 +292,7 @@ export function Home() {
         <div className="relative mx-auto flex min-h-[calc(100svh-4rem)] max-w-[96rem] flex-col justify-center px-5 py-20 sm:px-8 md:py-28 lg:px-12">
           <p className="gate-label">TERMINAL 00 · ZIGCSS NATIVE 0.6.0</p>
           <div className="experimental-chip mt-7 w-fit">0.6.0 · STABLE RELEASE · ZERO RUNTIME DEPENDENCIES</div>
-          <h1 id="hero-title" className="hero-display display-type mt-9 max-w-[90rem] text-[clamp(4.1rem,12vw,12rem)] leading-[0.74] tracking-[-0.085em]">
+          <h1 id="hero-title" className="hero-display display-type mt-9 max-w-[90rem] text-[clamp(3.15rem,12vw,12rem)] leading-[0.74] tracking-[-0.085em]">
             Exact in.<br /><span>Deterministic out.</span><br />Denied by default.
           </h1>
           <div className="mt-10 grid gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">

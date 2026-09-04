@@ -12,6 +12,7 @@ import {
 import { createProductionRegistry } from '../../../preprocessor/provider-registry.mjs'
 import { runPreprocessorHost } from '../../../preprocessor/runner.mjs'
 import { parseSourceMap } from '../../../preprocessor/source-map.mjs'
+import { resolveLockedDependency } from '../../../scripts/validate-preprocessor-package.mjs'
 import { makeRequest } from '../protocol/helpers.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -60,7 +61,7 @@ async function withFixture(run) {
   }
 }
 
-test('binds the development oracle row and lockfile to exact Less 4.6.7', () => {
+test('binds the development oracle row and lockfile to exact Less 4.9.0', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -75,21 +76,22 @@ test('binds the development oracle row and lockfile to exact Less 4.6.7', () => 
     'utf8',
   )
 
-  assert.equal(LESS_VERSION, '4.6.7')
+  assert.equal(LESS_VERSION, '4.9.0')
   assert.equal(manifest.dependencies?.less, undefined)
   assert.equal(manifest.dependencies?.['image-size'], undefined)
   assert.equal(manifest.devDependencies.less, LESS_VERSION)
-  assert.equal(manifest.devDependencies['image-size'], '0.5.5')
+  assert.equal(manifest.devDependencies['image-size'], undefined)
   assert.equal(manifest.files.includes('preprocessor/providers/less.mjs'), false)
   assert.equal(lock.packages[''].dependencies?.less, undefined)
   assert.equal(lock.packages[''].dependencies?.['image-size'], undefined)
   assert.equal(lock.packages[''].devDependencies.less, LESS_VERSION)
-  assert.equal(lock.packages[''].devDependencies['image-size'], '0.5.5')
+  assert.equal(lock.packages[''].devDependencies['image-size'], undefined)
   assert.equal(lock.packages['node_modules/less'].version, LESS_VERSION)
   assert.equal(
     lock.packages['node_modules/less'].integrity,
-    'sha512-o3UxHBPPVY1HtCXx15/z1NlknQiWyafRNbtLEv+6xFaDRI2g2xPKIH43do9dSwt8bGLTsjNSaifa48N3d6odsQ==',
+    'sha512-umRhrCH7fCi8Uj2RcwKjJdvUORTjeWqkdKx0LbcZvjIwsAVsnIAGcxHaqowPeBFBjQuWOeC/bve0AlpFzF/+SQ==',
   )
+  assert.equal(lock.packages['node_modules/image-size'], undefined)
   assert.equal(installed.version, LESS_VERSION)
   assert.equal(installed.license, 'Apache-2.0')
   assert.deepEqual(installed.engines, { node: '>=18' })
@@ -101,6 +103,8 @@ test('binds the development oracle row and lockfile to exact Less 4.6.7', () => 
   assert.equal(typeof provider.compile, 'function')
   assert.match(adapterSource, /less\.render\(/)
   assert.doesNotMatch(adapterSource, /less\.renderSync\(/)
+  assert.match(adapterSource, /imageDimensions\(loaded\.contents\)/)
+  assert.doesNotMatch(adapterSource, /from ['"]image-size['"]|require\(['"]image-size/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'less')
   assert.equal(adapter.availability, 'NativeCliZigApi')
   assert.equal(adapter.compatibility, 'NativeGraduated')
@@ -213,42 +217,50 @@ test('maps only the closed non-executable Less provider options', async () => {
 
 test('locks and license-reviews the complete Less dependency closure', () => {
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
-  const pending = ['less']
+  const pending = ['node_modules/less']
   const seen = new Set()
   while (pending.length !== 0) {
-    const name = pending.shift()
-    if (seen.has(name)) continue
-    const entry = lock.packages[`node_modules/${name}`]
-    assert.notEqual(entry, undefined, name)
+    const packagePath = pending.shift()
+    if (seen.has(packagePath)) continue
+    const entry = lock.packages[packagePath]
+    assert.notEqual(entry, undefined, packagePath)
     assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//)
     assert.match(entry.integrity, /^sha512-[A-Za-z0-9+/]+=*$/)
-    assert.equal(entry.dev, true, `${name}:dev`)
-    seen.add(name)
+    assert.equal(entry.dev, true, `${packagePath}:dev`)
+    seen.add(packagePath)
     pending.push(...Object.keys({
       ...(entry.dependencies ?? {}),
       ...(entry.optionalDependencies ?? {}),
-    }))
+    }).sort().map(name => resolveLockedDependency(lock, packagePath, name)))
   }
 
-  assert.deepEqual([...seen].sort().map(name => {
-    const entry = lock.packages[`node_modules/${name}`]
-    return `${name}@${entry.version} ${entry.license}`
+  assert.deepEqual([...seen].sort().map(packagePath => {
+    const entry = lock.packages[packagePath]
+    return `${packagePath} ${entry.version} ${entry.license}`
   }), [
-    'copy-anything@3.0.5 MIT',
-    'errno@0.1.8 MIT',
-    'graceful-fs@4.2.11 ISC',
-    'iconv-lite@0.6.3 MIT',
-    'image-size@0.5.5 MIT',
-    'is-what@4.1.16 MIT',
-    'less@4.6.7 Apache-2.0',
-    'make-dir@5.1.0 MIT',
-    'mime@1.6.0 MIT',
-    'needle@3.5.0 MIT',
-    'parse-node-version@1.0.1 MIT',
-    'prr@1.0.1 MIT',
-    'safer-buffer@2.1.2 MIT',
-    'sax@1.6.0 BlueOak-1.0.0',
-    'source-map@0.6.1 BSD-3-Clause',
+    'node_modules/copy-anything 3.0.5 MIT',
+    'node_modules/errno 0.1.8 MIT',
+    'node_modules/graceful-fs 4.2.11 ISC',
+    'node_modules/iconv-lite 0.6.3 MIT',
+    'node_modules/is-what 4.1.16 MIT',
+    'node_modules/less 4.9.0 Apache-2.0',
+    'node_modules/lodash.merge 4.6.2 MIT',
+    'node_modules/make-dir 5.1.0 MIT',
+    'node_modules/mime 1.6.0 MIT',
+    'node_modules/ms 2.1.3 MIT',
+    'node_modules/needle 3.5.0 MIT',
+    'node_modules/parse-node-version 1.0.1 MIT',
+    'node_modules/probe-image-size 7.4.0 MIT',
+    'node_modules/probe-image-size/node_modules/debug 3.2.7 MIT',
+    'node_modules/probe-image-size/node_modules/iconv-lite 0.4.24 MIT',
+    'node_modules/probe-image-size/node_modules/needle 2.9.1 MIT',
+    'node_modules/prr 1.0.1 MIT',
+    'node_modules/safer-buffer 2.1.2 MIT',
+    'node_modules/sax 1.6.0 BlueOak-1.0.0',
+    'node_modules/source-map 0.6.1 BSD-3-Clause',
+    'node_modules/stream-parser 0.3.1 MIT',
+    'node_modules/stream-parser/node_modules/debug 2.6.9 MIT',
+    'node_modules/stream-parser/node_modules/ms 2.0.0 MIT',
   ])
 })
 
@@ -465,7 +477,7 @@ test('documents the virtual Less boundary and canonical product admission', () =
     'first-success dependency order',
     '`LESS-012`',
     'official Less tag `v4.6.7`',
-    'graduate `.less` through the 0.5 npm CLI/API',
+    'graduated `.less` through the unpublished 0.5 npm CLI/API',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

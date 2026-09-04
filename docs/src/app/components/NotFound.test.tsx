@@ -10,7 +10,7 @@ describe('NotFound', () => {
         <NotFound />
       </BrowserRouter>
     )
-    expect(screen.getByText(/404 · invalid route/i)).toBeInTheDocument()
+    expect(screen.getByText(/404 · invalid route/i)).toHaveClass('text-[#879685]')
   })
 
   it('renders the route failure as a compiler diagnostic', () => {

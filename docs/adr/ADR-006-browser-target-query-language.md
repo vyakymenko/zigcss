@@ -7,7 +7,7 @@
 
 ## Context
 
-The inherited autoprefixer accepts a browser string list but never interprets it. It applies one hand-written prefix list independently of targets, duplicates some declarations, omits selector and at-rule semantics, and can emit historical forms that are wrong for the requested browsers. The stable CLI currently rejects both `--autoprefix` and `--browsers`, so no accepted option is an output-invariant no-op.
+The inherited autoprefixer accepts a browser string list but never interprets it. It applies one hand-written prefix list independently of targets, duplicates some declarations, omits selector and at-rule semantics, and can emit historical forms that are wrong for the requested browsers. At adoption time the stable CLI rejected both `--autoprefix` and `--browsers`, ensuring no accepted option was an output-invariant no-op while the replacement accumulated evidence.
 
 [Browserslist](https://github.com/browserslist/browserslist) defines a broad language containing market-share, recency, region, negation, intersection, configuration discovery, and changing default queries. Implementing a subset under the same name would be misleading, while accepting dynamic queries would make output depend on usage statistics and database update time. ZigCSS therefore uses its own deliberately closed language.
 
@@ -67,7 +67,7 @@ Generated segments follow `ADR-007`: each has one causal authored span, no fabri
 
 ### Product boundary
 
-`PREFIX-001` and `PREFIX-002` expose target parsing, compatibility resolution, and the verified rewrite through the Zig library and test-only pass driver. They do not enable the inherited autoprefixer or make `--browsers`/`--autoprefix` available in the stable recovery CLI. CLI enablement is separate public API/option work: it must carry an owned target query, surface structured failures, authorize only the rebuilt verified pass, and preserve the existing output contract.
+`PREFIX-001` and `PREFIX-002` first exposed target parsing, compatibility resolution, and the verified rewrite through the Zig library and test-only pass driver without enabling the inherited autoprefixer. The later source-built CLI and native Zig API promotion fulfills the separate public-routing gate: `--autoprefix` and `--browsers <query>` require each other, the CLI parses one owned canonical query before dispatch and borrows it immutably across file, stdin, watch, and bounded batch work, malformed input reports its byte offset and failure kind, and only the rebuilt verified pass receives compatibility-rewrite authority. Native preprocessor frontends complete before optional fixed-point optimization, which completes before prefixing. Prefixing composes with deterministic source maps when optimization is absent; optimizer-plus-map remains rejected before input work.
 
 ## Consequences
 
@@ -77,7 +77,7 @@ Generated segments follow `ADR-007`: each has one causal authored span, no fabri
 - Compatibility data updates are intentional source changes rather than ambient dependency drift.
 - The initial feature/browser surface remains incomplete despite the verified rewrite and must not be advertised as general autoprefixing; every data expansion needs reviewed semantic fixtures and the same acceptance suite.
 - Legacy and modern target queries materially and deterministically differ only where the pinned evidence grants a closed form.
-- Stable CLI flags remain explicit failures until the later public option package wires the verified library path.
+- The source-built CLI admits the flags only as a paired explicit query and verified rewrite; it never falls back to the inherited target-invariant autoprefixer.
 
 ## Rejected alternatives
 

@@ -4,8 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "vite build && node scripts/generate-seo-pages.mjs && npm run check:bundle",
+    "build": "vite build && node scripts/generate-seo-pages.mjs && npm run check:bundle && npm run check:served-bundle",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
+    "check:served-bundle": "node scripts/check-served-bundle.mjs",
     "dev": "vite",
     "test": "vitest",
     "test:run": "vitest run"

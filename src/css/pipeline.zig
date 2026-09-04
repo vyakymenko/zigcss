@@ -73,10 +73,14 @@ pub const ParsedStylesheet = struct {
                 source_map_options,
             );
             defer output.deinit();
-            return CompileResult.init(
+            const css = output.css;
+            const source_map_bytes = output.source_map;
+            output.css = &.{};
+            output.source_map = &.{};
+            return CompileResult.initOwned(
                 result_allocator,
-                output.css,
-                output.source_map,
+                css,
+                source_map_bytes,
                 diagnostic_items,
             );
         }
@@ -95,8 +99,7 @@ pub const ParsedStylesheet = struct {
                 .omit_rules = options.omit_rules,
             },
         );
-        defer if (css.len > 0) result_allocator.free(css);
-        return CompileResult.init(result_allocator, css, null, diagnostic_items);
+        return CompileResult.initOwned(result_allocator, css, null, diagnostic_items);
     }
 
     pub fn formatDiagnostics(

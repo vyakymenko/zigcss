@@ -9,6 +9,10 @@ const scriptPath = fileURLToPath(import.meta.url)
 const scriptDirectory = path.dirname(scriptPath)
 const repositoryRoot = path.resolve(scriptDirectory, '../..')
 const matrixPath = path.join(scriptDirectory, 'matrix.json')
+const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
+const expectedCliStderr = /^[0-9]+\.[0-9]+\.[0-9]+-/.test(activeVersion)
+  ? `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\n`
+  : ''
 const strategyPaths = [
   path.join(repositoryRoot, 'docs/adr/ADR-005-preprocessor-strategy.md'),
   path.join(repositoryRoot, 'docs/adr/ADR-012-canonical-preprocessor-host.md'),
@@ -23,7 +27,7 @@ const expectedCanonicalProviders = {
   },
   less: {
     package: 'less',
-    version: '4.6.7',
+    version: '4.9.0',
     license: 'Apache-2.0',
     adapters: ['less'],
   },
@@ -482,8 +486,8 @@ async function validateCliProbes(compiler, matrix) {
             fail(`${adapter.id}/${extension}: expected exit 0, received ${result.status}\n${result.stderr}`)
           }
           if (result.stdout !== adapter.probeOutput) fail(`${adapter.id}/${extension}: native probe output changed`)
-          if (result.stderr !== '') {
-            fail(`${adapter.id}/${extension}: stable native probe emitted unexpected stderr`)
+          if (result.stderr !== expectedCliStderr) {
+            fail(`${adapter.id}/${extension}: native probe version notice drifted`)
           }
           if (fs.existsSync(output)) fail(`${adapter.id}/${extension}: stdout probe created an output file`)
           nativeCount += 1

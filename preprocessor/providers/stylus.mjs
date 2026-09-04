@@ -1,13 +1,13 @@
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import sizeOf from 'image-size'
 import stylus from 'stylus'
 import {
   ProviderFailure,
   normalizeDiagnostics,
 } from '../metadata.mjs'
 import { parseSourceMap } from '../source-map.mjs'
+import { imageDimensions } from '../image-dimensions.mjs'
 import { createStylusImportAuthority } from './stylus-importer.mjs'
 
 export const STYLUS_VERSION = '0.64.0'
@@ -247,7 +247,7 @@ function createLanguageFunctions(state, authority) {
     if (loaded === null) return [new stylus.nodes.Unit(0), new stylus.nodes.Unit(0)]
     let dimensions
     try {
-      dimensions = sizeOf(loaded.contents)
+      dimensions = imageDimensions(loaded.contents)
     } catch {
       abortAsset('STYLUS_ASSET_INVALID', 'A confined Stylus image asset is invalid')
     }

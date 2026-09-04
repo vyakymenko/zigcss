@@ -14,6 +14,7 @@
     ],
     "platform": "linux",
     "architecture": "x64",
+    "nodeVersion": "22.22.0",
     "fingerprintFields": [
       "platform",
       "architecture",

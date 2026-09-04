@@ -1,6 +1,6 @@
 .{
     .name = .zigcss,
-    .version = "0.6.0",
+    .version = "0.7.0-rc.1",
     .fingerprint = 0xae272a4871e93d07, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.2",
     .dependencies = .{},

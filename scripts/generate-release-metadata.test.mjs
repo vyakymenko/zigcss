@@ -288,12 +288,113 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     /attestation permissions/,
   )
   assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace('  cancel-in-progress: false', '  cancel-in-progress: true')),
+    /immutable release concurrency policy/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      'concurrency:\n  group: zigcss-release-${{ github.ref }}\n  cancel-in-progress: false',
+      'concurrency:\n  group: zigcss-release-${{ github.ref }}\n  cancel-in-progress: false\n\n'
+        + 'concurrency:\n  group: zigcss-release-${{ github.ref }}\n  cancel-in-progress: false',
+    )),
+    /single release concurrency policy/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      'node scripts/create-release-archive.mjs',
+      'node scripts/removed-release-archive.mjs',
+    )),
+    /reproducible release archive step/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '--source-date-epoch "$SOURCE_DATE_EPOCH"',
+      '--source-date-epoch "$GITHUB_RUN_ID"',
+    )),
+    /reproducible release archive step/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      'epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"',
+      'epoch="$GITHUB_RUN_ID"',
+    )),
+    /manifest-owned release source date epoch/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '- name: Verify Committed Native Integrity',
+      '- name: Removed Committed Native Integrity',
+    )),
+    /committed native integrity gate/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      'node scripts/validate-native-integrity.mjs --check',
+      'node scripts/validate-native-integrity.mjs --removed-check',
+    )),
+    /pre-pack native integrity check/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '--archive "release-assets/$RELEASE_ARCHIVE" \\\n            --target "${{ matrix.target }}"',
+      '--archive "release-assets/$RELEASE_CHECKSUMS" \\\n            --target "${{ matrix.target }}"',
+    )),
+    /committed native integrity gate/,
+  )
+  assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace('        sbom-path:', '        removed-sbom-path:')),
     /signed SBOM attestation/,
   )
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace('gh attestation verify', 'gh removed verify')),
     /cryptographic verification/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"',
+      '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build.yml"',
+    )),
+    /release signer workflow verification/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '--signer-digest "$GITHUB_SHA"',
+      '--signer-digest "$GITHUB_REF"',
+    )),
+    /release signer digest verification/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '--source-ref "refs/tags/$GITHUB_REF_NAME"',
+      '--source-ref refs/heads/main',
+    )),
+    /release source tag verification/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '--source-digest "$GITHUB_SHA"',
+      '--source-digest "$GITHUB_REF"',
+    )),
+    /release source digest verification/,
+  )
+  const identityFlagsReboundToOnlyOneBundle = workflow
+    .replace('            --source-ref "refs/tags/$GITHUB_REF_NAME" \\\n', '')
+    .replace(
+      '            --source-ref "refs/tags/$GITHUB_REF_NAME" \\\n            --source-digest "$GITHUB_SHA"\n\n      - name: Upload Release Assets',
+      '            --source-ref "refs/tags/$GITHUB_REF_NAME" \\\n'
+        + '            --source-ref "refs/tags/$GITHUB_REF_NAME" \\\n'
+        + '            --source-digest "$GITHUB_SHA"\n\n      - name: Upload Release Assets',
+    )
+  assert.throws(
+    () => validateReleaseWorkflowSource(identityFlagsReboundToOnlyOneBundle),
+    /release provenance attestation verification/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '--source-ref "refs/tags/$GITHUB_REF_NAME"',
+      '--source-ref "$GITHUB_REF" \\\n            --source-ref "refs/tags/$GITHUB_REF_NAME"',
+    )),
+    /release source ref option inventory/,
   )
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace('- name: Smoke Native Archive and npm Installation', '- name: Removed native smoke')),
@@ -308,7 +409,32 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     /npm publication preflight/,
   )
   assert.throws(
-    () => validateReleaseWorkflowSource(workflow.replace('npm publish --tag "$RELEASE_CHANNEL" --provenance', 'npm publish --provenance')),
+    () => validateReleaseWorkflowSource(workflow.replace('npm pack --ignore-scripts --json', 'npm pack --json')),
+    /single lifecycle-disabled npm pack/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      'name: npm-publication-${{ github.sha }}',
+      'name: mutable-npm-publication',
+    )),
+    /immutable npm package artifact handoff/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace('pattern: zigcss-*', 'pattern: *')),
+    /closed GitHub release artifact selection/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      'node scripts/npm-package-artifact.mjs verify',
+      'node scripts/npm-package-artifact.mjs removed',
+    )),
+    /exact npm package handoff verification/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+      'npm publish "$NPM_PACKAGE_ARCHIVE" --provenance',
+    )),
     /channel-aware npm publication/,
   )
   assert.throws(
@@ -325,6 +451,38 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('- name: Verify release artifact metadata policy', '- name: Removed release metadata policy')),
     /release metadata CI step/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      'node scripts/create-release-archive.mjs',
+      'node scripts/removed-release-archive.mjs',
+    )),
+    /reproducible native smoke archive step/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      'epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"',
+      'epoch="$GITHUB_RUN_ID"',
+    )),
+    /Build native release asset plan/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      'echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"',
+      'echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"',
+    )),
+    /Build native release asset plan|commit-derived native source date epoch/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      '      - name: Generate Native Smoke Metadata',
+      '      - name: Development digest comparison\n'
+        + '        run: |\n'
+        + '          node scripts/validate-native-integrity.mjs \\\n'
+        + '            --archive "release-assets/$RELEASE_ARCHIVE"\n\n'
+        + '      - name: Generate Native Smoke Metadata',
+    )),
+    /development archive digest comparison/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('      attestations: write\n', '')),
@@ -403,6 +561,13 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:npm-publication', 'npm run removed:npm-publication')),
     /release metadata CI command/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace(
+      'node --test scripts/validate-native-integrity.test.mjs',
+      'node --test scripts/removed-native-integrity.test.mjs',
+    )),
+    /release metadata CI command with native integrity/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-container', 'npm run removed:release-container')),

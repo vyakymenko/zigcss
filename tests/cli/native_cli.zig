@@ -89,6 +89,119 @@ const route_cases = [_]RouteCase{
     },
 };
 
+const OptimizeRouteCase = struct {
+    syntax: []const u8,
+    filename: []const u8,
+    input: []const u8,
+    second_filename: []const u8,
+    second_input: []const u8,
+    second_expected: []const u8,
+    watch_before: []const u8,
+    watch_after: []const u8,
+};
+
+const optimize_route_cases = [_]OptimizeRouteCase{
+    .{
+        .syntax = "scss",
+        .filename = "optimize.scss",
+        .input = ".empty{}.a{color:#ffffff}.b{color:#fff}",
+        .second_filename = "optimize-second.scss",
+        .second_input = ".empty{}.c{color:#ffffff}.d{color:#fff}",
+        .second_expected = ".c,.d{color:#fff}",
+        .watch_before = ".a{width:calc(1px + 2px)}",
+        .watch_after = ".a{width:calc(2px + 3px)}",
+    },
+    .{
+        .syntax = "sass",
+        .filename = "optimize.sass",
+        .input = ".a\n  color: #ffffff\n.b\n  color: #fff\n",
+        .second_filename = "optimize-second.sass",
+        .second_input = ".c\n  color: #ffffff\n.d\n  color: #fff\n",
+        .second_expected = ".c,.d{color:#fff}",
+        .watch_before = ".a\n  width: calc(1px + 2px)\n",
+        .watch_after = ".a\n  width: calc(2px + 3px)\n",
+    },
+    .{
+        .syntax = "less",
+        .filename = "optimize.less",
+        .input = ".empty{}.a{color:#ffffff}.b{color:#fff}",
+        .second_filename = "optimize-second.less",
+        .second_input = ".empty{}.c{color:#ffffff}.d{color:#fff}",
+        .second_expected = ".c,.d{color:#fff}",
+        .watch_before = ".a{width:calc(1px + 2px)}",
+        .watch_after = ".a{width:calc(2px + 3px)}",
+    },
+    .{
+        .syntax = "stylus",
+        .filename = "optimize.styl",
+        .input = ".a\n  color #ffffff\n.b\n  color #fff\n",
+        .second_filename = "optimize-second.styl",
+        .second_input = ".c\n  color #ffffff\n.d\n  color #fff\n",
+        .second_expected = ".c,.d{color:#fff}",
+        .watch_before = ".a\n  width calc(1px + 2px)\n",
+        .watch_after = ".a\n  width calc(2px + 3px)\n",
+    },
+};
+
+const optimized_css = ".a,.b{color:#fff}";
+const optimized_pretty_css = ".a, .b {\n  color: #fff;\n}\n";
+
+const PrefixRouteCase = struct {
+    syntax: []const u8,
+    filename: []const u8,
+    input: []const u8,
+    second_filename: []const u8,
+    second_input: []const u8,
+    watch_after: []const u8,
+    optimize_input: []const u8,
+};
+
+const prefix_route_cases = [_]PrefixRouteCase{
+    .{
+        .syntax = "scss",
+        .filename = "prefix.scss",
+        .input = ".a{user-select:none;display:flex}",
+        .second_filename = "prefix-second.scss",
+        .second_input = ".b{user-select:text;display:flex}",
+        .watch_after = ".a{user-select:text;display:flex}",
+        .optimize_input = ".empty{}.a{user-select:none;color:#ffffff}.b{user-select:none;color:#fff}",
+    },
+    .{
+        .syntax = "sass",
+        .filename = "prefix.sass",
+        .input = ".a\n  user-select: none\n  display: flex\n",
+        .second_filename = "prefix-second.sass",
+        .second_input = ".b\n  user-select: text\n  display: flex\n",
+        .watch_after = ".a\n  user-select: text\n  display: flex\n",
+        .optimize_input = ".a\n  user-select: none\n  color: #ffffff\n.b\n  user-select: none\n  color: #fff\n",
+    },
+    .{
+        .syntax = "less",
+        .filename = "prefix.less",
+        .input = ".a{user-select:none;display:flex}",
+        .second_filename = "prefix-second.less",
+        .second_input = ".b{user-select:text;display:flex}",
+        .watch_after = ".a{user-select:text;display:flex}",
+        .optimize_input = ".empty{}.a{user-select:none;color:#ffffff}.b{user-select:none;color:#fff}",
+    },
+    .{
+        .syntax = "stylus",
+        .filename = "prefix.styl",
+        .input = ".a\n  user-select none\n  display flex\n",
+        .second_filename = "prefix-second.styl",
+        .second_input = ".b\n  user-select text\n  display flex\n",
+        .watch_after = ".a\n  user-select text\n  display flex\n",
+        .optimize_input = ".a\n  user-select none\n  color #ffffff\n.b\n  user-select none\n  color #fff\n",
+    },
+};
+
+const legacy_browsers = "safari >= 7, ie >= 11";
+const modern_browsers = "chrome >= 120, edge >= 120, firefox >= 120";
+const prefixed_css = ".a{-webkit-user-select:none;-ms-user-select:none;user-select:none;display:-webkit-flex;display:flex}";
+const second_prefixed_css = ".b{-webkit-user-select:text;-ms-user-select:text;user-select:text;display:-webkit-flex;display:flex}";
+const watch_prefixed_css = ".a{-webkit-user-select:text;-ms-user-select:text;user-select:text;display:-webkit-flex;display:flex}";
+const optimized_prefixed_css = ".a,.b{-webkit-user-select:none;-ms-user-select:none;user-select:none;color:#fff}";
+
 const OutputStamp = struct {
     inode: std.fs.File.INode,
     mtime: i128,
@@ -536,6 +649,42 @@ fn runInDir(dir: std.fs.Dir, argv_tail: []const []const u8) !Child.RunResult {
     });
 }
 
+fn escapeDepfilePathAlloc(path_value: []const u8) ![]u8 {
+    var escaped: std.ArrayList(u8) = .empty;
+    defer escaped.deinit(allocator);
+    for (path_value) |byte| {
+        switch (byte) {
+            ' ', '#', ':', '\\' => {
+                try escaped.append(allocator, '\\');
+                try escaped.append(allocator, byte);
+            },
+            '$' => try escaped.appendSlice(allocator, "$$"),
+            else => try escaped.append(allocator, byte),
+        }
+    }
+    return escaped.toOwnedSlice(allocator);
+}
+
+fn expectedDepfileAlloc(
+    target: []const u8,
+    prerequisites: []const []const u8,
+) ![]u8 {
+    var rendered: std.ArrayList(u8) = .empty;
+    defer rendered.deinit(allocator);
+    const escaped_target = try escapeDepfilePathAlloc(target);
+    defer allocator.free(escaped_target);
+    try rendered.appendSlice(allocator, escaped_target);
+    try rendered.append(allocator, ':');
+    for (prerequisites) |path_value| {
+        const escaped = try escapeDepfilePathAlloc(path_value);
+        defer allocator.free(escaped);
+        try rendered.append(allocator, ' ');
+        try rendered.appendSlice(allocator, escaped);
+    }
+    try rendered.append(allocator, '\n');
+    return rendered.toOwnedSlice(allocator);
+}
+
 fn runCompilerNamed(
     filename: []const u8,
     input: []const u8,
@@ -612,6 +761,158 @@ fn expectExitCode(result: Child.RunResult, expected: u8) !void {
     }
 }
 
+const node_protocol_test_frame_limit: usize = 1024 * 1024;
+
+fn encodeNodeProtocolTestFrame(value: anytype) ![]u8 {
+    var body_writer: std.Io.Writer.Allocating = .init(allocator);
+    defer body_writer.deinit();
+    var json: std.json.Stringify = .{ .writer = &body_writer.writer };
+    try json.write(value);
+    const body = try body_writer.toOwnedSlice();
+    defer allocator.free(body);
+    if (body.len == 0 or body.len > node_protocol_test_frame_limit) {
+        return error.NodeProtocolFrameLimit;
+    }
+
+    const frame = try allocator.alloc(u8, body.len + 4);
+    std.mem.writeInt(u32, frame[0..4], @intCast(body.len), .big);
+    @memcpy(frame[4..], body);
+    return frame;
+}
+
+fn decodeNodeProtocolTestFrame(
+    frame: []const u8,
+) !std.json.Parsed(std.json.Value) {
+    if (frame.len < 4) return error.NodeProtocolFrameTruncated;
+    const declared: usize = std.mem.readInt(u32, frame[0..4], .big);
+    if (declared == 0 or declared > node_protocol_test_frame_limit) {
+        return error.NodeProtocolFrameLimit;
+    }
+    if (frame.len != declared + 4) return error.NodeProtocolFrameTruncated;
+    return std.json.parseFromSlice(std.json.Value, allocator, frame[4..], .{});
+}
+
+test "binary hidden Node route dispatches one typed bounded frame" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root);
+    const source_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(source_path);
+    const roots = [_][]const u8{root};
+
+    const success_frame = try encodeNodeProtocolTestFrame(.{
+        .protocol = "zigcss-node-v1",
+        .requestId = "cli-node-success",
+        .operation = "compile",
+        .source = "$color: red;.a{color:$color}",
+        .sourcePath = source_path,
+        .rootPaths = &roots,
+        .options = .{
+            .syntax = "scss",
+            .format = "minified",
+            .sourceMap = false,
+            .optimize = false,
+            .browsers = @as(?[]const u8, null),
+        },
+    });
+    defer allocator.free(success_frame);
+    var success = try runWithStdinInDir(
+        tmp.dir,
+        &.{"--internal-node-v1"},
+        success_frame,
+    );
+    defer deinitRun(&success);
+    try expectExitCode(success, 0);
+    try std.testing.expectEqual(@as(usize, 0), success.stderr.len);
+    var success_response = try decodeNodeProtocolTestFrame(success.stdout);
+    defer success_response.deinit();
+    const success_object = success_response.value.object;
+    try std.testing.expectEqualStrings(
+        "zigcss-node-v1",
+        success_object.get("protocol").?.string,
+    );
+    try std.testing.expectEqualStrings(
+        "cli-node-success",
+        success_object.get("requestId").?.string,
+    );
+    try std.testing.expect(success_object.get("ok").?.bool);
+    try std.testing.expect(success_object.get("error") == null);
+    const success_result = success_object.get("result").?.object;
+    try std.testing.expectEqualStrings(
+        ".a{color:red}",
+        success_result.get("css").?.string,
+    );
+    try std.testing.expect(success_result.get("sourceMap").? == .null);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        success_result.get("diagnostics").?.array.items.len,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        success_result.get("dependencies").?.array.items.len,
+    );
+
+    const invalid_query_frame = try encodeNodeProtocolTestFrame(.{
+        .protocol = "zigcss-node-v1",
+        .requestId = "cli-node-options",
+        .operation = "compile",
+        .source = ".a{user-select:none}",
+        .sourcePath = source_path,
+        .rootPaths = &roots,
+        .options = .{
+            .syntax = "scss",
+            .format = "minified",
+            .sourceMap = false,
+            .optimize = false,
+            .browsers = @as(?[]const u8, "ie 11"),
+        },
+    });
+    defer allocator.free(invalid_query_frame);
+    var invalid_query = try runWithStdinInDir(
+        tmp.dir,
+        &.{"--internal-node-v1"},
+        invalid_query_frame,
+    );
+    defer deinitRun(&invalid_query);
+    try expectExitCode(invalid_query, 0);
+    try std.testing.expectEqual(@as(usize, 0), invalid_query.stderr.len);
+    var invalid_response = try decodeNodeProtocolTestFrame(invalid_query.stdout);
+    defer invalid_response.deinit();
+    const invalid_object = invalid_response.value.object;
+    try std.testing.expectEqualStrings(
+        "zigcss-node-v1",
+        invalid_object.get("protocol").?.string,
+    );
+    try std.testing.expectEqualStrings(
+        "cli-node-options",
+        invalid_object.get("requestId").?.string,
+    );
+    try std.testing.expect(!invalid_object.get("ok").?.bool);
+    try std.testing.expect(invalid_object.get("result") == null);
+    const typed_error = invalid_object.get("error").?.object;
+    try std.testing.expectEqualStrings(
+        "NODE_OPTIONS",
+        typed_error.get("code").?.string,
+    );
+    try std.testing.expectEqualStrings(
+        "browser target query is invalid",
+        typed_error.get("message").?.string,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        typed_error.get("diagnostics").?.array.items.len,
+    );
+
+    var extra_argv = try runInDir(
+        tmp.dir,
+        &.{ "--internal-node-v1", "unexpected" },
+    );
+    defer deinitRun(&extra_argv);
+    try expectExitCode(extra_argv, 2);
+    try std.testing.expectEqual(@as(usize, 0), extra_argv.stdout.len);
+}
+
 test "stable native syntax selection and help agree with executable CLI tests" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -623,6 +924,31 @@ test "stable native syntax selection and help agree with executable CLI tests" {
         u8,
         help.stdout,
         "--syntax <syntax>        Select css (default), scss, sass, less, or stylus",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        help.stdout,
+        "--depfile <path>         Write one bounded Make/Ninja dependency file",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        help.stdout,
+        "--source-map             Embed a deterministic inline source map",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        help.stdout,
+        "--optimize               Run the closed verified optimizer preset",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        help.stdout,
+        "--autoprefix             Run verified eight-feature target prefixing",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        help.stdout,
+        "--browsers <query>       Set explicit browser minima (requires --autoprefix)",
     ) != null);
     for ([_][]const u8{ "--experimental-native", "gated native syntax", "pre-graduation" }) |forbidden| {
         try std.testing.expect(std.mem.indexOf(u8, help.stdout, forbidden) == null);
@@ -637,7 +963,827 @@ test "stable native syntax selection and help agree with executable CLI tests" {
         defer deinitRun(&result);
         try expectExitCode(result, 0);
         try std.testing.expectEqualStrings(case.expected, result.stdout);
-        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "experimental release candidate") == null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "experimental release candidate") != null);
+    }
+}
+
+test "binary CLI emits deterministic depfiles for all five syntaxes and only read inputs" {
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{
+            .sub_path = "input.css",
+            .data = "@import \"theme.css\";.direct{color:red}",
+        });
+        try tmp.dir.writeFile(.{ .sub_path = "theme.css", .data = ".theme{color:blue}" });
+
+        var first = try runInDir(tmp.dir, &.{
+            "input.css",
+            "--syntax",
+            "css",
+            "--minify",
+            "-o",
+            "output.css",
+            "--depfile",
+            "output.css.d",
+        });
+        defer deinitRun(&first);
+        try expectExitCode(first, 0);
+        const css = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+        defer allocator.free(css);
+        try std.testing.expectEqualStrings(
+            "@import \"theme.css\";.direct{color:red}",
+            css,
+        );
+        const entry = try tmp.dir.realpathAlloc(allocator, "input.css");
+        defer allocator.free(entry);
+        const expected = try expectedDepfileAlloc("output.css", &.{entry});
+        defer allocator.free(expected);
+        const depfile = try tmp.dir.readFileAlloc(allocator, "output.css.d", 1024 * 1024);
+        defer allocator.free(depfile);
+        try std.testing.expectEqualStrings(expected, depfile);
+        try std.testing.expect(std.mem.indexOf(u8, depfile, "theme.css") == null);
+
+        var repeated = try runInDir(tmp.dir, &.{
+            "input.css",
+            "--syntax",
+            "css",
+            "--minify",
+            "-o",
+            "output.css",
+            "--depfile",
+            "output.css.d",
+        });
+        defer deinitRun(&repeated);
+        try expectExitCode(repeated, 0);
+        const repeated_depfile = try tmp.dir.readFileAlloc(allocator, "output.css.d", 1024 * 1024);
+        defer allocator.free(repeated_depfile);
+        try std.testing.expectEqualStrings(depfile, repeated_depfile);
+    }
+
+    inline for (route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.watch_input });
+        try tmp.dir.writeFile(.{
+            .sub_path = case.watch_dependency,
+            .data = case.watch_dependency_before,
+        });
+
+        var first = try runInDir(tmp.dir, &.{
+            case.filename,
+            "--syntax",
+            case.syntax,
+            "--minify",
+            "-o",
+            "output.css",
+            "--depfile",
+            "output.css.d",
+        });
+        defer deinitRun(&first);
+        try expectExitCode(first, 0);
+        const css = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+        defer allocator.free(css);
+        try std.testing.expectEqualStrings(case.watch_expected_before, css);
+
+        const entry = try tmp.dir.realpathAlloc(allocator, case.filename);
+        defer allocator.free(entry);
+        const dependency = try tmp.dir.realpathAlloc(allocator, case.watch_dependency);
+        defer allocator.free(dependency);
+        const expected = try expectedDepfileAlloc("output.css", &.{ entry, dependency });
+        defer allocator.free(expected);
+        const depfile = try tmp.dir.readFileAlloc(allocator, "output.css.d", 1024 * 1024);
+        defer allocator.free(depfile);
+        try std.testing.expectEqualStrings(expected, depfile);
+
+        var repeated = try runInDir(tmp.dir, &.{
+            case.filename,
+            "--syntax",
+            case.syntax,
+            "--minify",
+            "-o",
+            "output.css",
+            "--depfile",
+            "output.css.d",
+        });
+        defer deinitRun(&repeated);
+        try expectExitCode(repeated, 0);
+        const repeated_depfile = try tmp.dir.readFileAlloc(allocator, "output.css.d", 1024 * 1024);
+        defer allocator.free(repeated_depfile);
+        try std.testing.expectEqualStrings(depfile, repeated_depfile);
+    }
+
+    {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{
+            .sub_path = "input.less",
+            .data = "@import \"z.less\";@import \"a.less\";@import \"z.less\";.x{color:@a;background:@z}",
+        });
+        try tmp.dir.writeFile(.{ .sub_path = "z.less", .data = "@z:blue;" });
+        try tmp.dir.writeFile(.{ .sub_path = "a.less", .data = "@a:red;" });
+        var result = try runInDir(tmp.dir, &.{
+            "input.less",
+            "--syntax",
+            "less",
+            "--minify",
+            "-o",
+            "sorted.css",
+            "--depfile",
+            "sorted.css.d",
+        });
+        defer deinitRun(&result);
+        try expectExitCode(result, 0);
+        const entry = try tmp.dir.realpathAlloc(allocator, "input.less");
+        defer allocator.free(entry);
+        const first_dependency = try tmp.dir.realpathAlloc(allocator, "a.less");
+        defer allocator.free(first_dependency);
+        const second_dependency = try tmp.dir.realpathAlloc(allocator, "z.less");
+        defer allocator.free(second_dependency);
+        const expected = try expectedDepfileAlloc(
+            "sorted.css",
+            &.{ entry, first_dependency, second_dependency },
+        );
+        defer allocator.free(expected);
+        const depfile = try tmp.dir.readFileAlloc(allocator, "sorted.css.d", 1024 * 1024);
+        defer allocator.free(depfile);
+        try std.testing.expectEqualStrings(expected, depfile);
+        try std.testing.expectEqual(@as(usize, 1), countOccurrences(depfile, second_dependency));
+    }
+}
+
+test "binary CLI depfile preserves authored target spelling and escapes portable paths" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const input_name = if (builtin.os.tag == .windows)
+        "in put#$name.css"
+    else
+        "in put#$:slash\\name.css";
+    const output_name = if (builtin.os.tag == .windows)
+        "out put#$name.css"
+    else
+        "out put#$:slash\\name.css";
+    try tmp.dir.writeFile(.{ .sub_path = input_name, .data = ".escaped{color:red}" });
+    var result = try runInDir(tmp.dir, &.{
+        input_name,
+        "--syntax",
+        "css",
+        "--minify",
+        "-o",
+        output_name,
+        "--depfile",
+        "deps file.d",
+    });
+    defer deinitRun(&result);
+    try expectExitCode(result, 0);
+
+    const entry = try tmp.dir.realpathAlloc(allocator, input_name);
+    defer allocator.free(entry);
+    const expected = try expectedDepfileAlloc(output_name, &.{entry});
+    defer allocator.free(expected);
+    const depfile = try tmp.dir.readFileAlloc(allocator, "deps file.d", 1024 * 1024);
+    defer allocator.free(depfile);
+    try std.testing.expectEqualStrings(expected, depfile);
+    const escaped_target = try escapeDepfilePathAlloc(output_name);
+    defer allocator.free(escaped_target);
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        depfile,
+        escaped_target,
+    ));
+}
+
+test "binary CLI depfile invalid combinations and every input alias fail closed" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".a{color:red}" });
+    try tmp.dir.writeFile(.{ .sub_path = "second.css", .data = ".b{color:blue}" });
+
+    const invalid = [_][]const []const u8{
+        &.{ "input.css", "--depfile" },
+        &.{ "input.css", "--depfile", "output.css.d" },
+        &.{ "input.css", "-o", "-", "--depfile", "output.css.d" },
+        &.{ "input.css", "-o", "output.css", "--depfile", "-" },
+        &.{ "input.css", "-o", "output.css", "--depfile", "bad\npath.d" },
+        &.{ "input.css", "-o", "output.css", "--depfile", "output.css.d", "--depfile", "again.d" },
+        &.{ "input.css", "-o", "output.css", "--depfile", "output.css.d", "--watch" },
+        &.{ "input.css", "-o", "out", "--output-dir", "--depfile", "output.css.d" },
+        &.{ "input.css", "second.css", "-o", "out", "--depfile", "output.css.d" },
+        &.{ "input.css", "-o", "output.css", "--depfile", "output.css" },
+        &.{ "input.css", "-o", "output.css", "--depfile", "input.css" },
+        &.{ "input.css", "-o", "input.css", "--depfile", "output.css.d" },
+    };
+    for (invalid) |argv| {
+        var rejected = try runInDir(tmp.dir, argv);
+        defer deinitRun(&rejected);
+        try expectExitCode(rejected, 2);
+        try std.testing.expectEqual(@as(usize, 0), rejected.stdout.len);
+    }
+
+    var stdin_rejected = try runWithStdinInDir(
+        tmp.dir,
+        &.{ "-", "-o", "output.css", "--depfile", "output.css.d" },
+        ".a{}",
+    );
+    defer deinitRun(&stdin_rejected);
+    try expectExitCode(stdin_rejected, 2);
+
+    try tmp.dir.writeFile(.{
+        .sub_path = "entry.scss",
+        .data = "@use \"tokens\";.card{color:tokens.$color}",
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "_tokens.scss", .data = "$color:red;" });
+    var imported_alias = try runInDir(tmp.dir, &.{
+        "entry.scss",
+        "--syntax",
+        "scss",
+        "--minify",
+        "-o",
+        "_tokens.scss",
+        "--depfile",
+        "native.css.d",
+    });
+    defer deinitRun(&imported_alias);
+    try expectExitCode(imported_alias, 2);
+    const dependency = try tmp.dir.readFileAlloc(allocator, "_tokens.scss", 1024);
+    defer allocator.free(dependency);
+    try std.testing.expectEqualStrings("$color:red;", dependency);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("native.css.d", .{}));
+
+    var imported_depfile_alias = try runInDir(tmp.dir, &.{
+        "entry.scss",
+        "--syntax",
+        "scss",
+        "--minify",
+        "-o",
+        "native.css",
+        "--depfile",
+        "_tokens.scss",
+    });
+    defer deinitRun(&imported_depfile_alias);
+    try expectExitCode(imported_depfile_alias, 2);
+    const retained_dependency = try tmp.dir.readFileAlloc(allocator, "_tokens.scss", 1024);
+    defer allocator.free(retained_dependency);
+    try std.testing.expectEqualStrings("$color:red;", retained_dependency);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("native.css", .{}));
+}
+
+test "binary CLI stdin may atomically replace an existing literal dash filename" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "-", .data = "sentinel" });
+
+    var stable = try runWithStdinInDir(
+        tmp.dir,
+        &.{ "-", "-o", "./-", "--minify" },
+        ".stable { color: red; }",
+    );
+    defer deinitRun(&stable);
+    try expectExitCode(stable, 0);
+    const stable_output = try tmp.dir.readFileAlloc(allocator, "-", 1024);
+    defer allocator.free(stable_output);
+    try std.testing.expectEqualStrings(".stable{color:red}", stable_output);
+
+    var native = try runWithStdinInDir(
+        tmp.dir,
+        &.{ "-", "-o", "./-", "--syntax", "scss", "--minify" },
+        ".native { color: blue; }",
+    );
+    defer deinitRun(&native);
+    try expectExitCode(native, 0);
+    const native_output = try tmp.dir.readFileAlloc(allocator, "-", 1024);
+    defer allocator.free(native_output);
+    try std.testing.expectEqualStrings(".native{color:blue}", native_output);
+}
+
+test "binary CLI native output cannot replace an exact dependency in single or watch mode" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dependency_source = "$color: red; /* dependency-sentinel */";
+    try tmp.dir.writeFile(.{
+        .sub_path = "entry.scss",
+        .data = "@use \"tokens\";.card{color:tokens.$color}",
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "_tokens.scss", .data = dependency_source });
+
+    var single = try runInDir(tmp.dir, &.{
+        "entry.scss",
+        "--syntax",
+        "scss",
+        "--minify",
+        "-o",
+        "_tokens.scss",
+    });
+    defer deinitRun(&single);
+    try expectExitCode(single, 2);
+    try std.testing.expectEqual(@as(usize, 0), single.stdout.len);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        single.stderr,
+        "native output or depfile path resolves to an entry or dependency",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, single.stderr, "Compiled:") == null);
+    const after_single = try tmp.dir.readFileAlloc(allocator, "_tokens.scss", 1024);
+    defer allocator.free(after_single);
+    try std.testing.expectEqualStrings(dependency_source, after_single);
+
+    var watched = try runInDir(tmp.dir, &.{
+        "entry.scss",
+        "--syntax",
+        "scss",
+        "--minify",
+        "--watch",
+        "-o",
+        "_tokens.scss",
+    });
+    defer deinitRun(&watched);
+    try expectExitCode(watched, 2);
+    try std.testing.expectEqual(@as(usize, 0), watched.stdout.len);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        watched.stderr,
+        "native output or depfile path resolves to an entry or dependency",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, watched.stderr, "Compiled:") == null);
+    const after_watch = try tmp.dir.readFileAlloc(allocator, "_tokens.scss", 1024);
+    defer allocator.free(after_watch);
+    try std.testing.expectEqualStrings(dependency_source, after_watch);
+}
+
+test "binary CLI native output and depfile reject dependency symlink and inode aliases" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dependency_source = "$color: red; /* dependency-alias-sentinel */";
+    try tmp.dir.writeFile(.{
+        .sub_path = "entry.scss",
+        .data = "@use \"tokens\";.card{color:tokens.$color}",
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "_tokens.scss", .data = dependency_source });
+    try tmp.dir.symLink("_tokens.scss", "dependency-symlink.css", .{});
+    try std.posix.linkat(
+        tmp.dir.fd,
+        "_tokens.scss",
+        tmp.dir.fd,
+        "dependency-hard-link.css",
+        0,
+    );
+
+    for ([_][]const u8{ "dependency-symlink.css", "dependency-hard-link.css" }) |output_path| {
+        var rejected = try runInDir(tmp.dir, &.{
+            "entry.scss",
+            "--syntax",
+            "scss",
+            "--minify",
+            "-o",
+            output_path,
+        });
+        defer deinitRun(&rejected);
+        try expectExitCode(rejected, 2);
+        try std.testing.expectEqual(@as(usize, 0), rejected.stdout.len);
+        try std.testing.expect(std.mem.indexOf(
+            u8,
+            rejected.stderr,
+            "native output or depfile path resolves to an entry or dependency",
+        ) != null);
+        const retained_alias = try tmp.dir.readFileAlloc(allocator, output_path, 1024);
+        defer allocator.free(retained_alias);
+        try std.testing.expectEqualStrings(dependency_source, retained_alias);
+    }
+
+    var depfile_alias = try runInDir(tmp.dir, &.{
+        "entry.scss",
+        "--syntax",
+        "scss",
+        "--minify",
+        "-o",
+        "safe-output.css",
+        "--depfile",
+        "dependency-hard-link.css",
+    });
+    defer deinitRun(&depfile_alias);
+    try expectExitCode(depfile_alias, 2);
+    try std.testing.expectEqual(@as(usize, 0), depfile_alias.stdout.len);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        depfile_alias.stderr,
+        "native output or depfile path resolves to an entry or dependency",
+    ) != null);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("safe-output.css", .{}));
+
+    const retained_dependency = try tmp.dir.readFileAlloc(allocator, "_tokens.scss", 1024);
+    defer allocator.free(retained_dependency);
+    try std.testing.expectEqualStrings(dependency_source, retained_dependency);
+    const dependency_stat = try tmp.dir.statFile("_tokens.scss");
+    const hard_link_stat = try tmp.dir.statFile("dependency-hard-link.css");
+    try std.testing.expectEqual(dependency_stat.inode, hard_link_stat.inode);
+}
+
+test "binary CLI native batch validates the dependency union before every output commit" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dependency_source = "$color: red; /* batch-dependency-sentinel */";
+    try tmp.dir.writeFile(.{ .sub_path = "first.scss", .data = ".first{color:blue}" });
+    try tmp.dir.writeFile(.{
+        .sub_path = "second.scss",
+        .data = "@use \"tokens\";.second{color:tokens.$color}",
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "_tokens.scss", .data = dependency_source });
+    try tmp.dir.makeDir("out");
+    // The first task does not import this file. Only a union across every
+    // completed task can detect that its output aliases the second task's
+    // dependency before the first write occurs.
+    try std.posix.linkat(tmp.dir.fd, "_tokens.scss", tmp.dir.fd, "out/first.css", 0);
+    try tmp.dir.writeFile(.{ .sub_path = "out/second.css", .data = "second-output-sentinel" });
+
+    var batch = try runInDir(tmp.dir, &.{
+        "first.scss",
+        "second.scss",
+        "-o",
+        "out",
+        "--output-dir",
+        "--syntax",
+        "scss",
+        "--minify",
+    });
+    defer deinitRun(&batch);
+    try expectExitCode(batch, 2);
+    try std.testing.expectEqual(@as(usize, 0), batch.stdout.len);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        batch.stderr,
+        "native output or depfile path resolves to an entry or dependency",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, batch.stderr, "Compiled:") == null);
+
+    const retained_dependency = try tmp.dir.readFileAlloc(allocator, "_tokens.scss", 1024);
+    defer allocator.free(retained_dependency);
+    const retained_first = try tmp.dir.readFileAlloc(allocator, "out/first.css", 1024);
+    defer allocator.free(retained_first);
+    const retained_second = try tmp.dir.readFileAlloc(allocator, "out/second.css", 1024);
+    defer allocator.free(retained_second);
+    try std.testing.expectEqualStrings(dependency_source, retained_dependency);
+    try std.testing.expectEqualStrings(dependency_source, retained_first);
+    try std.testing.expectEqualStrings("second-output-sentinel", retained_second);
+    const dependency_stat = try tmp.dir.statFile("_tokens.scss");
+    const first_output_stat = try tmp.dir.statFile("out/first.css");
+    try std.testing.expectEqual(dependency_stat.inode, first_output_stat.inode);
+}
+
+test "binary CLI compile failures retain existing CSS and depfile bytes" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "broken.css", .data = ".broken{" });
+    try tmp.dir.writeFile(.{ .sub_path = "output.css", .data = "css-sentinel" });
+    try tmp.dir.writeFile(.{ .sub_path = "output.css.d", .data = "depfile-sentinel" });
+    var css_failure = try runInDir(tmp.dir, &.{
+        "broken.css",
+        "-o",
+        "output.css",
+        "--depfile",
+        "output.css.d",
+    });
+    defer deinitRun(&css_failure);
+    try expectExitCode(css_failure, 1);
+    const retained_css = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(retained_css);
+    const retained_depfile = try tmp.dir.readFileAlloc(allocator, "output.css.d", 1024);
+    defer allocator.free(retained_depfile);
+    try std.testing.expectEqualStrings("css-sentinel", retained_css);
+    try std.testing.expectEqualStrings("depfile-sentinel", retained_depfile);
+
+    try tmp.dir.writeFile(.{ .sub_path = "broken.scss", .data = ".a{color:$missing}" });
+    var native_failure = try runInDir(tmp.dir, &.{
+        "broken.scss",
+        "--syntax",
+        "scss",
+        "-o",
+        "output.css",
+        "--depfile",
+        "output.css.d",
+    });
+    defer deinitRun(&native_failure);
+    try expectExitCode(native_failure, 1);
+    const retained_native_css = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(retained_native_css);
+    const retained_native_depfile = try tmp.dir.readFileAlloc(allocator, "output.css.d", 1024);
+    defer allocator.free(retained_native_depfile);
+    try std.testing.expectEqualStrings("css-sentinel", retained_native_css);
+    try std.testing.expectEqualStrings("depfile-sentinel", retained_native_depfile);
+}
+
+test "binary CLI bounds input admission before filesystem and byte-sorts glob batches" {
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    const oversized_count = 4096 + 1;
+    const oversized = try allocator.alloc([]const u8, oversized_count);
+    defer allocator.free(oversized);
+    @memset(oversized, "x/*");
+    var rejected = try runInDir(tmp.dir, oversized);
+    defer deinitRun(&rejected);
+    try expectExitCode(rejected, 2);
+    try std.testing.expectEqual(@as(usize, 0), rejected.stdout.len);
+    try std.testing.expectEqualStrings(
+        "Error: too many input patterns (maximum 4096)\n",
+        rejected.stderr,
+    );
+    var empty_iterator = tmp.dir.iterate();
+    try std.testing.expect(try empty_iterator.next() == null);
+
+    try tmp.dir.writeFile(.{ .sub_path = "z.css", .data = ".z { color: blue; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "a.css", .data = ".a { color: red; }" });
+    var batch = try runInDir(tmp.dir, &.{ "*.css", "-o", "out", "--output-dir", "--minify" });
+    defer deinitRun(&batch);
+    try expectExitCode(batch, 0);
+    try std.testing.expectEqual(@as(usize, 0), batch.stdout.len);
+    const a_status = std.mem.indexOf(u8, batch.stderr, "a.css ->") orelse
+        return error.MissingSortedBatchStatus;
+    const z_status = std.mem.indexOf(u8, batch.stderr, "z.css ->") orelse
+        return error.MissingSortedBatchStatus;
+    try std.testing.expect(a_status < z_status);
+    const a_output = try tmp.dir.readFileAlloc(allocator, "out/a.css", 1024);
+    defer allocator.free(a_output);
+    const z_output = try tmp.dir.readFileAlloc(allocator, "out/z.css", 1024);
+    defer allocator.free(z_output);
+    try std.testing.expectEqualStrings(".a{color:red}", a_output);
+    try std.testing.expectEqualStrings(".z{color:blue}", z_output);
+}
+
+test "binary CLI batch gives non-ASCII case and normalization variants unique portable names" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    inline for (.{ "one", "two", "three", "four" }) |directory| {
+        try tmp.dir.makeDir(directory);
+    }
+    const input_names = [_][]const u8{
+        "one/\xc3\x84.scss",
+        "two/\xc3\xa4.scss",
+        "three/\xc3\xa9.scss",
+        "four/e\xcc\x81.scss",
+    };
+    const expected_outputs = [_][]const u8{
+        ".upper{color:red}",
+        ".lower{color:blue}",
+        ".composed{color:green}",
+        ".decomposed{color:purple}",
+    };
+    inline for (input_names, expected_outputs) |input_name, input| {
+        try tmp.dir.writeFile(.{ .sub_path = input_name, .data = input });
+    }
+
+    var batch = try runInDir(tmp.dir, &.{
+        input_names[0],
+        input_names[1],
+        input_names[2],
+        input_names[3],
+        "-o",
+        "out",
+        "--output-dir",
+        "--syntax",
+        "scss",
+        "--minify",
+    });
+    defer deinitRun(&batch);
+    try expectExitCode(batch, 0);
+
+    var output_dir = try tmp.dir.openDir("out", .{ .iterate = true });
+    defer output_dir.close();
+    var seen = [_]bool{false} ** expected_outputs.len;
+    var output_count: usize = 0;
+    var iterator = output_dir.iterate();
+    while (try iterator.next()) |entry| {
+        if (entry.kind != .file) continue;
+        output_count += 1;
+        const uses_portable_policy = switch (builtin.os.tag) {
+            .windows, .macos, .ios, .tvos, .watchos => true,
+            else => false,
+        };
+        if (uses_portable_policy) {
+            try std.testing.expect(std.mem.startsWith(u8, entry.name, "zigcss-"));
+            try std.testing.expect(std.mem.endsWith(u8, entry.name, ".css"));
+            for (entry.name) |byte| try std.testing.expect(std.ascii.isAscii(byte));
+        }
+        const output = try output_dir.readFileAlloc(allocator, entry.name, 1024);
+        defer allocator.free(output);
+        for (expected_outputs, 0..) |expected, index| {
+            if (std.mem.eql(u8, output, expected)) seen[index] = true;
+        }
+    }
+    try std.testing.expectEqual(expected_outputs.len, output_count);
+    for (seen) |matched| try std.testing.expect(matched);
+}
+
+test "binary CLI can commit a direct working-directory output without directory read permission" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".safe { color: red; }" });
+    const cwd = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(cwd);
+    try tmp.dir.chmod(0o300);
+    var restricted = true;
+    defer if (restricted) tmp.dir.chmod(0o700) catch {};
+
+    const argv = [_][]const u8{
+        cli_options.compiler_path,
+        "input.css",
+        "-o",
+        "output.css",
+        "--minify",
+    };
+    var result = try Child.run(.{
+        .allocator = allocator,
+        .argv = &argv,
+        .cwd = cwd,
+        .max_output_bytes = 1024 * 1024,
+    });
+    defer deinitRun(&result);
+    try tmp.dir.chmod(0o700);
+    restricted = false;
+
+    try expectExitCode(result, 0);
+    const output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(output);
+    try std.testing.expectEqualStrings(".safe{color:red}", output);
+}
+
+test "binary CLI applies the verified optimizer to native files stdin and parallel batches" {
+    inline for (optimize_route_cases) |case| {
+        const argv = &.{
+            "--syntax",
+            case.syntax,
+            "--optimize",
+            "--minify",
+        };
+        var file_result = try runCompilerNamed(case.filename, case.input, argv);
+        defer deinitRun(&file_result);
+        try expectExitCode(file_result, 0);
+        try std.testing.expectEqualStrings(optimized_css, file_result.stdout);
+
+        var pretty_result = try runCompilerNamed(case.filename, case.input, &.{
+            "--syntax",
+            case.syntax,
+            "--optimize",
+        });
+        defer deinitRun(&pretty_result);
+        try expectExitCode(pretty_result, 0);
+        try std.testing.expectEqualStrings(optimized_pretty_css, pretty_result.stdout);
+
+        var stdin_result = try runWithStdin(&.{
+            "-",
+            "--syntax",
+            case.syntax,
+            "--optimize",
+            "--minify",
+        }, case.input);
+        defer deinitRun(&stdin_result);
+        try expectExitCode(stdin_result, 0);
+        try std.testing.expectEqualStrings(optimized_css, stdin_result.stdout);
+
+        var fixed_point = try runCompilerNamed("optimized.css", file_result.stdout, &.{
+            "--syntax",
+            "css",
+            "--optimize",
+            "--minify",
+        });
+        defer deinitRun(&fixed_point);
+        try expectExitCode(fixed_point, 0);
+        try std.testing.expectEqualStrings(file_result.stdout, fixed_point.stdout);
+    }
+
+    inline for (optimize_route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.input });
+        try tmp.dir.writeFile(.{ .sub_path = case.second_filename, .data = case.second_input });
+        var batch = try runInDir(tmp.dir, &.{
+            case.filename,
+            case.second_filename,
+            "-o",
+            "out",
+            "--output-dir",
+            "--syntax",
+            case.syntax,
+            "--optimize",
+            "--minify",
+        });
+        defer deinitRun(&batch);
+        try expectExitCode(batch, 0);
+        const first_path = try std.fmt.allocPrint(allocator, "out/{s}.css", .{std.fs.path.stem(case.filename)});
+        defer allocator.free(first_path);
+        const second_path = try std.fmt.allocPrint(allocator, "out/{s}.css", .{std.fs.path.stem(case.second_filename)});
+        defer allocator.free(second_path);
+        const first_output = try tmp.dir.readFileAlloc(allocator, first_path, 1024);
+        defer allocator.free(first_output);
+        const second_output = try tmp.dir.readFileAlloc(allocator, second_path, 1024);
+        defer allocator.free(second_output);
+        try std.testing.expectEqualStrings(optimized_css, first_output);
+        try std.testing.expectEqualStrings(case.second_expected, second_output);
+    }
+}
+
+test "binary CLI applies verified target prefixing to native files stdin maps optimize and parallel batches" {
+    inline for (prefix_route_cases) |case| {
+        const prefix_args = &.{
+            "--syntax",
+            case.syntax,
+            "--autoprefix",
+            "--browsers",
+            legacy_browsers,
+            "--minify",
+        };
+        var file_result = try runCompilerNamed(case.filename, case.input, prefix_args);
+        defer deinitRun(&file_result);
+        try expectExitCode(file_result, 0);
+        try std.testing.expectEqualStrings(prefixed_css, file_result.stdout);
+
+        var stdin_result = try runWithStdin(&.{
+            "-",
+            "--syntax",
+            case.syntax,
+            "--autoprefix",
+            "--browsers",
+            legacy_browsers,
+            "--minify",
+        }, case.input);
+        defer deinitRun(&stdin_result);
+        try expectExitCode(stdin_result, 0);
+        try std.testing.expectEqualStrings(prefixed_css, stdin_result.stdout);
+
+        var modern = try runCompilerNamed(case.filename, case.input, &.{
+            "--syntax",
+            case.syntax,
+            "--autoprefix",
+            "--browsers",
+            modern_browsers,
+            "--minify",
+        });
+        defer deinitRun(&modern);
+        try expectExitCode(modern, 0);
+        try std.testing.expectEqualStrings(".a{user-select:none;display:flex}", modern.stdout);
+
+        var mapped = try runCompilerNamed(case.filename, case.input, &.{
+            "--syntax",
+            case.syntax,
+            "--autoprefix",
+            "--browsers",
+            legacy_browsers,
+            "--source-map",
+            "--minify",
+        });
+        defer deinitRun(&mapped);
+        try expectExitCode(mapped, 0);
+        try expectInlineSourceMap(mapped.stdout, prefixed_css, case.filename, case.input);
+
+        var optimized = try runCompilerNamed(case.filename, case.optimize_input, &.{
+            "--syntax",
+            case.syntax,
+            "--autoprefix",
+            "--browsers",
+            legacy_browsers,
+            "--optimize",
+            "--minify",
+        });
+        defer deinitRun(&optimized);
+        try expectExitCode(optimized, 0);
+        try std.testing.expectEqualStrings(optimized_prefixed_css, optimized.stdout);
+    }
+
+    inline for (prefix_route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.input });
+        try tmp.dir.writeFile(.{ .sub_path = case.second_filename, .data = case.second_input });
+        var batch = try runInDir(tmp.dir, &.{
+            case.filename,
+            case.second_filename,
+            "-o",
+            "out",
+            "--output-dir",
+            "--syntax",
+            case.syntax,
+            "--autoprefix",
+            "--browsers",
+            legacy_browsers,
+            "--minify",
+        });
+        defer deinitRun(&batch);
+        try expectExitCode(batch, 0);
+        const first_path = try std.fmt.allocPrint(allocator, "out/{s}.css", .{std.fs.path.stem(case.filename)});
+        defer allocator.free(first_path);
+        const second_path = try std.fmt.allocPrint(allocator, "out/{s}.css", .{std.fs.path.stem(case.second_filename)});
+        defer allocator.free(second_path);
+        const first_output = try tmp.dir.readFileAlloc(allocator, first_path, 1024);
+        defer allocator.free(first_output);
+        const second_output = try tmp.dir.readFileAlloc(allocator, second_path, 1024);
+        defer allocator.free(second_output);
+        try std.testing.expectEqualStrings(prefixed_css, first_output);
+        try std.testing.expectEqualStrings(second_prefixed_css, second_output);
     }
 }
 
@@ -662,7 +1808,7 @@ test "binary CLI routes the finite native syntax set through the pre-graduation 
         try expectExitCode(second, 0);
         try std.testing.expectEqualStrings(case.expected, first.stdout);
         try std.testing.expectEqualStrings(first.stdout, second.stdout);
-        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") == null);
+        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") != null);
     }
 }
 
@@ -744,6 +1890,64 @@ test "binary CLI routes composed native source maps through files stdin and para
     );
 }
 
+test "binary CLI routes stable CSS source maps through files stdin and parallel batches" {
+    const input = ".mapped { color: red; }";
+    const expected = ".mapped{color:red}";
+    var file_result = try runCompilerNamed("input.css", input, &.{
+        "--syntax",
+        "css",
+        "--minify",
+        "--source-map",
+    });
+    defer deinitRun(&file_result);
+    try expectExitCode(file_result, 0);
+    try expectInlineSourceMap(file_result.stdout, expected, "input.css", input);
+
+    var stdin_result = try runWithStdin(&.{
+        "-",
+        "--syntax",
+        "css",
+        "--minify",
+        "--source-map",
+    }, input);
+    defer deinitRun(&stdin_result);
+    try expectExitCode(stdin_result, 0);
+    try expectInlineSourceMap(stdin_result.stdout, expected, "<stdin>", input);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "first.css", .data = ".first { color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "second.css", .data = ".second { color: blue; }" });
+    try tmp.dir.makeDir("out");
+    var batch = try runInDir(tmp.dir, &.{
+        "first.css",
+        "second.css",
+        "-o",
+        "out",
+        "--output-dir",
+        "--minify",
+        "--source-map",
+    });
+    defer deinitRun(&batch);
+    try expectExitCode(batch, 0);
+    const first_output = try tmp.dir.readFileAlloc(allocator, "out/first.css", 1024 * 1024);
+    defer allocator.free(first_output);
+    const second_output = try tmp.dir.readFileAlloc(allocator, "out/second.css", 1024 * 1024);
+    defer allocator.free(second_output);
+    try expectInlineSourceMap(
+        first_output,
+        ".first{color:red}",
+        "first.css",
+        ".first { color: red; }",
+    );
+    try expectInlineSourceMap(
+        second_output,
+        ".second{color:blue}",
+        "second.css",
+        ".second { color: blue; }",
+    );
+}
+
 test "binary CLI native watch atomically replaces CSS and its composed source map" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const case = route_cases[0];
@@ -800,6 +2004,137 @@ test "binary CLI native watch atomically replaces CSS and its composed source ma
     running = false;
 }
 
+test "binary CLI stable CSS watch atomically replaces CSS and its inline source map" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const before = ".watch { color: red; }";
+    const after = ".watch { color: blue; }";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = before });
+    const argv = [_][]const u8{
+        cli_options.compiler_path,
+        "input.css",
+        "-o",
+        "output.css",
+        "--watch",
+        "--minify",
+        "--source-map",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer {
+        if (running) _ = child.kill() catch {};
+    }
+
+    _ = try waitForMappedOutputContents(
+        tmp.dir,
+        "output.css",
+        ".watch{color:red}",
+        before,
+    );
+    try replaceFileAtomically(tmp.dir, "input.css", after);
+    const changed = try waitForMappedOutputContents(
+        tmp.dir,
+        "output.css",
+        ".watch{color:blue}",
+        after,
+    );
+    std.Thread.sleep(1200 * std.time.ns_per_ms);
+    try std.testing.expect(changed.eql(try waitForOutputStamp(tmp.dir, "output.css")));
+    _ = try child.kill();
+    running = false;
+}
+
+test "binary CLI native optimizer watch commits only byte-stable output" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    inline for (optimize_route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.watch_before });
+        const argv = [_][]const u8{
+            cli_options.compiler_path,
+            case.filename,
+            "-o",
+            "output.css",
+            "--syntax",
+            case.syntax,
+            "--watch",
+            "--optimize",
+            "--minify",
+        };
+        var child = Child.init(&argv, allocator);
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Ignore;
+        child.cwd_dir = tmp.dir;
+        try child.spawn();
+        var running = true;
+        defer {
+            if (running) _ = child.kill() catch {};
+        }
+
+        _ = try waitForOutputContents(tmp.dir, "output.css", ".a{width:3px}");
+        try replaceFileAtomically(tmp.dir, case.filename, case.watch_after);
+        const changed = try waitForOutputContents(tmp.dir, "output.css", ".a{width:5px}");
+        std.Thread.sleep(1200 * std.time.ns_per_ms);
+        try std.testing.expect(changed.eql(try waitForOutputStamp(tmp.dir, "output.css")));
+        _ = try child.kill();
+        running = false;
+    }
+}
+
+test "binary CLI native target prefix watch retains output recovers and shares one immutable query" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    inline for (prefix_route_cases) |case| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(.{ .sub_path = case.filename, .data = case.input });
+        const argv = [_][]const u8{
+            cli_options.compiler_path,
+            case.filename,
+            "-o",
+            "output.css",
+            "--syntax",
+            case.syntax,
+            "--watch",
+            "--autoprefix",
+            "--browsers",
+            legacy_browsers,
+            "--minify",
+        };
+        var child = Child.init(&argv, allocator);
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Ignore;
+        child.cwd_dir = tmp.dir;
+        try child.spawn();
+        var running = true;
+        defer {
+            if (running) _ = child.kill() catch {};
+        }
+
+        const initial = try waitForOutputContents(tmp.dir, "output.css", prefixed_css);
+        try tmp.dir.deleteFile(case.filename);
+        std.Thread.sleep(1300 * std.time.ns_per_ms);
+        try std.testing.expect(initial.eql(try waitForOutputStamp(tmp.dir, "output.css")));
+        const retained = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+        defer allocator.free(retained);
+        try std.testing.expectEqualStrings(prefixed_css, retained);
+
+        try replaceFileAtomically(tmp.dir, case.filename, case.watch_after);
+        const changed = try waitForOutputContents(tmp.dir, "output.css", watch_prefixed_css);
+        std.Thread.sleep(1200 * std.time.ns_per_ms);
+        try std.testing.expect(changed.eql(try waitForOutputStamp(tmp.dir, "output.css")));
+        _ = try child.kill();
+        running = false;
+    }
+}
+
 test "binary CLI keeps native routing explicit and pending execution modes fail closed" {
     const input = route_cases[0].input;
     var css = try runCompilerNamed("input.css", ".a { color: red; }", &.{ "--syntax", "css", "--minify" });
@@ -811,13 +2146,13 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
     defer deinitRun(&extension_only);
     try expectExitCode(extension_only, 2);
     try std.testing.expectEqual(@as(usize, 0), extension_only.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, extension_only.stderr, "SCSS format adapter is experimental and unavailable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, extension_only.stderr, "input.scss input requires --syntax scss") != null);
 
     var implicit = try runCompilerNamed("input.scss", input, &.{ "--syntax", "scss", "--minify" });
     defer deinitRun(&implicit);
     try expectExitCode(implicit, 0);
     try std.testing.expectEqualStrings(route_cases[0].expected, implicit.stdout);
-    try std.testing.expect(std.mem.indexOf(u8, implicit.stderr, "experimental release candidate") == null);
+    try std.testing.expect(std.mem.indexOf(u8, implicit.stderr, "experimental release candidate") != null);
 
     var css_gate = try runCompilerNamed("input.css", ".a { color: red; }", &.{
         "--experimental-native",
@@ -838,7 +2173,7 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
     try std.testing.expectEqual(@as(usize, 0), unknown.stdout.len);
     try std.testing.expect(std.mem.indexOf(u8, unknown.stderr, "unsupported syntax: scss-next") != null);
 
-    const pending_modes = [_][]const u8{ "--optimize", "--profile" };
+    const pending_modes = [_][]const u8{"--profile"};
     inline for (pending_modes) |mode| {
         var result = try runCompilerNamed("input.scss", input, &.{
             "--experimental-native",
@@ -849,7 +2184,7 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
         defer deinitRun(&result);
         try expectExitCode(result, 2);
         try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
-        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unavailable for native stylesheet syntax") != null);
+        try std.testing.expect(std.mem.indexOf(u8, result.stderr, "--profile is unavailable for native stylesheet syntax") != null);
     }
 
     var duplicate_map = try runCompilerNamed("input.scss", input, &.{
@@ -867,6 +2202,35 @@ test "binary CLI keeps native routing explicit and pending execution modes fail 
         duplicate_map.stderr,
         "--source-map may only be specified once",
     ) != null);
+}
+
+test "binary CLI rejects native maps plus optimizer before reading any syntax" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "output.css", .data = "sentinel" });
+
+    inline for (optimize_route_cases) |case| {
+        var result = try runInDir(tmp.dir, &.{
+            case.filename,
+            "-o",
+            "output.css",
+            "--syntax",
+            case.syntax,
+            "--source-map",
+            "--optimize",
+        });
+        defer deinitRun(&result);
+        try expectExitCode(result, 2);
+        try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+        try std.testing.expect(std.mem.indexOf(
+            u8,
+            result.stderr,
+            "--source-map cannot be combined with --optimize",
+        ) != null);
+        const retained = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+        defer allocator.free(retained);
+        try std.testing.expectEqualStrings("sentinel", retained);
+    }
 }
 
 test "binary CLI native watch invalidates the finite syntax dependency set" {
@@ -1094,7 +2458,7 @@ test "binary CLI routes the finite native syntax set from stdin" {
         try expectExitCode(second, 0);
         try std.testing.expectEqualStrings(case.expected, first.stdout);
         try std.testing.expectEqualStrings(first.stdout, second.stdout);
-        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") == null);
+        try std.testing.expect(std.mem.indexOf(u8, first.stderr, "experimental release candidate") != null);
     }
 }
 
@@ -1112,6 +2476,7 @@ test "binary CLI native stdin confines imports and commits no partial output" {
         "--experimental-native",
         "--syntax",
         "scss",
+        "--optimize",
         "--minify",
     }, "@use \"tokens\"; .card { color: tokens.$color; }");
     defer deinitRun(&confined);
@@ -1319,7 +2684,7 @@ test "binary CLI native parallel failure cancels queued work without partial out
         try tmp.dir.writeFile(.{ .sub_path = output_names[index], .data = sentinels[index] });
     }
 
-    var argv: [native_parallel_queued_case_count + 7][]const u8 = undefined;
+    var argv: [native_parallel_queued_case_count + 11][]const u8 = undefined;
     for (input_names, 0..) |name, index| argv[index] = name;
     argv[native_parallel_queued_case_count..].* = .{
         "-o",
@@ -1328,6 +2693,10 @@ test "binary CLI native parallel failure cancels queued work without partial out
         "--experimental-native",
         "--syntax",
         "scss",
+        "--optimize",
+        "--autoprefix",
+        "--browsers",
+        legacy_browsers,
         "--minify",
     };
 
@@ -1363,6 +2732,10 @@ test "binary CLI native batch failures commit no partial output" {
         "--experimental-native",
         "--syntax",
         "scss",
+        "--optimize",
+        "--autoprefix",
+        "--browsers",
+        legacy_browsers,
         "--minify",
     });
     defer deinitRun(&result);

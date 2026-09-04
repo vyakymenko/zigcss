@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 import { expectedCorpus, validateRepository as validateCorpora } from './generate-benchmark-corpora.mjs'
 import { verifyInstalledToolchain } from './validate-benchmark-toolchain.mjs'
+import { parseReleaseVersion } from './validate-release-version.mjs'
 
 const require = createRequire(import.meta.url)
 const { transform } = require('lightningcss')
@@ -35,7 +36,7 @@ const manifest = {
     {
       id: 'zigcss',
       arguments: ['{input}', '--minify', '-o', '{output}'],
-      stderr: 'compile-message',
+      stderr: 'version-notice-and-compile-message',
     },
     {
       id: 'esbuild',
@@ -191,13 +192,24 @@ function renderArguments(argumentsList, input, output) {
   return argumentsList.map(argument => argument.replaceAll('{input}', input).replaceAll('{output}', output))
 }
 
-function validateStderr(tool, stderr, input, output) {
+export function renderZigCssStderr(version, input, output) {
+  const parsed = parseReleaseVersion(version, 'benchmark compiler version')
+  const notice = parsed.prerelease === null
+    ? ''
+    : `Warning: ZigCSS ${parsed.value} is an experimental release candidate; do not use it for production CSS.\n`
+  return `${notice}Compiled: ${input} -> ${output}\n`
+}
+
+function validateStderr(root, tool, stderr, input, output) {
   if (tool.stderr === 'empty') {
     if (stderr !== '') fail(`${tool.id} emitted unexpected stderr: ${JSON.stringify(stderr)}`)
     return
   }
-  const expected = `Compiled: ${input} -> ${output}\n`
-  if (tool.stderr !== 'compile-message' || stderr !== expected) {
+  const versionPath = path.join(root, 'VERSION')
+  requireRegularFile(versionPath, 'VERSION')
+  const version = fs.readFileSync(versionPath, 'utf8').trim()
+  const expected = renderZigCssStderr(version, input, output)
+  if (tool.stderr !== 'version-notice-and-compile-message' || stderr !== expected) {
     fail(`${tool.id} stderr drifted: ${JSON.stringify(stderr)}`)
   }
 }
@@ -217,7 +229,7 @@ export function runBenchmarkCli(root, tool, executable, input, output, clock) {
   if (result.signal !== null) fail(`${tool.id} terminated by ${result.signal}`)
   if (result.status !== 0) fail(`${tool.id} exited ${result.status}: ${JSON.stringify(result.stderr)}`)
   if (result.stdout !== '') fail(`${tool.id} emitted unexpected stdout: ${JSON.stringify(result.stdout)}`)
-  validateStderr(tool, result.stderr, input, output)
+  validateStderr(root, tool, result.stderr, input, output)
   requireRegularFile(output, `${tool.id} output`)
   const outputBytes = fs.readFileSync(output)
   return {

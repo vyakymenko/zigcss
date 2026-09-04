@@ -26,6 +26,8 @@ ZigCSS will pursue **full language compatibility** with the exact canonical prov
 | `less` | `less` | `less` `4.6.7` | Apache-2.0 | Less programmatic render API |
 | `stylus` | `stylus` | `stylus` `0.64.0` | MIT | Stylus programmatic render API |
 
+Maintenance note (2026-09-02): this table remains the historical compatibility baseline accepted by this ADR and is intentionally not rewritten. The current development-only Less forward oracle is exact 4.9.0 over the frozen 4.6.7 native conformance baseline. The complete root development graph is audited with `npm run audit:development`; the former direct `image-size` 0.5.5 pin has been removed in favor of one shared bounded PNG/GIF/JPEG/SVG dimension parser over resolver-owned bytes. None of this restores a provider to production or changes the immutable native 0.6 release.
+
 | Adapter ID | Strategy | Provider |
 |---|---|---|
 | `scss` | `canonical-integration` | `dart-sass` |

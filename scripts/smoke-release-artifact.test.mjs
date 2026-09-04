@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -8,13 +10,39 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   compilerWarningForVersion,
   archiveExecutable,
+  lifecycleShellExecutable,
   nativePreprocessorSmokeCases,
   nativeSmokeTargets,
   parseSmokeArguments,
+  stageDevelopmentPackage,
   validateReleaseSmokeWorkflowSources,
 } from './smoke-release-artifact.mjs'
+import { createReleaseArchive } from './create-release-archive.mjs'
+import { expectedPackedFiles } from './validate-preprocessor-package.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const repositoryInstaller = createRequire(import.meta.url)(path.join(repositoryRoot, 'install.js'))
+
+function localNpmCliPath() {
+  const executableDirectory = path.dirname(process.execPath)
+  const candidates = [
+    process.env.npm_execpath,
+    path.resolve(executableDirectory, '../lib/node_modules/npm/bin/npm-cli.js'),
+    path.resolve(executableDirectory, '../node_modules/npm/bin/npm-cli.js'),
+    path.resolve(executableDirectory, 'node_modules/npm/bin/npm-cli.js'),
+  ].filter(candidate => typeof candidate === 'string' && candidate.length > 0)
+  for (const candidate of candidates) {
+    try {
+      const stat = fs.lstatSync(candidate)
+      if ((stat.isFile() || stat.isSymbolicLink()) && fs.statSync(candidate).isFile()) {
+        return fs.realpathSync(candidate)
+      }
+    } catch {
+      // Try only the next path adjacent to the already-running Node executable.
+    }
+  }
+  throw new Error('npm CLI is unavailable beside the active Node executable')
+}
 
 test('release smokes emit the safety notice only for prerelease binaries', () => {
   assert.equal(compilerWarningForVersion('0.6.0'), '')
@@ -73,15 +101,199 @@ function runtimeTraceFixture(temporary) {
   }
 }
 
-test('Windows release smoke selects the native archive reader instead of Git tar', () => {
-  assert.equal(archiveExecutable('linux'), 'tar')
-  assert.equal(archiveExecutable('darwin'), 'tar')
+function archiveFilesystem({
+  mode = 0o100755,
+  resolved = '/usr/bin/tar',
+  rootOwned = true,
+  symbolicLink = false,
+  regular = true,
+} = {}) {
+  return {
+    accessSync() {},
+    closeSync() {},
+    fstatSync() {
+      return this.lstatSync()
+    },
+    lstatSync() {
+      return {
+        ctimeMs: 4,
+        dev: 1,
+        ino: 2,
+        isFile: () => regular,
+        isSymbolicLink: () => symbolicLink,
+        mode,
+        mtimeMs: 3,
+        size: 10,
+        uid: rootOwned ? 0 : 501,
+      }
+    },
+    openSync() {
+      return 7
+    },
+    realpathSync() {
+      return resolved
+    },
+  }
+}
+
+function windowsSystemFilesystem({
+  executableName = 'tar.exe',
+  redirected = undefined,
+  redirectedAfter = undefined,
+  replaced = undefined,
+  symbolicLink = undefined,
+  wrongType = undefined,
+  emptyFile = false,
+} = {}) {
+  const locations = {
+    root: 'D:\\Windows',
+    system32: 'D:\\Windows\\System32',
+    file: `D:\\Windows\\System32\\${executableName}`,
+  }
+  const redirects = {
+    root: 'D:\\Redirected\\Windows',
+    system32: 'D:\\Windows\\RedirectedSystem32',
+    file: `D:\\Windows\\System32\\redirected-${executableName}`,
+  }
+  const realpathCalls = new Map()
+  const lstatCalls = new Map()
+  const key = value => path.win32.normalize(value.replace(/^\\\\\?\\/, '')).toLowerCase()
+  const classify = value => Object.keys(locations).find(name => key(locations[name]) === key(value))
+  const identity = (name, changed = false) => ({
+    ctimeNs: 4n,
+    dev: 1n,
+    ino: BigInt({ root: 10, system32: 20, file: 30 }[name] + (changed ? 100 : 0)),
+    isDirectory: () => name !== 'file' && wrongType !== name,
+    isFile: () => name === 'file' && wrongType !== name,
+    isSymbolicLink: () => symbolicLink === name,
+    mode: BigInt(name === 'file' ? 0o100755 : 0o40755),
+    mtimeNs: 3n,
+    nlink: 1n,
+    size: name === 'file' ? (emptyFile ? 0n : 4096n) : 0n,
+  })
+  return {
+    accessSync(candidate) {
+      assert.equal(classify(candidate), 'file')
+    },
+    closeSync(descriptor) {
+      assert.equal(descriptor, 7)
+    },
+    fstatSync(descriptor) {
+      assert.equal(descriptor, 7)
+      return identity('file', replaced === 'opened-file')
+    },
+    lstatSync(candidate) {
+      const name = classify(candidate)
+      if (name === undefined) throw new Error(`unexpected lstat ${candidate}`)
+      const calls = (lstatCalls.get(name) ?? 0) + 1
+      lstatCalls.set(name, calls)
+      return identity(name, replaced === name && calls > 1)
+    },
+    openSync(candidate) {
+      assert.equal(classify(candidate), 'file')
+      return 7
+    },
+    realpathSync(candidate) {
+      const name = classify(candidate)
+      if (name === undefined) throw new Error(`unexpected realpath ${candidate}`)
+      const calls = (realpathCalls.get(name) ?? 0) + 1
+      realpathCalls.set(name, calls)
+      if (redirected === name || (redirectedAfter === name && calls > 1)) return redirects[name]
+      return locations[name]
+    },
+  }
+}
+
+test('release smoke selects only finite verified absolute system archive readers', () => {
+  if (process.platform === 'linux' || process.platform === 'darwin') {
+    const executable = archiveExecutable(process.platform)
+    assert.equal(path.posix.isAbsolute(executable), true)
+    assert.notEqual(executable, 'tar')
+    const resolved = fs.realpathSync(executable)
+    const stat = fs.lstatSync(resolved)
+    assert.equal(stat.isFile(), true)
+    assert.equal(stat.isSymbolicLink(), false)
+    assert.equal(stat.uid, 0)
+    assert.equal(stat.mode & 0o022, 0)
+    assert.notEqual(stat.mode & 0o111, 0)
+  }
+  assert.equal(archiveExecutable('linux', undefined, archiveFilesystem()), '/usr/bin/tar')
   assert.equal(
-    archiveExecutable('win32', 'D:\\Windows'),
+    archiveExecutable('darwin', undefined, archiveFilesystem({ resolved: '/usr/bin/bsdtar' })),
+    '/usr/bin/tar',
+  )
+  assert.equal(
+    archiveExecutable('win32', 'D:\\Windows', windowsSystemFilesystem()),
     'D:\\Windows\\System32\\tar.exe',
   )
   assert.throws(() => archiveExecutable('win32', undefined), /Windows system root/)
   assert.throws(() => archiveExecutable('win32', '\\\\server\\Windows'), /Windows system root/)
+  assert.throws(() => archiveExecutable('win32', 'D:\\FakeRoot'), /Windows system root/)
+  assert.throws(() => archiveExecutable('win32', 'D:\\Nested\\Windows'), /Windows system root/)
+  assert.throws(() => archiveExecutable('freebsd'), /unsupported archive platform/)
+  for (const fileSystem of [
+    archiveFilesystem({ resolved: '/tmp/tar' }),
+    archiveFilesystem({ symbolicLink: true }),
+    archiveFilesystem({ regular: false }),
+    archiveFilesystem({ rootOwned: false }),
+    archiveFilesystem({ mode: 0o100777 }),
+    archiveFilesystem({ mode: 0o100644 }),
+  ]) {
+    assert.throws(
+      () => archiveExecutable('linux', undefined, fileSystem),
+      /no trusted system tar executable/,
+    )
+  }
+  assert.equal(lifecycleShellExecutable('linux', undefined, archiveFilesystem()), '/bin/sh')
+  assert.equal(lifecycleShellExecutable('darwin', undefined, archiveFilesystem()), '/bin/sh')
+  assert.equal(
+    lifecycleShellExecutable(
+      'win32',
+      'D:\\Windows',
+      windowsSystemFilesystem({ executableName: 'cmd.exe' }),
+    ),
+    'D:\\Windows\\System32\\cmd.exe',
+  )
+  assert.throws(
+    () => lifecycleShellExecutable('linux', undefined, archiveFilesystem({ rootOwned: false })),
+    /trusted lifecycle shell/,
+  )
+  assert.throws(() => lifecycleShellExecutable('freebsd'), /unsupported lifecycle shell platform/)
+
+  const windowsMutations = [
+    { redirected: 'root' },
+    { redirected: 'system32' },
+    { redirected: 'file' },
+    { redirectedAfter: 'root' },
+    { redirectedAfter: 'system32' },
+    { redirectedAfter: 'file' },
+    { replaced: 'root' },
+    { replaced: 'system32' },
+    { replaced: 'file' },
+    { replaced: 'opened-file' },
+    { symbolicLink: 'root' },
+    { symbolicLink: 'system32' },
+    { symbolicLink: 'file' },
+    { wrongType: 'root' },
+    { wrongType: 'system32' },
+    { wrongType: 'file' },
+    { emptyFile: true },
+  ]
+  for (const [selector, executableName] of [
+    [archiveExecutable, 'tar.exe'],
+    [lifecycleShellExecutable, 'cmd.exe'],
+  ]) {
+    for (const mutation of windowsMutations) {
+      assert.throws(
+        () => selector(
+          'win32',
+          'D:\\Windows',
+          windowsSystemFilesystem({ executableName, ...mutation }),
+        ),
+        new RegExp(`trusted Windows system ${executableName.replace('.', '\\.')}`),
+      )
+    }
+  }
 })
 
 test('native smoke policy covers every release target on one matching runner', () => {
@@ -126,7 +338,51 @@ test('native smoke policy covers every release target on one matching runner', (
   assert.equal(new Set(nativeSmokeTargets.map(item => `${item.nodePlatform}/${item.nodeArch}`)).size, 5)
 })
 
-test('smoke CLI accepts only the exact archive, binary, target, and version contract', () => {
+test('development smoke stages an isolated package trust manifest for its fresh archive', t => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-development-package-'))
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
+  const destination = path.join(temporary, 'package')
+  const originalSource = fs.readFileSync(path.join(repositoryRoot, 'native-integrity.json'), 'utf8')
+  const original = JSON.parse(originalSource)
+  const digest = '0'.repeat(64)
+
+  assert.equal(
+    stageDevelopmentPackage(repositoryRoot, destination, 'aarch64-macos', digest),
+    path.join(fs.realpathSync(temporary), 'package'),
+  )
+  assert.equal(fs.readFileSync(path.join(repositoryRoot, 'native-integrity.json'), 'utf8'), originalSource)
+  const staged = JSON.parse(fs.readFileSync(path.join(destination, 'native-integrity.json'), 'utf8'))
+  assert.equal(staged.archives.find(item => item.target === 'aarch64-macos').sha256, digest)
+  assert.deepEqual(
+    staged.archives.filter(item => item.target !== 'aarch64-macos'),
+    original.archives.filter(item => item.target !== 'aarch64-macos'),
+  )
+
+  const inventory = []
+  function visit(relative = '') {
+    for (const entry of fs.readdirSync(path.join(destination, relative), { withFileTypes: true })) {
+      const next = path.join(relative, entry.name)
+      if (entry.isDirectory()) visit(next)
+      else inventory.push(next.split(path.sep).join('/'))
+    }
+  }
+  visit()
+  assert.deepEqual(inventory.sort(), [...expectedPackedFiles])
+  assert.throws(
+    () => stageDevelopmentPackage(repositoryRoot, destination, 'aarch64-macos', digest),
+    /new direct child directory/,
+  )
+  assert.throws(
+    () => stageDevelopmentPackage(repositoryRoot, path.join(temporary, 'bad-target'), 'unknown', digest),
+    /unsupported development package target/,
+  )
+  assert.throws(
+    () => stageDevelopmentPackage(repositoryRoot, path.join(temporary, 'bad-digest'), 'aarch64-macos', 'ABC'),
+    /64 lowercase hexadecimal/,
+  )
+})
+
+test('smoke CLI accepts only the exact archive, binary, target, version, and optional npm package contract', () => {
   assert.deepEqual(parseSmokeArguments([
     '--archive', 'release-assets/zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
     '--binary', 'zig-out/bin/zigcss',
@@ -156,6 +412,21 @@ test('smoke CLI accepts only the exact archive, binary, target, and version cont
     evidence: 'native-target-evidence/aarch64-macos.json',
   })
 
+  const npmPackage = path.resolve('zigcss-0.6.0-rc.2.tgz')
+  assert.deepEqual(parseSmokeArguments([
+    '--archive', 'release-assets/zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
+    '--binary', 'zig-out/bin/zigcss',
+    '--target', 'aarch64-macos',
+    '--version', '0.6.0-rc.2',
+    '--npm-package', npmPackage,
+  ]), {
+    archive: 'release-assets/zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz',
+    binary: 'zig-out/bin/zigcss',
+    target: 'aarch64-macos',
+    version: '0.6.0-rc.2',
+    npmPackage,
+  })
+
   for (const invalid of [
     [],
     ['--target', 'aarch64-macos'],
@@ -164,6 +435,8 @@ test('smoke CLI accepts only the exact archive, binary, target, and version cont
     ['--archive', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2'],
     ['--unknown', 'a', '--archive', 'b', '--binary', 'c', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2'],
     ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--commit', commit],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--npm-package', 'zigcss-0.6.0-rc.2.tgz'],
+    ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--npm-package', path.resolve('zigcss-0.6.0.tgz')],
     ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--commit', 'ABC', '--evidence', 'native-target-evidence/aarch64-macos.json'],
     ['--archive', 'a', '--binary', 'b', '--target', 'aarch64-macos', '--version', '0.6.0-rc.2', '--commit', commit, '--evidence', '../aarch64-macos.json'],
   ]) {
@@ -199,6 +472,14 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
       networkAttempts: 0,
       deniedProcessAttempts: 0,
     },
+    offlineNodeApiSmokes: 2,
+    offlineNodeApiOptionRejections: 1,
+    offlineNodeApiRuntimeTrace: {
+      invocations: 3,
+      nativeSpawns: 3,
+      networkAttempts: 0,
+      deniedProcessAttempts: 0,
+    },
   }
   const evidence = smoke.nativeTargetEvidence(result, {
     commit,
@@ -207,7 +488,7 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
     arch: 'arm64',
   })
   assert.deepEqual(evidence, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     commit,
     version: '0.6.0-rc.2',
     target: 'aarch64-macos',
@@ -239,6 +520,15 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
       nativeSpawns: 6,
       networkAttempts: 0,
       deniedProcessAttempts: 0,
+      nodeApi: {
+        modules: ['commonjs', 'esm'],
+        compilations: 2,
+        optionRejections: 1,
+        tracedInvocations: 3,
+        nativeSpawns: 3,
+        networkAttempts: 0,
+        deniedProcessAttempts: 0,
+      },
       entries: 10,
       bytes: 3_575_623,
     },
@@ -281,6 +571,24 @@ test('native smoke builds a canonical commit-bound five-target receipt', async (
       arch: 'arm64',
     }),
     /five-language/,
+  )
+  assert.throws(
+    () => smoke.nativeTargetEvidence({ ...result, offlineNodeApiSmokes: 1 }, {
+      commit,
+      version: '0.6.0-rc.2',
+      platform: 'darwin',
+      arch: 'arm64',
+    }),
+    /process\/network trace/,
+  )
+  assert.throws(
+    () => smoke.nativeTargetEvidence({ ...result, offlineNodeApiOptionRejections: 0 }, {
+      commit,
+      version: '0.6.0-rc.2',
+      platform: 'darwin',
+      arch: 'arm64',
+    }),
+    /process\/network trace/,
   )
   assert.throws(
     () => smoke.nativeTargetEvidence(result, {
@@ -332,6 +640,72 @@ test('npm lifecycle preload serves only the two exact local release URLs', () =>
     assert.equal(blocked.status, 0, blocked.stderr)
     assert.match(blocked.stdout, /blocked unexpected HTTPS request/)
 
+    const escaped = spawnSync(process.execPath, ['-e', [
+      "'use strict'",
+      "const childProcess = require('node:child_process')",
+      "const cluster = require('node:cluster')",
+      "const dgram = require('node:dgram')",
+      "const dns = require('node:dns')",
+      "const dnsPromises = require('node:dns/promises')",
+      "const http = require('node:http')",
+      "const inspector = require('node:inspector')",
+      "const net = require('node:net')",
+      "const { Worker } = require('node:worker_threads')",
+      'const sync = {}',
+      'let coercions = 0',
+      "const coercingBinding = { [Symbol.toPrimitive]() { coercions += 1; return 'tcp_wrap' } }",
+      'const capture = (name, operation) => { try { operation(); sync[name] = \'returned\' } catch (error) { sync[name] = error.code } }',
+      "capture('spawnSync', () => childProcess.spawnSync(process.execPath, ['-e', 'require(\\\"node:net\\\").createServer().listen(0)'], { env: {} }))",
+      "capture('childPrototype', () => new childProcess.ChildProcess().spawn({ file: process.execPath, args: [process.execPath] }))",
+      "capture('worker', () => new Worker('require(\\\"node:net\\\").createServer().listen(0)', { eval: true, execArgv: [], env: {} }))",
+      "capture('cluster', () => cluster.fork())",
+      "capture('processSpawnBinding', () => process.binding('spawn_sync'))",
+      "capture('processTcpBinding', () => process.binding('tcp_wrap'))",
+      "capture('processBoxedBinding', () => process.binding(new String('tcp_wrap')))",
+      "capture('processCoercingBinding', () => process.binding(coercingBinding))",
+      "capture('processLinkedBinding', () => process._linkedBinding('tcp_wrap'))",
+      "if (typeof process._kill === 'function') capture('processKill', () => process._kill(process.pid, 0))",
+      "capture('listener', () => new net.Server().listen(0))",
+      "capture('datagram', () => new dgram.Socket())",
+      "capture('clientRequest', () => new http.ClientRequest('http://127.0.0.1:9'))",
+      "capture('inspector', () => inspector.open(0, '127.0.0.1'))",
+      "capture('resolver', () => new dns.Resolver())",
+      "capture('setServers', () => dns.setServers(['127.0.0.1']))",
+      "capture('promiseSetServers', () => dnsPromises.setServers(['127.0.0.1']))",
+      "capture('mutateWorker', () => { require('node:worker_threads').Worker = class EscapedWorker {} })",
+      'const requestCode = request => new Promise((resolve, reject) => request.on(\'error\', error => error.code ? resolve(error.code) : reject(error)))',
+      'const asyncChecks = [',
+      "  dnsPromises.lookup('example.invalid').then(() => 'returned', error => error.code),",
+      "  fetch('https://example.invalid').then(() => 'returned', error => error.code),",
+      "  requestCode(net.connect(443, 'example.invalid')),",
+      ']',
+      "if (typeof dns.resolveTlsa === 'function') asyncChecks.push(new Promise((resolve, reject) => dns.resolveTlsa('example.invalid', error => error?.code ? resolve(error.code) : reject(error ?? new Error('returned')))))",
+      'Promise.all(asyncChecks).then(asyncCodes => process.stdout.write(JSON.stringify({ asyncCodes, coercions, descriptors: {',
+      "  child: Object.getOwnPropertyDescriptor(childProcess, 'spawnSync').writable,",
+      "  listener: Object.getOwnPropertyDescriptor(net.Server.prototype, 'listen').writable,",
+      "  worker: Object.getOwnPropertyDescriptor(require('node:worker_threads'), 'Worker').writable,",
+      '}, sync })))',
+    ].join('\n')], { encoding: 'utf8', env })
+    assert.equal(escaped.error, undefined)
+    assert.equal(escaped.status, 0, escaped.stderr)
+    const boundary = JSON.parse(escaped.stdout)
+    assert.deepEqual(boundary.descriptors, { child: false, listener: false, worker: false })
+    assert.equal(boundary.coercions, 0)
+    assert.equal(boundary.sync.mutateWorker, undefined)
+    for (const [operation, code] of Object.entries(boundary.sync)) {
+      assert.equal(
+        code,
+        operation.includes('Tcp') || [
+          'clientRequest', 'datagram', 'inspector', 'listener', 'resolver',
+          'setServers', 'promiseSetServers',
+        ].includes(operation)
+          ? 'ZIGCSS_NETWORK_DISABLED'
+          : 'ZIGCSS_PROCESS_DISABLED',
+        `${operation} escaped the asset boundary`,
+      )
+    }
+    assert.equal(boundary.asyncCodes.every(code => code === 'ZIGCSS_NETWORK_DISABLED'), true)
+
     const runtimeFixture = runtimeTraceFixture(temporary)
     const runtimeBlocked = spawnSync(process.execPath, ['-e', [
       "const https = require('node:https')",
@@ -354,6 +728,106 @@ test('npm lifecycle preload serves only the two exact local release URLs', () =>
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
   }
+})
+
+test('npm lifecycle preload admits only one exact installer and its two trusted archive operations', t => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-lifecycle-'))
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
+  let descriptor
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+    descriptor = repositoryInstaller.releaseDescriptor(manifest.version, process.platform, process.arch)
+  } catch (error) {
+    t.skip(`current host is not a release target: ${error.message}`)
+    return
+  }
+
+  const releaseRoot = path.join(temporary, 'release')
+  const binaryRoot = path.join(temporary, 'binary')
+  const packageRoot = path.join(temporary, 'package')
+  const packRoot = path.join(temporary, 'pack')
+  const consumer = path.join(temporary, 'consumer')
+  for (const directory of [releaseRoot, binaryRoot, packRoot, consumer]) {
+    fs.mkdirSync(directory, { mode: 0o700 })
+  }
+  const binary = path.join(binaryRoot, descriptor.binaryName)
+  fs.copyFileSync(process.execPath, binary, fs.constants.COPYFILE_EXCL)
+  if (process.platform !== 'win32') fs.chmodSync(binary, 0o755)
+  repositoryInstaller.assertBinaryMatchesTarget(binary, descriptor.target)
+  const archive = path.join(releaseRoot, descriptor.assets.archive)
+  const integrity = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'native-integrity.json'), 'utf8'))
+  createReleaseArchive({ archive, binary, sourceDateEpoch: integrity.sourceDateEpoch })
+  const digest = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex')
+  const sbomDigest = crypto.createHash('sha256').update('release lifecycle fixture SBOM\n').digest('hex')
+  fs.writeFileSync(
+    path.join(releaseRoot, descriptor.assets.checksums),
+    `${digest}  ${descriptor.assets.archive}\n${sbomDigest}  ${descriptor.assets.sbom}\n`,
+    { encoding: 'utf8', flag: 'wx', mode: 0o600 },
+  )
+  stageDevelopmentPackage(repositoryRoot, packageRoot, descriptor.target, digest)
+  fs.writeFileSync(
+    path.join(consumer, 'package.json'),
+    '{"name":"zigcss-release-lifecycle-consumer","private":true,"version":"1.0.0"}\n',
+    { encoding: 'utf8', flag: 'wx', mode: 0o600 },
+  )
+
+  const npmCli = localNpmCliPath()
+  const npmEnvironment = {
+    ...process.env,
+    npm_config_audit: 'false',
+    npm_config_cache: path.join(temporary, 'npm-cache'),
+    npm_config_fund: 'false',
+    npm_config_update_notifier: 'false',
+  }
+  const packed = spawnSync(process.execPath, [npmCli,
+    'pack', packageRoot, '--ignore-scripts', '--pack-destination', packRoot,
+  ], { cwd: temporary, encoding: 'utf8', env: npmEnvironment })
+  assert.equal(packed.error, undefined)
+  assert.equal(packed.status, 0, packed.stderr)
+  const packageArchive = path.join(packRoot, `zigcss-${descriptor.version}.tgz`)
+  const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
+  const shadowRoot = path.join(temporary, 'path-shadow')
+  const shadowMarker = path.join(temporary, 'shadow-executed')
+  fs.mkdirSync(shadowRoot, { mode: 0o700 })
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      path.join(shadowRoot, 'node.cmd'),
+      `@echo shadow>"${shadowMarker}"\r\n@exit /b 97\r\n`,
+      { encoding: 'utf8', flag: 'wx', mode: 0o700 },
+    )
+  } else {
+    fs.writeFileSync(
+      path.join(shadowRoot, 'node'),
+      `#!/bin/sh\nprintf shadow > '${shadowMarker}'\nexit 97\n`,
+      { encoding: 'utf8', flag: 'wx', mode: 0o700 },
+    )
+  }
+  const installed = spawnSync(process.execPath, [npmCli,
+    'install', packageArchive, '--offline', '--foreground-scripts', '--no-audit', '--no-fund',
+  ], {
+    cwd: consumer,
+    encoding: 'utf8',
+    env: {
+      ...npmEnvironment,
+      NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+      ZIGCSS_RELEASE_SMOKE: '1',
+      ZIGCSS_RELEASE_SMOKE_ARCHIVE: descriptor.assets.archive,
+      ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: releaseRoot,
+      ZIGCSS_RELEASE_SMOKE_CHECKSUMS: descriptor.assets.checksums,
+      ZIGCSS_RELEASE_SMOKE_VERSION: descriptor.version,
+      npm_config_script_shell: lifecycleShellExecutable(),
+      PATH: `${shadowRoot}${path.delimiter}${npmEnvironment.PATH}`,
+    },
+    timeout: 30_000,
+  })
+  assert.equal(installed.error, undefined)
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout)
+  assert.equal(fs.existsSync(shadowMarker), false, 'PATH-shadowed node must never execute')
+  const installedBinary = path.join(consumer, 'node_modules', 'zigcss', 'bin', descriptor.binaryName)
+  assert.equal(
+    crypto.createHash('sha256').update(fs.readFileSync(installedBinary)).digest('hex'),
+    crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),
+  )
 })
 
 test('development reference provider host installs a process-wide deny-network policy', () => {
@@ -406,6 +880,23 @@ test('offline installed native package compiles the finite five-language syntax 
   assert.doesNotMatch(source, /zigcss\/api/)
 })
 
+test('offline installed package exercises root CommonJS and ESM APIs against the packaged binary', () => {
+  const source = fs.readFileSync(path.join(repositoryRoot, 'scripts/smoke-release-artifact.mjs'), 'utf8')
+  assert.match(source, /function checkInstalledNodeApis\(/)
+  assert.match(source, /require\('zigcss'\)/)
+  assert.match(source, /import zigcss, \{ compileFile \} from 'zigcss'/)
+  assert.match(source, /browsers: 'safari >= 7, ie >= 11'/)
+  assert.match(source, /compileFile\(entry, \{ format: 'minified', sourceMap: true \}\)/)
+  assert.match(source, /result\.dependencies\[0\]\.url !== pathToFileURL\(dependency\)\.href/)
+  assert.match(source, /browsers: 'defaults'/)
+  assert.match(source, /error instanceof zigcss\.ZigCssCompileError/)
+  assert.match(source, /error\.code !== 'NODE_OPTIONS'/)
+  assert.match(source, /'css' in error \|\| 'result' in error/)
+  assert.match(source, /const nodeApiSmokes = checkInstalledNodeApis\(consumer, nodeApiEnvironment\)/)
+  assert.match(source, /validateRuntimeTrace\(\s*nodeApiRuntimeTrace,\s*nodeApiSmokes\.invocations,/)
+  assert.match(source, /offlineNodeApiSmokes: nodeApiSmokes\.compilations,\s*offlineNodeApiOptionRejections: nodeApiSmokes\.optionRejections,\s*offlineNodeApiRuntimeTraces: nodeApiTrace\.invocations/)
+})
+
 test('direct native archive runtime trace admits one native child and zero network access', () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-runtime-trace-'))
   try {
@@ -448,77 +939,132 @@ test('direct native archive runtime trace admits one native child and zero netwo
   }
 })
 
+test('release runtime trace admits only the exact framed Node API spawn shape', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-node-api-trace-'))
+  try {
+    const fixture = runtimeTraceFixture(temporary)
+    const result = spawnSync(process.execPath, ['-e', [
+      "const { spawn } = require('node:child_process')",
+      "const child = spawn(process.argv[1], ['--internal-node-v1'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })",
+      'child.stdout.resume()',
+      'child.stderr.resume()',
+      "child.on('close', () => process.stdout.write('admitted'))",
+    ].join('\n'), fixture.native], {
+      encoding: 'utf8',
+      env: fixture.env,
+    })
+    assert.equal(result.error, undefined)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, 'admitted')
+    const records = fs.readFileSync(fixture.trace, 'utf8')
+      .trimEnd()
+      .split('\n')
+      .map(line => JSON.parse(line))
+    assert.deepEqual(records.map(record => record.event), [
+      'runtime-start',
+      'native-spawn',
+      'runtime-summary',
+    ])
+    assert.equal(records.at(-1).nativeSpawns, 1)
+    assert.equal(records.at(-1).networkAttempts, 0)
+    assert.equal(records.at(-1).deniedProcessAttempts, 0)
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})
+
 test('offline installed native package runtime trace admits one native child and zero network access', () => {
   const source = fs.readFileSync(path.join(repositoryRoot, 'scripts/smoke-release-artifact.mjs'), 'utf8')
   const preload = fs.readFileSync(path.join(repositoryRoot, 'scripts/release-smoke-preload.cjs'), 'utf8')
   assert.match(source, /const offlineRuntimeTrace = createRuntimeTrace\(/)
   assert.match(source, /validateRuntimeTrace\(offlineRuntimeTrace, 6,/)
   assert.match(source, /checkCompiler\([\s\S]*?offlineEnvironment,/)
-  assert.match(preload, /childProcess\.spawn = function tracedNativeSpawn/)
-  assert.match(preload, /childProcess\.ChildProcess\.prototype\.spawn = function guardedChildSpawn/)
+  assert.match(preload, /immutableFunction\(childProcess, 'spawn', function tracedNativeSpawn/)
+  assert.match(preload, /immutableFunction\(childProcess\.ChildProcess\.prototype, 'spawn', function guardedChildSpawn/)
   assert.match(preload, /\['spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork', '_forkChild'\]/)
   for (const token of [
-    'http.request',
-    'https.request',
-    'net.connect',
-    'net.Server.prototype.listen',
-    'tls.connect',
-    'dgram.createSocket',
-    'dns.lookup',
-    'globalThis.fetch',
+    "immutableFunction(http, 'request'",
+    "immutableFunction(https, 'request'",
+    "immutableFunction(net, 'connect'",
+    "immutableFunction(net.Server.prototype, 'listen'",
+    "immutableFunction(tls, 'connect'",
+    "immutableFunction(dgram, 'createSocket'",
+    'for (const name of Object.keys(dns))',
+    'allowedDnsConfigurationFunctions',
+    "immutableValue(\n    globalThis,\n    'fetch'",
+    "immutableValue(workerThreads, 'Worker'",
   ]) {
-    assert.match(preload, new RegExp(token.replaceAll('.', '\\.')))
+    assert.equal(preload.includes(token), true, `missing release boundary anchor ${token}`)
   }
 
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-runtime-denial-'))
   try {
     const fixture = runtimeTraceFixture(temporary)
     const result = spawnSync(process.execPath, ['-e', [
+      "'use strict'",
       "const childProcess = require('node:child_process')",
+      "const cluster = require('node:cluster')",
+      "const dgram = require('node:dgram')",
       "const dns = require('node:dns')",
+      "const dnsPromises = require('node:dns/promises')",
+      "const http = require('node:http')",
       "const https = require('node:https')",
+      "const inspector = require('node:inspector')",
       "const net = require('node:net')",
+      "const workerThreads = require('node:worker_threads')",
       'const codes = []',
-      "try { childProcess.spawnSync(process.execPath, ['--version']) } catch (error) { codes.push(error.code) }",
-      `try { new childProcess.ChildProcess().spawn({ file: ${JSON.stringify(fixture.native)}, args: ${JSON.stringify([fixture.native, ...fixture.nativeArgs])}, cwd: process.cwd(), stdio: 'inherit' }) } catch (error) { codes.push(error.code) }`,
-      `try { childProcess.spawn(${JSON.stringify(fixture.native)}, ${JSON.stringify(fixture.nativeArgs)}, { stdio: 'inherit', cwd: process.cwd(), shell: ${JSON.stringify(fixture.native)} }) } catch (error) { codes.push(error.code) }`,
-      "const resolverCode = (() => { try { new dns.Resolver(); return 'unexpected' } catch (error) { return error.code } })()",
-      "const listenerCode = (() => { try { new net.Server().listen(0); return 'unexpected' } catch (error) { return error.code } })()",
+      'const networkCodes = []',
+      "const capture = (target, operation) => { try { operation(); target.push('unexpected') } catch (error) { target.push(error.code) } }",
+      "const nonCanonicalStdio = ['pipe', 'pipe', 'pipe']",
+      'nonCanonicalStdio.extra = true',
+      "capture(codes, () => childProcess.spawnSync(process.execPath, ['--version']))",
+      `capture(codes, () => new childProcess.ChildProcess().spawn({ file: ${JSON.stringify(fixture.native)}, args: ${JSON.stringify([fixture.native, ...fixture.nativeArgs])}, cwd: process.cwd(), stdio: 'inherit' }))`,
+      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ${JSON.stringify(fixture.nativeArgs)}, { stdio: 'inherit', cwd: process.cwd(), shell: ${JSON.stringify(fixture.native)} }))`,
+      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ['--internal-node-v1', 'extra'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }))`,
+      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ['--internal-node-v1'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], cwd: process.cwd() }))`,
+      `capture(codes, () => childProcess.spawn(${JSON.stringify(fixture.native)}, ['--internal-node-v1'], { shell: false, windowsHide: true, stdio: nonCanonicalStdio }))`,
+      "capture(codes, () => new workerThreads.Worker('require(\\\"node:net\\\").createServer().listen(0)', { eval: true, execArgv: [], env: {} }))",
+      "capture(codes, () => cluster.fork())",
+      "capture(codes, () => process.binding('spawn_sync'))",
+      "capture(codes, () => process._linkedBinding('process_wrap'))",
+      "if (typeof process.dlopen === 'function') capture(codes, () => process.dlopen({}, '/missing.node'))",
+      "if (typeof process._kill === 'function') capture(codes, () => process._kill(process.pid, 0))",
+      "capture(networkCodes, () => new dns.Resolver())",
+      "capture(networkCodes, () => new net.Server().listen(0))",
+      "capture(networkCodes, () => new dgram.Socket())",
+      "capture(networkCodes, () => new http.ClientRequest('http://127.0.0.1:9'))",
+      "capture(networkCodes, () => inspector.open(0, '127.0.0.1'))",
+      "capture(networkCodes, () => process.binding('tcp_wrap'))",
+      "capture(networkCodes, () => dns.setServers(['127.0.0.1']))",
+      "capture(networkCodes, () => dnsPromises.setServers(['127.0.0.1']))",
       "const requestCode = request => new Promise((resolve, reject) => request.on('error', error => error.code ? resolve(error.code) : reject(error)))",
-      "Promise.all([Promise.resolve(resolverCode), Promise.resolve(listenerCode), requestCode(https.get('https://example.invalid')), requestCode(net.connect(443, 'example.invalid')), fetch('https://example.invalid').then(() => 'unexpected', error => error.code)])",
-      "  .then(networkCodes => process.stdout.write(JSON.stringify({ codes, networkCodes })))",
+      "const pending = [requestCode(https.get('https://example.invalid')), requestCode(net.connect(443, 'example.invalid')), fetch('https://example.invalid').then(() => 'unexpected', error => error.code), dnsPromises.lookup('example.invalid').then(() => 'unexpected', error => error.code)]",
+      "if (typeof dns.resolveTlsa === 'function') pending.push(new Promise((resolve, reject) => dns.resolveTlsa('example.invalid', error => error?.code ? resolve(error.code) : reject(error ?? new Error('unexpected')))))",
+      "Promise.all(pending).then(asyncCodes => process.stdout.write(JSON.stringify({ codes, descriptors: { child: Object.getOwnPropertyDescriptor(childProcess, 'spawnSync').writable, listener: Object.getOwnPropertyDescriptor(net.Server.prototype, 'listen').writable, worker: Object.getOwnPropertyDescriptor(workerThreads, 'Worker').writable }, networkCodes: [...networkCodes, ...asyncCodes] })))",
     ].join('\n')], {
       encoding: 'utf8',
       env: fixture.env,
     })
     assert.equal(result.error, undefined)
     assert.equal(result.status, 0, result.stderr)
-    assert.deepEqual(JSON.parse(result.stdout), {
-      codes: [
-        'ZIGCSS_PROCESS_DISABLED',
-        'ZIGCSS_PROCESS_DISABLED',
-        'ZIGCSS_PROCESS_DISABLED',
-      ],
-      networkCodes: [
-        'ZIGCSS_NETWORK_DISABLED',
-        'ZIGCSS_NETWORK_DISABLED',
-        'ZIGCSS_NETWORK_DISABLED',
-        'ZIGCSS_NETWORK_DISABLED',
-        'ZIGCSS_NETWORK_DISABLED',
-      ],
-    })
+    const denial = JSON.parse(result.stdout)
+    assert.equal(denial.codes.length >= 10, true)
+    assert.equal(denial.codes.every(code => code === 'ZIGCSS_PROCESS_DISABLED'), true)
+    assert.equal(denial.networkCodes.length >= 12, true)
+    assert.equal(denial.networkCodes.every(code => code === 'ZIGCSS_NETWORK_DISABLED'), true)
+    assert.deepEqual(denial.descriptors, { child: false, listener: false, worker: false })
     const records = fs.readFileSync(fixture.trace, 'utf8')
       .trimEnd()
       .split('\n')
       .map(line => JSON.parse(line))
-    assert.equal(records.filter(record => record.event === 'process-denied').length, 3)
-    assert.equal(records.filter(record => record.event === 'network-denied').length, 5)
+    assert.equal(records.filter(record => record.event === 'process-denied').length, denial.codes.length)
+    assert.equal(records.filter(record => record.event === 'network-denied').length, denial.networkCodes.length)
     assert.deepEqual(records.at(-1), {
       event: 'runtime-summary',
       pid: records[0].pid,
       nativeSpawns: 0,
-      networkAttempts: 5,
-      deniedProcessAttempts: 3,
+      networkAttempts: denial.networkCodes.length,
+      deniedProcessAttempts: denial.codes.length,
     })
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -533,6 +1079,7 @@ test('build and release workflows require native archive and npm installation sm
     releaseTargets: 5,
     smokeCommands: 2,
     buildTargetReceipts: 5,
+    nodeApiCommands: 2,
   })
 
   assert.throws(
@@ -555,6 +1102,27 @@ test('build and release workflows require native archive and npm installation sm
       release.replace('- name: Smoke Native Archive and npm Installation', '- name: Removed native smoke'),
     ),
     /release native smoke step/,
+  )
+  assert.throws(
+    () => validateReleaseSmokeWorkflowSources(
+      build.replace('npm run test:node-api', 'npm run removed-node-api'),
+      release,
+    ),
+    /build packaged Node API/,
+  )
+  assert.throws(
+    () => validateReleaseSmokeWorkflowSources(
+      build,
+      release.replace('npm run test:node-api', 'npm run removed-node-api'),
+    ),
+    /release packaged Node API/,
+  )
+  assert.throws(
+    () => validateReleaseSmokeWorkflowSources(
+      build,
+      release.replace('--npm-package "$NPM_PACKAGE_ARCHIVE"', '--removed-npm-package'),
+    ),
+    /release exact npm package argument/,
   )
 })
 

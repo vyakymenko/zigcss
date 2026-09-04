@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parseReleaseVersion, validateReleaseTag } from './validate-release-version.mjs'
+import {
+  compareReleaseVersionPrecedence,
+  parseReleaseVersion,
+  validateReleaseTag,
+} from './validate-release-version.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -284,9 +288,20 @@ function validateSources(contract, gates, sources) {
 
   const manifest = parseJson(sources.get('package.json'), 'package.json')
   const localGate = gates.get('local-validation')?.state
-  const expectedSourceVersion = localGate === 'verified' ? contract.candidateVersion : contract.previousPrerelease.version
-  expectEqual(sources.get('VERSION'), `${expectedSourceVersion}\n`, 'current source VERSION')
-  expectEqual(manifest.version, expectedSourceVersion, 'current package version')
+  const sourceVersionText = sources.get('VERSION')
+  if (!sourceVersionText.endsWith('\n') || sourceVersionText.trim() + '\n' !== sourceVersionText) {
+    fail('current source VERSION must contain one canonical version and a final newline')
+  }
+  const activeVersion = parseReleaseVersion(sourceVersionText.trim(), 'active source VERSION').value
+  expectEqual(manifest.version, activeVersion, 'current package version')
+  if (contract.state === 'closed') {
+    if (compareReleaseVersionPrecedence(activeVersion, contract.candidateVersion) < 0) {
+      fail(`active source version ${activeVersion} is older than immutable published stable ${contract.candidateVersion}`)
+    }
+  } else {
+    const expectedSourceVersion = localGate === 'verified' ? contract.candidateVersion : contract.previousPrerelease.version
+    expectEqual(activeVersion, expectedSourceVersion, 'current source VERSION')
+  }
   if (!same(manifest.dependencies ?? {}, {}) || !same(manifest.optionalDependencies ?? {}, {})) {
     fail('stable package must retain zero production and optional dependencies')
   }
@@ -322,14 +337,20 @@ function validateSources(contract, gates, sources) {
   }
 
   const workflow = sources.get('.github/workflows/release.yml')
-  requireText(workflow, 'npm run check:stable-release -- \\', 'stable release workflow gate')
+  requireText(workflow, 'node scripts/validate-release-admission.mjs --check \\', 'release admission workflow gate')
   requireText(workflow, '--release-tag "$GITHUB_REF_NAME"', 'stable release tag gate')
   requireText(workflow, '--github-output "$GITHUB_OUTPUT"', 'release channel output gate')
   requireText(workflow, 'release-channel: ${{ steps.npm-policy.outputs.channel }}', 'release channel job output')
   requireText(workflow, 'github-prerelease: ${{ steps.npm-policy.outputs.github_prerelease }}', 'GitHub prerelease job output')
-  expectLiteralCount(workflow, 'npm publish --tag "$RELEASE_CHANNEL" --provenance', 1, 'channel-aware npm publication')
+  expectLiteralCount(
+    workflow,
+    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+    1,
+    'exact channel-aware npm publication',
+  )
   requireText(workflow, 'prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}', 'channel-aware GitHub release')
   requireText(workflow, '- name: Verify npm publication', 'generic npm publication readback')
+  requireText(workflow, '--archive "$NPM_PACKAGE_ARCHIVE"', 'exact npm publication readback archive')
 }
 
 function validateReleaseAttempt(contract, gates, options) {

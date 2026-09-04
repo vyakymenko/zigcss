@@ -517,6 +517,13 @@ export function validateReleaseWorkflowSource(source) {
   if (typeof source !== 'string' || source.length > 256 * 1024) fail('release workflow is missing or oversized')
   source = normalizeWorkflowSource(source, 'release workflow')
   if (source.includes('continue-on-error')) fail('release workflow must fail closed without continue-on-error')
+  const releaseConcurrency = [
+    'concurrency:',
+    '  group: zigcss-release-${{ github.ref }}',
+    '  cancel-in-progress: false',
+  ].join('\n')
+  expectLiteralCount(source, '\nconcurrency:\n', 1, 'single release concurrency policy')
+  expectLiteralCount(source, releaseConcurrency, 1, 'immutable release concurrency policy')
   const permissions = '    permissions:\n      attestations: write\n      contents: read\n      id-token: write'
   expectLiteralCount(source, permissions, 1, 'release attestation permissions')
 
@@ -536,12 +543,81 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, `uses: actions/attest@${attest.sha} # ${attest.version}`, 2, 'pinned attestation action')
   expectLiteralCount(source, '        sbom-path: release-assets/${{ env.RELEASE_SBOM }}', 1, 'signed SBOM attestation')
   expectLiteralCount(source, 'gh attestation verify', 2, 'cryptographic verification')
+  expectLiteralCount(
+    source,
+    '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"',
+    2,
+    'release signer workflow verification',
+  )
+  expectLiteralCount(source, '--signer-digest "$GITHUB_SHA"', 2, 'release signer digest verification')
+  expectLiteralCount(source, '--source-ref "refs/tags/$GITHUB_REF_NAME"', 2, 'release source tag verification')
+  expectLiteralCount(source, '--source-digest "$GITHUB_SHA"', 2, 'release source digest verification')
+  for (const [option, label] of [
+    ['--signer-workflow ', 'release signer workflow option inventory'],
+    ['--signer-digest ', 'release signer digest option inventory'],
+    ['--source-ref ', 'release source ref option inventory'],
+    ['--source-digest ', 'release source digest option inventory'],
+  ]) {
+    expectLiteralCount(source, option, 2, label)
+  }
+  const provenanceAttestationVerification = [
+    '          gh attestation verify "release-assets/$RELEASE_ARCHIVE" \\',
+    '            -R "$GITHUB_REPOSITORY" \\',
+    '            --bundle "release-assets/${RELEASE_BASE}.provenance.sigstore.jsonl" \\',
+    '            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \\',
+    '            --signer-digest "$GITHUB_SHA" \\',
+    '            --source-ref "refs/tags/$GITHUB_REF_NAME" \\',
+    '            --source-digest "$GITHUB_SHA"',
+  ].join('\n')
+  expectLiteralCount(source, provenanceAttestationVerification, 1, 'release provenance attestation verification')
+  const sbomAttestationVerification = [
+    '          gh attestation verify "release-assets/$RELEASE_ARCHIVE" \\',
+    '            -R "$GITHUB_REPOSITORY" \\',
+    '            --bundle "release-assets/${RELEASE_BASE}.sbom.sigstore.jsonl" \\',
+    '            --predicate-type https://spdx.dev/Document/v2.3 \\',
+    '            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \\',
+    '            --signer-digest "$GITHUB_SHA" \\',
+    '            --source-ref "refs/tags/$GITHUB_REF_NAME" \\',
+    '            --source-digest "$GITHUB_SHA"',
+  ].join('\n')
+  expectLiteralCount(source, sbomAttestationVerification, 1, 'release SBOM attestation verification')
   expectLiteralCount(source, '--predicate-type https://spdx.dev/Document/v2.3', 1, 'SPDX attestation verification')
   expectLiteralCount(source, '          path: release-assets/*', 1, 'closed release asset upload')
-  expectLiteralCount(source, '          if-no-files-found: error', 1, 'fail-closed release asset upload')
-  expectLiteralCount(source, '          retention-days: 7', 1, 'bounded release artifact retention')
+  expectLiteralCount(source, '          if-no-files-found: error', 2, 'fail-closed release artifact uploads')
+  expectLiteralCount(source, '          retention-days: 7', 2, 'bounded release artifact retention')
   expectLiteralCount(source, '${{ steps.provenance.outputs.bundle-path }}', 1, 'preserved provenance bundle')
   expectLiteralCount(source, '${{ steps.sbom-attestation.outputs.bundle-path }}', 1, 'preserved SBOM bundle')
+  const manifestEpoch = '          epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"'
+  expectLiteralCount(source, manifestEpoch, 1, 'manifest-owned release source date epoch')
+  expectLiteralCount(source, '          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"', 1, 'release source date epoch export')
+  expectLiteralCount(source, 'git show -s --format=%ct', 0, 'commit-derived release source date epoch')
+  const reproducibleArchiveStep = [
+    '      - name: Create Archive',
+    '        shell: bash',
+    '        run: |',
+    '          mkdir -p release-assets',
+    '          node scripts/create-release-archive.mjs \\',
+    '            --binary "zig-out/bin/${{ matrix.binary-name }}" \\',
+    '            --archive "release-assets/$RELEASE_ARCHIVE" \\',
+    '            --source-date-epoch "$SOURCE_DATE_EPOCH"',
+  ].join('\n')
+  expectLiteralCount(source, reproducibleArchiveStep, 1, 'closed reproducible release archive step')
+  expectLiteralCount(source, 'node scripts/create-release-archive.mjs', 1, 'single release archive creator')
+  const committedIntegrityStep = [
+    '      - name: Verify Committed Native Integrity',
+    '        shell: bash',
+    '        run: |',
+    '          node scripts/validate-native-integrity.mjs \\',
+    '            --archive "release-assets/$RELEASE_ARCHIVE" \\',
+    '            --target "${{ matrix.target }}" \\',
+    '            --version "$RELEASE_VERSION"',
+  ].join('\n')
+  expectLiteralCount(source, committedIntegrityStep, 1, 'committed native integrity gate')
+  expectLiteralCount(source, 'node scripts/validate-native-integrity.mjs --check', 1, 'pre-pack native integrity check')
+  expectLiteralCount(source, 'node scripts/validate-native-integrity.mjs', 3, 'closed native integrity commands')
+  for (const legacyArchiveCommand of ['Compress-Archive', 'tar -czf', 'release-assets/staging', 'COPYFILE_DISABLE']) {
+    expectLiteralCount(source, legacyArchiveCommand, 0, 'legacy nondeterministic release archive command')
+  }
   expectLiteralCount(source, 'node scripts/generate-release-metadata.mjs --write', 1, 'release metadata generation')
   expectLiteralCount(source, 'node scripts/generate-release-metadata.mjs --check \\\n', 1, 'release metadata verification')
   expectLiteralCount(source, 'node scripts/generate-release-metadata.mjs --check-bundles', 1, 'local attestation binding check')
@@ -556,7 +632,7 @@ export function validateReleaseWorkflowSource(source) {
     1,
     'npm immutable-version preflight',
   )
-  expectLiteralCount(source, '            --github-output "$GITHUB_OUTPUT"', 1, 'npm channel output')
+  expectLiteralCount(source, '            --github-output "$GITHUB_OUTPUT"', 2, 'bounded npm preflight outputs')
   expectLiteralCount(
     source,
     '      release-channel: ${{ steps.npm-policy.outputs.channel }}',
@@ -569,7 +645,39 @@ export function validateReleaseWorkflowSource(source) {
     1,
     'GitHub release mode output',
   )
-  expectLiteralCount(source, '        run: npm publish --tag "$RELEASE_CHANNEL" --provenance', 1, 'channel-aware npm publication')
+  for (const [output, label] of [
+    ['      npm-package-archive: ${{ steps.npm-package.outputs.archive-name }}', 'exact npm archive job output'],
+    ['      npm-package-shasum: ${{ steps.npm-package.outputs.archive-shasum }}', 'exact npm shasum job output'],
+    ['      npm-package-integrity: ${{ steps.npm-package.outputs.archive-integrity }}', 'exact npm integrity job output'],
+  ]) {
+    expectLiteralCount(source, output, 1, label)
+  }
+  expectLiteralCount(source, '          npm pack --ignore-scripts --json \\\n', 1, 'single lifecycle-disabled npm pack')
+  expectLiteralCount(source, '\n          npm pack ', 1, 'pack-once npm release policy')
+  expectLiteralCount(source, 'npm pack --dry-run', 0, 'release npm pack dry run')
+  expectLiteralCount(source, '          node scripts/npm-package-artifact.mjs prepare \\\n', 1, 'exact npm package preparation')
+  expectLiteralCount(source, '          node scripts/npm-package-artifact.mjs verify \\\n', 1, 'exact npm package handoff verification')
+  expectLiteralCount(source, '          name: npm-publication-${{ github.sha }}', 3, 'immutable npm package artifact handoff')
+  expectLiteralCount(
+    source,
+    '          path: ${{ runner.temp }}/zigcss-npm-publication/${{ steps.npm-package.outputs.archive-name }}',
+    1,
+    'exact npm package artifact upload path',
+  )
+  expectLiteralCount(
+    source,
+    '          path: ${{ runner.temp }}/zigcss-npm-publication\n',
+    2,
+    'exact npm package artifact download paths',
+  )
+  expectLiteralCount(source, '          pattern: zigcss-*', 1, 'closed GitHub release artifact selection')
+  expectLiteralCount(
+    source,
+    '        run: npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
+    1,
+    'exact channel-aware npm publication',
+  )
+  expectLiteralCount(source, 'npm publish', 1, 'publish-once npm release policy')
   expectLiteralCount(
     source,
     '          prerelease: ${{ needs.npm-preflight.outputs.github-prerelease }}',
@@ -580,23 +688,34 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, '      - name: Verify npm publication\n', 1, 'npm publication readback')
   expectLiteralCount(
     source,
-    '        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}"',
+    '        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}" --archive "$NPM_PACKAGE_ARCHIVE"',
     1,
-    'bounded npm publication readback',
+    'exact bounded npm publication readback',
+  )
+  expectLiteralCount(
+    source,
+    '          NPM_PACKAGE_ARCHIVE: ${{ runner.temp }}/zigcss-npm-publication/${{ needs.npm-preflight.outputs.npm-package-archive }}',
+    4,
+    'exact npm package archive binding',
   )
   expectLiteralCount(source, '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 2, 'bounded npm token use')
 
   expectOrdered(source, [
     '  npm-preflight:',
     '- name: Verify synchronized release version for publication',
+    'node scripts/validate-native-integrity.mjs --check',
     '- name: Verify npm publication authority',
+    '- name: Pack exact npm package',
+    '- name: Upload exact npm package',
     '  release:',
     '    needs: npm-preflight',
+    '- name: Download exact npm package for smoke',
     '- name: Verify synchronized release version',
     '- name: Build Release Binary',
     '- name: Verify Target Architecture',
     '- name: Plan Release Assets',
     '- name: Create Archive',
+    '- name: Verify Committed Native Integrity',
     '- name: Generate SHA-256 Manifest and SPDX SBOM',
     '- name: Verify Release Metadata',
     '- name: Smoke Native Archive and npm Installation',
@@ -607,11 +726,14 @@ export function validateReleaseWorkflowSource(source) {
     '- name: Upload Release Assets',
     '  create-release:',
     '    needs: [npm-preflight, release]',
+    '- name: Download All Artifacts',
     '- name: Create Release',
     '  publish-npm:',
     '    needs: [npm-preflight, create-release]',
+    '- name: Download exact npm package',
+    '- name: Verify exact npm package handoff',
     '- name: Publish to npm',
-    'npm publish --tag "$RELEASE_CHANNEL" --provenance',
+    'npm publish "$NPM_PACKAGE_ARCHIVE" --tag "$RELEASE_CHANNEL" --provenance',
     '      - name: Verify npm publication\n',
   ])
 
@@ -662,15 +784,31 @@ export function validateReleaseBuildGate(source) {
   ].join('\n')
   expectLiteralCount(buildJob, releaseInputUpload, 1, 'closed native release input upload')
   const plannedReleaseAssets = [
+    '          epoch="$(node scripts/validate-native-integrity.mjs --print-source-date-epoch --version "$version")"',
     '          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"',
     '          echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"',
     '          echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"',
     '          echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"',
     '          echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"',
-    '          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"',
+    '          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"',
   ]
   for (const asset of plannedReleaseAssets) {
     expectLiteralCount(buildJob, asset, 1, 'Build native release asset plan')
+  }
+  const reproducibleArchiveStep = [
+    '      - name: Create Native Smoke Archive',
+    '        shell: bash',
+    '        run: |',
+    '          mkdir -p release-assets',
+    '          node scripts/create-release-archive.mjs \\',
+    '            --binary "zig-out/bin/${{ matrix.binary-name }}" \\',
+    '            --archive "release-assets/$RELEASE_ARCHIVE" \\',
+    '            --source-date-epoch "$SOURCE_DATE_EPOCH"',
+  ].join('\n')
+  expectLiteralCount(buildJob, reproducibleArchiveStep, 1, 'closed reproducible native smoke archive step')
+  expectLiteralCount(buildJob, 'node scripts/create-release-archive.mjs', 1, 'single native smoke archive creator')
+  for (const legacyArchiveCommand of ['Compress-Archive', 'tar -czf', 'release-assets/staging', 'COPYFILE_DISABLE']) {
+    expectLiteralCount(buildJob, legacyArchiveCommand, 0, 'legacy nondeterministic native smoke archive command')
   }
 
   const attest = actionPins['actions/attest']
@@ -692,6 +830,13 @@ export function validateReleaseBuildGate(source) {
   for (const asset of plannedReleaseAssets) {
     expectLiteralCount(provenanceJob, asset, 1, 'native provenance release asset plan')
   }
+  expectLiteralCount(source, 'git show -s --format=%ct', 0, 'commit-derived native source date epoch')
+  expectLiteralCount(
+    buildJob,
+    'node scripts/validate-native-integrity.mjs \\\n            --archive',
+    0,
+    'development archive digest comparison',
+  )
   expectLiteralCount(
     provenanceJob,
     'node scripts/generate-release-metadata.mjs --check \\\n',
@@ -818,9 +963,9 @@ export function validateReleaseBuildGate(source) {
   expectLiteralCount(source, '- name: Verify release artifact metadata policy', 1, 'release metadata CI step')
   expectLiteralCount(
     source,
-    'npm run test:release-metadata && npm run check:release-metadata && npm run test:npm-publication',
+    'npm run test:release-metadata && node --test scripts/validate-native-integrity.test.mjs && npm run check:release-metadata && node scripts/validate-native-integrity.mjs --check && npm run test:npm-publication',
     1,
-    'release metadata CI command',
+    'release metadata CI command with native integrity',
   )
   for (const step of releaseConsumerSteps) {
     expectLiteralCount(source, `- name: ${step.name}`, 1, `${step.name} CI step`)

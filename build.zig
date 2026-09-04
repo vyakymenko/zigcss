@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = optimize != .Debug,
     });
     executable_module.addImport("zigcss", library_module);
 
@@ -55,6 +56,15 @@ pub fn build(b: *std.Build) void {
     core_protocol_test_module.addImport("zigcss", library_module);
     const core_protocol_tests = b.addTest(.{ .root_module = core_protocol_test_module });
     const run_core_protocol_tests = b.addRunArtifact(core_protocol_tests);
+
+    const node_protocol_test_module = b.createModule(.{
+        .root_source_file = b.path("src/node_protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    node_protocol_test_module.addImport("zigcss", library_module);
+    const node_protocol_tests = b.addTest(.{ .root_module = node_protocol_test_module });
+    const run_node_protocol_tests = b.addRunArtifact(node_protocol_tests);
 
     const lsp_test_module = b.createModule(.{
         .root_source_file = b.path("src/lsp.zig"),
@@ -412,7 +422,7 @@ pub fn build(b: *std.Build) void {
         ".card{color:red}\n" ++
             ".card{color:red}\n" ++
             ".card{color:red}\n" ++
-            ".card{color:#f00}\n",
+            ".card{color:red}\n",
     );
 
     const css_modules_example_module = b.createModule(.{
@@ -538,6 +548,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_core_protocol_tests.step);
+    test_step.dependOn(&run_node_protocol_tests.step);
     test_step.dependOn(&run_lsp_tests.step);
     test_step.dependOn(&run_lsp_transport_tests.step);
     test_step.dependOn(&run_lsp_position_tests.step);

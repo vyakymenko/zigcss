@@ -24,7 +24,7 @@ Copying source bytes into compilation ownership is the safe default. A future ze
 ### Returned ownership
 
 - The stable compile entry point accepts a caller-owned allocator for allocations that must outlive the compilation.
-- The low-level pipeline result owns generated CSS, optional source-map bytes, and cloned parser diagnostics allocated from that result allocator. The public `API-002` result promotes those buffers into the high-level contract and additionally owns located diagnostics, dependency facts, and optional module-export state.
+- The low-level pipeline result owns generated CSS, optional source-map bytes, and cloned parser diagnostics allocated from that result allocator. The public `API-002` result transfers those already-owned emitter buffers into the high-level contract without another full CSS/map copy and additionally owns located diagnostics, dependency facts, and optional module-export state. The experimental native bridge uses the same moved-from-empty discipline after all fallible map, diagnostic, dependency, and watch preparation has completed.
 - `CompileResult.deinit` is the single public cleanup path for all owned result fields. The result records the allocator it must use, so cleanup does not depend on callers remembering an undocumented allocator pairing.
 - A result is move-only by convention: copying it and deinitializing both copies is invalid. APIs take a pointer when consuming or deinitializing it.
 - On failure before a result is returned, `errdefer` paths release all non-arena allocations and the compilation arena releases the remainder.
@@ -37,7 +37,7 @@ Copying source bytes into compilation ownership is the safe default. A future ze
 
 ### Public compile facade
 
-`zigcss.compile` accepts one caller allocator, a borrowed input name and byte slice, and `CompileOptions`. The public syntax enum contains stable CSS and an explicit experimental CSS Modules subset; the recovery CLI remains CSS-only. Output format, separate source-map output, verified CSS transforms, a borrowed canonical target query, dependency limits, and CSS Modules metadata limits are explicit independent fields. A target query remains caller-owned for the duration of the call; no pointer to it enters the result.
+`zigcss.compile` accepts one caller allocator, a borrowed input name and byte slice, and `CompileOptions`. The public syntax enum contains stable CSS and an explicit experimental CSS Modules subset; the CLI uses this facade for CSS and does not expose CSS Modules. Output format, separate source-map output, verified CSS transforms, a borrowed canonical target query, dependency limits, and CSS Modules metadata limits are explicit independent fields. A target query remains caller-owned for the duration of the call; no pointer to it enters the result.
 
 Incoherent option combinations are result diagnostics rather than accepted no-ops: prefixing requires targets, targets require prefixing, forged queries fail validation, and source maps cannot accompany fixed-point optimization until intermediate maps can be composed. Such results contain no CSS. Allocation failures and broken internal invariants remain operational errors rather than being mislabeled as CSS diagnostics.
 
@@ -47,6 +47,8 @@ Dependency reporting recognizes decoded string/URL operands of top-level `@impor
 
 - Unit tests use `std.testing.allocator` so leaks fail tests.
 - Allocation-bearing constructors have failure-path tests; critical builders are exercised with allocator-failure injection at successive allocation points.
+- Source-map UTF-16 lookup uses byte-stride checkpoints rather than one allocation per line; newline-dense and long Unicode inputs verify bounded index storage and lookup work.
+- The native Node protocol serializes success and failure envelopes through a hard-capped writer, so escape expansion cannot allocate an oversized response before the frame ceiling is enforced.
 - Deinitialization tests cover empty, partial, successful, diagnostic-bearing, and moved-result states.
 - No cleanup implementation relies on process exit, a global allocator, or CLI-only behavior.
 

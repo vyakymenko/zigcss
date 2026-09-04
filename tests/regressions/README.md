@@ -4,7 +4,7 @@ These integration tests preserve the exact failure signatures reproduced during 
 
 While a case is quarantined, its test name begins with `legacy quarantine:` and asserts both the unsafe signature and the intended owner package. This is characterization, not acceptance of the behavior. When an owner package makes the case safe, that package must replace the quarantine assertion with the target contract in the same commit.
 
-The legacy code-generator transform fields remain active containment assertions and must fail before mutation. The rebuilt CLI's `--optimize` path instead has target-contract tests for its closed verified preset; separately authorized prefix and extraction flags remain explicit failures.
+The legacy code-generator transform fields remain active containment assertions and must fail before mutation. The rebuilt CLI's `--optimize` path instead has target-contract tests for its closed verified preset across direct CSS and post-frontend SCSS, indented Sass, Less, and Stylus output. The separately configured target-prefix route admits only paired strict browser-minimum queries and the rebuilt verified pass; extraction flags remain explicit failures.
 
 | Regression | Current status | Owning package |
 |---|---|---|
@@ -26,8 +26,8 @@ The legacy code-generator transform fields remain active containment assertions 
 | Watch duplicate reads, ignored imports, and unchanged-error loops | Verified by `WATCH-001`; the root snapshot is compiled directly, local imports are deduplicated, and unchanged failures wait for a real state transition | `WATCH-001` |
 | Parallel ownership, cancellation, and commit order | Verified by `PARALLEL-001`; at most eight queued workers own separate allocators, cancel unclaimed work on failure, join before cleanup, and commit only in argument order | `PARALLEL-001` |
 | Alternate-format silent deletion and guessed parsing | Contained by `FMT-001`; eight adapters/nine extensions are machine-inventoried and real CLI probes exit 2 without output. `SCSS-001`, `LESS-001`, and `STYLUS-001` remove their parser sources/dispatch tags and make the test-only detector return null; remaining adapters retain named owners. | `FMT-001`, `SCSS-001`, `LESS-001`, `STYLUS-001`, and the named follow-on adapter packages |
-| Source-map no-op behavior | Explicitly unavailable via `CLI-002` | `MAP-001` |
-| Browser-target prefix behavior | Verified at the library/test-driver boundary by `PREFIX-001` and `PREFIX-002`; stable target flags remain explicitly unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring |
+| Source-map CLI behavior | Verified bounded inline CSS output and fixed-point optimizer incompatibility via `CLI-002` | `MAP-001` plus native composed-map routing |
+| Browser-target prefix behavior | Verified by `PREFIX-001`/`PREFIX-002` plus all-five-syntax CLI/API routing: paired strict queries, modern exact no-op, legacy expansion, optimizer/source-map composition, watch reuse, batch determinism, and fail-fast invalid options; prefixing remains independent of `--optimize` | Verified target-prefix product routing |
 | Dead-code and critical-CSS selector filtering | Verified as two bounded experimental library/test-driver modes by `TREE-001`; extraction flags remain unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring and matrix expansion |
 | Input overwrite and batch output collision | Verified by `CLI-001` and `CLI-012`; aliases are rejected, colliding stems receive deterministic bounded names, and destinations are replaced atomically | `CLI-012` |
 | Unknown flags and missing flag values | Verified by `CLI-002`; strict duplicate/syntax/stream/version/exit contracts are finalized by `CLI-011` | `CLI-011` |

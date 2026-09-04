@@ -18,6 +18,16 @@ npm run test:npm-publication
 
 Release run `32130950531` completed successfully on attempt 1. Exact `0.6.0`, `dist-tags.latest`, retained `dist-tags.next`, provenance, the 25-asset GitHub inventory, and anonymous five-syntax installation are recorded in the maintained `release/stable-promotion.json` machine contract.
 
+Every future tag-triggered publication must first prove, through the bounded GitHub Actions API preflight, that the exact tagged commit has a successful same-repository `main` push run of the exact `Build` workflow at `.github/workflows/build.yml`. That proof runs before npm identity, registry-version, package, artifact, attestation, or publication authority is admitted.
+
+## Next candidate admission
+
+`release/next-release.json` selects exact candidate `0.7.0-rc.1`, tag `v0.7.0-rc.1`, npm channel `next`, and GitHub prerelease delivery under a separate fail-closed contract. It is currently `planned` with `candidateReady: false`; this selection does not authorize creating the tag or publishing either release surface.
+
+The release workflow first revalidates the immutable, closed 0.6.0 evidence, then routes every attempted tag through the candidate admission gate. Historical tags at or below 0.6.0 are immutable and cannot be admitted again. A tag newer than 0.6.0 is rejected unless it is exactly `v0.7.0-rc.1`. Even that exact tag remains rejected until all seven ordered pre-tag gates carry evidence, the active package and native-integrity identities agree on `0.7.0-rc.1`, and the contract is explicitly changed to `candidate-ready` with `candidateReady: true`. The peeled tag commit must also equal the exact current `origin/main` commit.
+
+Do not mark `hosted-validation` verified from local results. It requires a successful same-repository `main` Build run for the final candidate checkpoint; the tag workflow independently rechecks that hosted run immediately before candidate admission. `tag-workflow-publication` must remain pending until the immutable tag workflow has actually completed, so no local state can claim publication in advance.
+
 ## Published release-candidate evidence
 
 Immutable tag `v0.6.0-rc.2` points to release-ready commit `b63e190f7edeccd829abe34bfb96d9e1a8a320e2`. Its automatic workflow completed successfully on attempt 1, created the GitHub prerelease with the exact 25-asset inventory, and published `zigcss@0.6.0-rc.2` with provenance on npm `next`. At that RC publication, npm `latest` remained `0.3.0`; today `latest` is stable `0.6.0` while `next` still preserves the RC. The tag and package version must never be moved, recreated, reused, or republished.
@@ -47,6 +57,16 @@ Any later candidate requires a new version and tag identity plus the complete re
 - The npm package remains public.
 - The release workflow alone receives the token, and only its preflight and publish jobs use it.
 - The publish job alone receives the OIDC permission needed for npm provenance.
+
+## Anonymous post-publication delivery terminal
+
+Every future tag workflow ends with `anonymous-public-delivery` only after `publish-npm` has published and read back the exact version. This final Linux job has only `contents: read`; checkout does not persist its credential, Node setup does not configure a registry credential, and no npm token, GitHub token, OIDC permission, package permission, or secret enters the smoke process.
+
+The terminal invokes `scripts/smoke-public-delivery.mjs` directly rather than through npm. Before any network request, the script rejects known authentication variables, inherited `NPM_CONFIG_*` state, Node injection options, ZigCSS binary overrides, malformed versions, and unsafe paths. It then gives npm a minimal allowlisted environment, empty temporary user and global configuration files, a fresh cache, the canonical `https://registry.npmjs.org/` endpoint, and exact `zigcss@<tag-version>`. Lifecycle scripts remain enabled: the test therefore exercises the public package tarball, `install.js`, the matching public GitHub native archive, its checksum, executable architecture, and the committed five-target integrity inventory as an ordinary anonymous consumer sees them.
+
+After installation, the terminal requires the exact package and CLI version, bounded regular non-symlink files, an executable native binary, and fixed limits for time, process output, file count, and installed bytes. It compiles CSS, SCSS, indented Sass, Less, and Stylus through the installed CLI, then compiles all five inputs with both synchronous and asynchronous APIs through both CommonJS and ESM package resolution. A prerelease must also emit the exact release-candidate warning; a stable build must remain quiet.
+
+This is deliberately a post-publication assertion, not permission to publish. Failure leaves the immutable release run failed for investigation; it never authorizes moving or recreating a tag, overwriting a package version, or bypassing the next-version admission contract.
 
 ## Consumer behavior
 

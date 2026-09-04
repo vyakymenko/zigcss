@@ -9,7 +9,7 @@ export function GettingStarted() {
           <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#b7f34a]">Get started</p>
           <h1 className="display-type mt-5 max-w-3xl text-5xl tracking-[-0.05em] sm:text-6xl">Start with any of five stylesheet languages.</h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-[#cbd4cc]">
-            The source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig frontends and one strict output boundary.
+            The source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig frontends and one strict output boundary. Its active identity is the unpublished 0.7.0-rc.1 candidate.
           </p>
         </div>
       </section>
@@ -45,10 +45,10 @@ export function GettingStarted() {
             The native Sass-family, Less, and Stylus frontends evaluate complete stylesheets before recovery-disabled ZigCSS validation returns CSS.
           </p>
           <p className="mt-2 leading-7 text-[#5f675f]">
-            Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 remain development-only reference oracles; they do not run during compilation.
+            Dart Sass 1.101.0, Less 4.9.0, and Stylus 0.64.0 remain development-only reference oracles; Less forward-checks the frozen 4.6.7 native baseline, and none of them runs during compilation.
           </p>
           <p className="mt-3 leading-7 text-[#5f675f]">
-            The default contract does not enable arbitrary plugins, custom functions, custom importers, hooks, JavaScript, or executable project code. Local imports require explicit confined roots.
+            The default contract does not enable arbitrary plugins, custom functions, custom importers, hooks, JavaScript, or executable project code. Stable CLI imports stay confined to the entry directory; only the Zig API and current Unreleased Node API accept explicit additional roots.
           </p>
           <Link to="/docs/guide/format-compatibility" className="mt-5 inline-flex items-center gap-2 font-semibold text-[#36570d] hover:underline">
             Read format compatibility <ArrowRight className="size-4" />

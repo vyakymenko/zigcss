@@ -1,16 +1,16 @@
 class Zigcss < Formula
   desc "Experimental five-language CSS compiler built with Zig"
   homepage "https://github.com/vyakymenko/zigcss"
-  # Pin the immutable PRE-009 source checkpoint; publication requires separate authorization.
-  url "https://github.com/vyakymenko/zigcss/archive/526002807edc856eb2dc391551ac3d5c1b77da00.tar.gz"
-  version "0.5.0-rc.1"
-  sha256 "dbab9f777b795742716841354e0bfe30555cc1d54b21f2a446fdc7dc523e26b1"
+  # Pin the immutable stable v0.6.0 source commit and its independently verified archive digest.
+  url "https://github.com/vyakymenko/zigcss/archive/6786655d66ca65c5a06421c8ed70d84183722dce.tar.gz"
+  version "0.6.0"
+  sha256 "059b5732816655a55d9c9787168809f5f58c2fff35504ddc0c5d3d0c9de63010"
   license "MIT"
 
   depends_on "zig@0.15" => :build
 
   def install
-    system Formula["zig@0.15"].opt_bin/"zig", "build", "-Doptimize=ReleaseFast"
+    system formula_opt_bin("zig@0.15")/"zig", "build", "-Doptimize=ReleaseFast"
     bin.install "zig-out/bin/zigcss"
   end
 

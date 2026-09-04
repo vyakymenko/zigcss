@@ -7,10 +7,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { releaseAssetsFor } from './generate-release-metadata.mjs'
+import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
 import { assertArtifactMatchesTarget } from './verify-artifact-target.mjs'
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const scriptPath = fileURLToPath(import.meta.url)
+const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 const version = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
 const maximumOutputBytes = 8 * 1024 * 1024
 const defaultTimeoutMs = 5 * 60 * 1000
@@ -35,6 +36,18 @@ function run(command, args, options = {}) {
     ].filter(Boolean).join('\n'))
   }
   return result.stdout
+}
+
+export function finishReleaseContainerSmoke(outcome, primaryError, cleanupErrors = []) {
+  const failures = [primaryError, ...cleanupErrors].filter(error => error !== undefined)
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures,
+      `release container verification failed and cleanup also failed: ${failures.map(error => error.message).join('; ')}`,
+    )
+  }
+  return outcome
 }
 
 function sha256(bytes) {
@@ -169,9 +182,21 @@ function buildFixture(context, policy) {
     env: { COPYFILE_DISABLE: '1' },
   })
   const sbom = Buffer.from('{"spdxVersion":"SPDX-2.3"}\n')
+  const archiveDigest = sha256(fs.readFileSync(archive))
+  fs.writeFileSync(path.join(context, 'native-integrity.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    package: 'zigcss',
+    version,
+    sourceDateEpoch: 1_700_000_000,
+    archives: releaseTargets.map(target => ({
+      target: target.target,
+      filename: releaseAssetsFor(version, target.target).archive,
+      sha256: target.target === policy.target ? archiveDigest : '0'.repeat(64),
+    })),
+  }, null, 2)}\n`)
   fs.writeFileSync(path.join(releaseAssets, assets.sbom), sbom)
   fs.writeFileSync(path.join(releaseAssets, assets.checksums), [
-    `${sha256(fs.readFileSync(archive))}  ${assets.archive}`,
+    `${archiveDigest}  ${assets.archive}`,
     `${sha256(sbom)}  ${assets.sbom}`,
     '',
   ].join('\n'))
@@ -186,6 +211,8 @@ function main() {
   const buildxConfig = path.join(temporary, 'buildx-config')
   const image = `zigcss-release-contract:${process.pid}-${crypto.randomBytes(4).toString('hex')}`
   let imageCreated = false
+  let outcome
+  let primaryError
   try {
     fs.mkdirSync(context)
     fs.mkdirSync(dockerConfig)
@@ -200,6 +227,7 @@ function main() {
     }
     for (const relativePath of [
       'Dockerfile.release',
+      'Dockerfile.release.dockerignore',
       'install.js',
       'package.json',
       'scripts/prepare-release-container.mjs',
@@ -237,27 +265,36 @@ function main() {
     assert.equal(inspection.Config.Labels['org.opencontainers.image.version'], version)
     assert.equal(inspection.Config.Labels['org.opencontainers.image.source'], 'https://github.com/vyakymenko/zigcss')
     assert.equal(inspection.RootFS.Layers.length, 1)
-    process.stdout.write(`Verified local ${policy.dockerPlatform} release image from the canonical archive and manifest.\n`)
-  } finally {
-    if (imageCreated) {
-      spawnSync('docker', ['image', 'rm', '--force', image], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          BUILDX_CONFIG: buildxConfig,
-          DOCKER_CONFIG: dockerConfig,
-        },
-        maxBuffer: maximumOutputBytes,
-        timeout: defaultTimeoutMs,
-      })
-    }
-    fs.rmSync(temporary, { recursive: true, force: true })
+    outcome = { dockerPlatform: policy.dockerPlatform }
+  } catch (error) {
+    primaryError = error
   }
+
+  const cleanupErrors = []
+  if (imageCreated) {
+    try {
+      run('docker', ['image', 'rm', '--force', image], {
+        env: { BUILDX_CONFIG: buildxConfig, DOCKER_CONFIG: dockerConfig },
+      })
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+  }
+  try {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  const result = finishReleaseContainerSmoke(outcome, primaryError, cleanupErrors)
+  process.stdout.write(`Verified local ${result.dockerPlatform} release image from the canonical archive and manifest.\n`)
+  return result
 }
 
-try {
-  main()
-} catch (error) {
-  console.error(`release container verification failed: ${error.message}`)
-  process.exitCode = 1
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === scriptPath) {
+  try {
+    main()
+  } catch (error) {
+    console.error(`release container verification failed: ${error.message}`)
+    process.exitCode = 1
+  }
 }

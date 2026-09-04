@@ -1,0 +1,6 @@
+@use "tokens";
+
+.hero {
+  color: tokens.$accent;
+  background-image: url("./spark.svg");
+}

@@ -1,0 +1,6 @@
+option(
+  'zigcss',
+  type: 'string',
+  value: 'zigcss',
+  description: 'Path to the ZigCSS executable',
+)

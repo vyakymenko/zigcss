@@ -15,6 +15,9 @@ describe('Home', () => {
 
     expect(screen.getByRole('dialog', { name: /zigcss boot sequence/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /exact in\. deterministic out\. denied by default/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /exact in\. deterministic out\. denied by default/i })).toHaveClass(
+      'text-[clamp(3.15rem,12vw,12rem)]',
+    )
     expect(screen.getByText('Compile CSS. Keep the meaning.')).toBeInTheDocument()
     expect(screen.getByText(/0\.6\.0.*stable release.*zero runtime dependencies/i)).toBeInTheDocument()
     expect(screen.getByText(/stable 0\.6\.0 is published from one immutable release workflow/i)).toBeInTheDocument()
@@ -50,14 +53,26 @@ describe('Home', () => {
 
     expect(screen.getByText('STABLE RELEASE · VERIFIED')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /the providers are oracles/i })).toBeInTheDocument()
+    expect(screen.getByText(/Less 4\.9\.0 oracle \/ 4\.6\.7 frozen baseline/i)).toBeInTheDocument()
     expect(screen.getByText(/one self-contained compiler\. zero production package dependencies/i)).toBeInTheDocument()
-    expect(screen.getByText(/REL-010.*0\.6\.0.*25 signed assets.*npm latest/i)).toBeInTheDocument()
+    expect(screen.getByText(/REL-010.*0\.6\.0.*15 attested subjects \+ 10 bundles.*npm latest/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /choose your entry point/i })).toBeInTheDocument()
     for (const target of ['Linux x64', 'Linux arm64', 'macOS x64', 'macOS arm64', 'Windows x64']) {
       expect(screen.getByText(target)).toBeInTheDocument()
     }
+    expect(screen.getByRole('heading', { name: /pinned hosts\. same native binary/i })).toBeInTheDocument()
+    expect(screen.getByText(/5\/8 admission gates verified.*candidateReady=false/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/direct current-source builder adapters/i)).toHaveTextContent(/Vite.*Rollup.*esbuild.*Bun.*Webpack.*Rspack/)
+    expect(screen.getByLabelText(/pinned current-source host proofs/i)).toHaveTextContent(/Next\.js.*Turbopack.*Webpack.*SvelteKit.*Astro.*Nuxt.*Parcel/)
+    expect(screen.getByText(/exact checkout gates, not stable 0\.6\.0 framework packages/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /inspect host evidence/i })).toHaveAttribute('href', '/features')
     expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs/guide/status')
     expect(screen.getByRole('link', { name: 'npm' })).toHaveAttribute('href', 'https://www.npmjs.com/package/zigcss')
+    expect(screen.getByRole('link', { name: 'VS Code source' })).toHaveAttribute(
+      'href',
+      'https://github.com/vyakymenko/zigcss/tree/main/vscode-extension',
+    )
+    expect(document.body.innerHTML).not.toContain('marketplace.visualstudio.com')
   })
 
   it('keeps benchmark hype evidence-locked and bans inflated marketing copy', () => {

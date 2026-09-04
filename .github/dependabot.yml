@@ -4,6 +4,10 @@ updates:
     directories:
       - "/"
       - "/docs"
+      - "/examples/next-turbopack"
+      - "/examples/sveltekit"
+      - "/examples/astro"
+      - "/examples/nuxt"
       - "/vscode-extension"
     schedule:
       interval: "weekly"

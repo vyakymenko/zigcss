@@ -66,6 +66,21 @@ pub fn applyToFixedPoint(
     parsed: *pipeline.ParsedStylesheet,
     mode: emitter.Mode,
 ) !void {
+    return applyToFixedPointTracked(allocator, parsed, mode, null);
+}
+
+const ExecutionStats = struct {
+    pass_rounds: usize = 0,
+    emit_rounds: usize = 0,
+    reparse_rounds: usize = 0,
+};
+
+fn applyToFixedPointTracked(
+    allocator: std.mem.Allocator,
+    parsed: *pipeline.ParsedStylesheet,
+    mode: emitter.Mode,
+    stats: ?*ExecutionStats,
+) !void {
     if (parsed.hasErrors()) return error.InputHasErrors;
 
     const source_name = try allocator.dupe(u8, parsed.file().name);
@@ -77,7 +92,16 @@ pub fn applyToFixedPoint(
 
     var round: usize = 0;
     while (round < max_fixed_point_rounds) : (round += 1) {
+        const root_before_round = parsed.rules;
         try parsed.applyPassPlan(allocator, &plan, .{});
+        if (stats) |value| value.pass_rounds += 1;
+
+        // Every pass is immutable and acceptance-gated. Identity therefore
+        // proves that the complete closed plan was a no-op; emitting and
+        // reparsing cannot reveal another transform opportunity.
+        if (parsed.rules == root_before_round) return;
+
+        if (stats) |value| value.emit_rounds += 1;
         var current = try parsed.emitResult(allocator, .{ .mode = mode });
 
         if (previous) |*prior| {
@@ -93,6 +117,7 @@ pub fn applyToFixedPoint(
             return error.OptimizationDidNotConverge;
         }
 
+        if (stats) |value| value.reparse_rounds += 1;
         var reparsed = pipeline.parse(allocator, source_name, current.css) catch |err| {
             current.deinit();
             return err;
@@ -161,6 +186,43 @@ test "verified optimizer plan handles every allocation failure" {
     );
 }
 
+test "verified optimizer no-op fast path stops before emit and reparse" {
+    var parsed = try pipeline.parse(
+        std.testing.allocator,
+        "no-op-fast-path.css",
+        ".a{color:red}",
+    );
+    defer parsed.deinit();
+    const original_root = parsed.rules;
+    var stats: ExecutionStats = .{};
+
+    var plan = try buildPlan(std.testing.allocator);
+    defer plan.deinit();
+    var proof_context = try pass_manager.Context.init(
+        &parsed.compilation,
+        parsed.source_id,
+        std.testing.allocator,
+    );
+    const direct_result = try plan.run(
+        &proof_context,
+        original_root,
+        .{ .verify_idempotence = true },
+    );
+    try std.testing.expect(direct_result == original_root);
+    try std.testing.expectEqual(@as(usize, 1), proof_context.structuralProofEmitCount());
+
+    try applyToFixedPointTracked(std.testing.allocator, &parsed, .minified, &stats);
+
+    try std.testing.expect(parsed.rules == original_root);
+    try std.testing.expectEqual(@as(usize, 1), stats.pass_rounds);
+    try std.testing.expectEqual(@as(usize, 0), stats.emit_rounds);
+    try std.testing.expectEqual(@as(usize, 0), stats.reparse_rounds);
+
+    var result = try parsed.emitResult(std.testing.allocator, .{ .mode = .minified });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{color:red}", result.css);
+}
+
 test "verified optimizer reaches a byte-stable cross-pass fixed point" {
     const input = ".empty{}.a{color:#ffffff}.b{color:#fff}" ++
         ".c{width:calc(0px);margin-top:calc(1px + 0px);" ++
@@ -169,14 +231,19 @@ test "verified optimizer reaches a byte-stable cross-pass fixed point" {
         "@media all{.x{z:1}}@media all{.y{z:1}}";
     var parsed = try pipeline.parse(std.testing.allocator, "fixed-point.css", input);
     defer parsed.deinit();
+    var stats: ExecutionStats = .{};
 
-    try applyToFixedPoint(std.testing.allocator, &parsed, .minified);
+    try applyToFixedPointTracked(std.testing.allocator, &parsed, .minified, &stats);
     var result = try parsed.emitResult(std.testing.allocator, .{ .mode = .minified });
     defer result.deinit();
     try std.testing.expectEqualStrings(
         ".a,.b{color:#fff}.c{width:0;margin:1px}@media all{.x,.y{z:1}}",
         result.css,
     );
+    try std.testing.expect(stats.pass_rounds >= 2);
+    try std.testing.expect(stats.emit_rounds >= 1);
+    try std.testing.expectEqual(stats.emit_rounds, stats.reparse_rounds);
+    try std.testing.expectEqual(stats.pass_rounds, stats.emit_rounds + 1);
 
     var reparsed = try pipeline.parse(std.testing.allocator, "fixed-point-output.css", result.css);
     defer reparsed.deinit();
@@ -187,10 +254,39 @@ test "verified optimizer reaches a byte-stable cross-pass fixed point" {
         reparsed.file(),
         reparsed.rules,
     ));
-    try applyToFixedPoint(std.testing.allocator, &reparsed, .minified);
+    var repeated_stats: ExecutionStats = .{};
+    try applyToFixedPointTracked(std.testing.allocator, &reparsed, .minified, &repeated_stats);
     var repeated = try reparsed.emitResult(std.testing.allocator, .{ .mode = .minified });
     defer repeated.deinit();
     try std.testing.expectEqualStrings(result.css, repeated.css);
+    try std.testing.expectEqual(@as(usize, 1), repeated_stats.pass_rounds);
+    try std.testing.expectEqual(@as(usize, 0), repeated_stats.emit_rounds);
+    try std.testing.expectEqual(@as(usize, 0), repeated_stats.reparse_rounds);
+}
+
+fn exerciseNoOpFastPathAllocationFailures(allocator: std.mem.Allocator) !void {
+    var parsed = try pipeline.parse(
+        allocator,
+        "no-op-fast-path-oom.css",
+        ".a{color:red}",
+    );
+    defer parsed.deinit();
+    const original_root = parsed.rules;
+    var stats: ExecutionStats = .{};
+
+    try applyToFixedPointTracked(allocator, &parsed, .minified, &stats);
+    try std.testing.expect(parsed.rules == original_root);
+    try std.testing.expectEqual(@as(usize, 1), stats.pass_rounds);
+    try std.testing.expectEqual(@as(usize, 0), stats.emit_rounds);
+    try std.testing.expectEqual(@as(usize, 0), stats.reparse_rounds);
+}
+
+test "verified optimizer no-op fast path handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseNoOpFastPathAllocationFailures,
+        .{},
+    );
 }
 
 fn exerciseFixedPointAllocationFailures(allocator: std.mem.Allocator) !void {

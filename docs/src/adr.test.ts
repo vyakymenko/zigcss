@@ -171,6 +171,9 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('`zigcss-preprocessor-v1`')
     expect(adr).toContain('`sass` `1.101.0`')
     expect(adr).toContain('`less` `4.6.7`')
+    expect(adr).toContain('current development-only Less forward oracle is exact 4.9.0')
+    expect(adr).toContain('frozen 4.6.7 native conformance baseline')
+    expect(adr).toContain('npm run audit:development')
     expect(adr).toContain('`stylus` `0.64.0`')
     expect(adr).toContain('MIT')
     expect(adr).toContain('Apache-2.0')
@@ -196,7 +199,8 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('standard-last ordering')
     expect(adr).toContain('separate adjacent style rules')
     expect(adr).toContain('manual vendor form')
-    expect(adr).toContain('stable recovery CLI')
+    expect(adr).toContain('source-built CLI')
+    expect(adr).toContain('require each other')
   })
 
   test('makes the approved model and single-agent rule a hard autonomous gate', () => {
@@ -217,5 +221,8 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('npm package published under the `next` dist-tag')
     expect(adr).toContain('`0.5.0-rc.1` reference candidate remains permanently outside')
     expect(adr).toContain('tags may not be moved or reused')
+    expect(adr).toContain('Less 4.6.7 remains the frozen native conformance baseline')
+    expect(adr).toContain('Exact Less 4.9.0 is now the development-only forward oracle')
+    expect(adr).toContain('shared bounded PNG/GIF/JPEG/SVG dimension parser')
   })
 })

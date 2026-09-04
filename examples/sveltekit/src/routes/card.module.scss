@@ -1,0 +1,5 @@
+@use "tokens";
+
+.hero {
+  color: tokens.$accent;
+}

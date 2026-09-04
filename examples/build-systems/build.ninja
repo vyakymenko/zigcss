@@ -1,0 +1,14 @@
+ninja_required_version = 1.3
+
+zigcss = zigcss
+
+rule compile_zigcss
+  command = "$zigcss" "$in" --syntax scss --minify -o "$out" --depfile "$out.d"
+  depfile = $out.d
+  deps = gcc
+  restat = 1
+  description = ZigCSS $in
+
+build styles.css: compile_zigcss styles.scss
+
+default styles.css

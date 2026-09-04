@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router";
+import { RouteMetadata } from "./RouteMetadata";
 
 const navigation = [
   { label: "Boot", path: "/" },
@@ -15,6 +16,7 @@ export function Root() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const mobileNavId = useId();
   const mobileNavToggle = useRef<HTMLButtonElement>(null);
+  const mainContent = useRef<HTMLElement>(null);
   const previousLocation = useRef(`${location.pathname}${location.hash}`);
 
   useEffect(() => {
@@ -29,6 +31,7 @@ export function Root() {
     if (!location.hash) {
       if (!navigationChanged) return;
       const frame = window.requestAnimationFrame(() => {
+        mainContent.current?.focus({ preventScroll: true });
         window.scrollTo({ top: 0, left: 0, behavior: "auto" });
       });
       return () => window.cancelAnimationFrame(frame);
@@ -46,6 +49,8 @@ export function Root() {
     const scrollToTarget = () => {
       const target = document.getElementById(targetId);
       if (!target) return false;
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+      target.focus({ preventScroll: true });
       target.scrollIntoView({ block: "start" });
       return true;
     };
@@ -101,6 +106,13 @@ export function Root() {
 
   return (
     <div className="flex min-h-screen flex-col overflow-x-clip bg-[#0b110d] text-[#eef5ec]">
+      <RouteMetadata pathname={location.pathname} />
+      <a
+        href="#main-content"
+        className="fixed left-4 top-2 z-[60] -translate-y-24 bg-[#f7f3e8] px-4 py-3 font-mono text-xs font-semibold uppercase tracking-[0.1em] text-[#172019] transition-transform focus:translate-y-0"
+      >
+        Skip to content
+      </a>
       <header className="sticky top-0 z-50 border-b border-[#b7f34a]/15 bg-[#0b110d]/94 text-[#eef5ec] backdrop-blur-md">
         <nav className="mx-auto flex h-16 max-w-[96rem] items-center gap-4 px-4 sm:px-8 lg:px-12" aria-label="Primary navigation">
           <Link to="/" onClick={() => handleNavigationClick("/")} className="group flex flex-shrink-0 items-center gap-3 font-mono" aria-label="ZigCSS home">
@@ -186,7 +198,7 @@ export function Root() {
         </div>
       </header>
 
-      <main className="flex-1">
+      <main id="main-content" ref={mainContent} tabIndex={-1} className="flex-1">
         <Outlet />
       </main>
 
@@ -200,6 +212,7 @@ export function Root() {
               </p>
             </div>
             <nav className="flex flex-wrap gap-x-6 gap-y-3 font-mono text-xs" aria-label="Footer navigation">
+              <Link to="/features" className="terminal-link hover:text-[#b7f34a]">Capabilities</Link>
               <Link to="/docs/guide/status" className="terminal-link hover:text-[#b7f34a]">Status</Link>
               <Link to="/docs/guide/css-compatibility" className="terminal-link hover:text-[#b7f34a]">Compatibility</Link>
               <a href="https://www.npmjs.com/package/zigcss" target="_blank" rel="noopener noreferrer" className="terminal-link hover:text-[#b7f34a]">npm</a>

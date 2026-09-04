@@ -63,9 +63,10 @@ pub const Compilation = struct {
     }
 };
 
-/// Result data owns deep copies allocated independently of a `Compilation`.
-/// It is move-only by convention; `take` provides an explicit, safely emptied
-/// moved-from state and `deinit` is the only public cleanup path.
+/// Result data owns buffers independently of a `Compilation`: `init` clones
+/// borrowed input while `initOwned` consumes emitter-owned buffers. It is
+/// move-only by convention; `take` provides an explicitly emptied moved-from
+/// state and `deinit` is the only public cleanup path.
 pub const CompileResult = struct {
     result_allocator: std.mem.Allocator,
     css: []const u8,
@@ -85,6 +86,30 @@ pub const CompileResult = struct {
         if (source_map) |bytes| {
             owned_source_map = try result_allocator.dupe(u8, bytes);
         }
+        errdefer if (owned_source_map) |bytes| {
+            if (bytes.len > 0) result_allocator.free(bytes);
+        };
+
+        const owned_diagnostics = try cloneDiagnostics(result_allocator, diagnostic_items);
+        errdefer releaseDiagnostics(result_allocator, owned_diagnostics);
+
+        return .{
+            .result_allocator = result_allocator,
+            .css = owned_css,
+            .source_map = owned_source_map,
+            .diagnostics = owned_diagnostics,
+        };
+    }
+
+    /// Consumes already-owned emitter buffers and clones only diagnostics.
+    /// On either success or error, the caller has surrendered both buffers.
+    pub fn initOwned(
+        result_allocator: std.mem.Allocator,
+        owned_css: []u8,
+        owned_source_map: ?[]u8,
+        diagnostic_items: []const diagnostics.Diagnostic,
+    ) !CompileResult {
+        errdefer if (owned_css.len > 0) result_allocator.free(owned_css);
         errdefer if (owned_source_map) |bytes| {
             if (bytes.len > 0) result_allocator.free(bytes);
         };
@@ -213,6 +238,21 @@ test "compile result deeply outlives compilation and supports explicit moves" {
     try std.testing.expectEqual(@as(usize, 0), original.diagnostics.len);
 }
 
+test "compile result consumes emitter buffers without copying them" {
+    const allocator = std.testing.allocator;
+    const css = try allocator.dupe(u8, ".owned{}");
+    const source_map = try allocator.dupe(u8, "{}");
+    const css_pointer = css.ptr;
+    const map_pointer = source_map.ptr;
+    var result = try CompileResult.initOwned(allocator, css, source_map, &.{});
+    defer result.deinit();
+
+    try std.testing.expectEqual(css_pointer, result.css.ptr);
+    try std.testing.expectEqual(map_pointer, result.source_map.?.ptr);
+    try std.testing.expectEqualStrings(".owned{}", result.css);
+    try std.testing.expectEqualStrings("{}", result.source_map.?);
+}
+
 fn exerciseCompilationAllocationFailures(allocator: std.mem.Allocator) !void {
     var compilation = try Compilation.init(allocator);
     defer compilation.deinit();
@@ -240,6 +280,26 @@ fn exerciseResultAllocationFailures(allocator: std.mem.Allocator) !void {
     defer result.deinit();
 }
 
+fn exerciseOwnedResultAllocationFailures(allocator: std.mem.Allocator) !void {
+    const css = try allocator.dupe(u8, "body{}");
+    var css_surrendered = false;
+    defer if (!css_surrendered) allocator.free(css);
+    const source_map = try allocator.dupe(u8, "{}");
+    var map_surrendered = false;
+    defer if (!map_surrendered) allocator.free(source_map);
+    const entries = [_]diagnostics.Diagnostic{.{
+        .severity = .warning,
+        .code = .unexpected_token,
+        .span = .{ .source = .{ .value = 0 }, .start = 0, .end = 1 },
+        .message = "owned diagnostic",
+    }};
+
+    css_surrendered = true;
+    map_surrendered = true;
+    var result = try CompileResult.initOwned(allocator, css, source_map, &entries);
+    defer result.deinit();
+}
+
 test "compilation and result constructors handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -249,6 +309,11 @@ test "compilation and result constructors handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseResultAllocationFailures,
+        .{},
+    );
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOwnedResultAllocationFailures,
         .{},
     );
 }

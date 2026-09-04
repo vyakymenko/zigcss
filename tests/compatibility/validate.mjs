@@ -13,6 +13,10 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = path.resolve(scriptDirectory, '../..')
 const fixturesRoot = path.join(scriptDirectory, 'fixtures')
 const matrixPath = path.join(scriptDirectory, 'matrix.json')
+const activeVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
+const expectedCliStderr = /^[0-9]+\.[0-9]+\.[0-9]+-/.test(activeVersion)
+  ? `Warning: ZigCSS ${activeVersion} is an experimental release candidate; do not use it for production CSS.\n`
+  : ''
 
 function fail(message) {
   throw new Error(message)
@@ -112,8 +116,8 @@ function validateEmission(testCase, mode, result, validatorOptions) {
     fail(`${testCase.id}/${mode}: compiler exited ${result.status}\n${result.stderr}`)
   }
   if (result.stdout.length === 0) fail(`${testCase.id}/${mode}: compiler emitted empty CSS`)
-  if (result.stderr !== '') {
-    fail(`${testCase.id}/${mode}: stable compiler emitted unexpected stderr`)
+  if (result.stderr !== expectedCliStderr) {
+    fail(`${testCase.id}/${mode}: compiler version notice drifted`)
   }
   for (const fragment of testCase.requiredFragments?.[mode] ?? []) {
     if (!result.stdout.includes(fragment)) {
