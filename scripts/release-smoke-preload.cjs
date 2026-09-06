@@ -52,6 +52,7 @@ const posixArchiveEnvironment = Object.freeze({
 const repositoryRoot = path.resolve(__dirname, '..')
 const assetTemporaryRootPattern = /^(?:zigcss-package-manager-matrix-[A-Za-z0-9]{6}\/preloaded-release|zigcss-release-lifecycle-[A-Za-z0-9]{6}\/release|zigcss-release-(?:node-api-trace|preload(?:-pnp)?|runtime-(?:denial|trace))-[A-Za-z0-9]{6})$/
 const traceTemporaryRootPattern = /^(?:zigcss-native-release-smoke|zigcss-release-(?:node-api-trace|preload|runtime-(?:denial|trace)))-[A-Za-z0-9]{6}$/
+const lifecycleTemporaryRootPattern = /^(?:zigcss-(?:native-release-smoke|release-lifecycle)-[A-Za-z0-9]{6}\/consumer\/node_modules\/zigcss|zigcss-package-manager-matrix-[A-Za-z0-9]{6}\/yarn-modern-pnp\/consumer\/\.yarn\/unplugged\/[A-Za-z0-9][A-Za-z0-9._-]{0,254}\/node_modules\/zigcss)$/
 const runtimeTraceNames = Object.freeze([
   'direct-runtime-trace.jsonl',
   'node-api-runtime-trace.jsonl',
@@ -410,14 +411,27 @@ function canonicalLifecyclePackage(
     !boundedStringEnvironment(environment)
   ) return null
   try {
-    const rootStat = fs.lstatSync(rootInput)
+    const temporaryRoot = path.resolve(os.tmpdir())
+    const canonicalTemporaryRoot = fs.realpathSync(temporaryRoot)
+    // Admit only the finite consumer layouts before probing a caller path.
+    // npm may already canonicalize /var to /private/var on macOS.
+    let candidate = null
+    for (const base of [temporaryRoot, canonicalTemporaryRoot]) {
+      const relative = path.relative(base, rootInput).split(path.sep).join('/')
+      if (!lifecycleTemporaryRootPattern.test(relative)) continue
+      if (!sameLocalPath(path.join(base, ...relative.split('/')), rootInput)) continue
+      candidate = path.join(canonicalTemporaryRoot, ...relative.split('/'))
+      break
+    }
+    if (candidate === null) return null
+    const rootStat = fs.lstatSync(candidate, { bigint: true })
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null
-    const root = fs.realpathSync(rootInput)
-    const temporaryRelative = path.relative(fs.realpathSync(path.resolve(os.tmpdir())), root)
+    const root = fs.realpathSync(candidate)
+    if (!sameLocalPath(root, candidate)) return null
+    const canonicalStat = fs.lstatSync(root, { bigint: true })
     if (
-      temporaryRelative.startsWith('..') || path.isAbsolute(temporaryRelative) ||
-      path.basename(root) !== 'zigcss' ||
-      path.basename(path.dirname(root)) !== 'node_modules'
+      !canonicalStat.isDirectory() || canonicalStat.isSymbolicLink() ||
+      !sameStableIdentity(rootStat, canonicalStat)
     ) return null
     const manifestFile = path.join(root, 'package.json')
     const installerFile = path.join(root, 'install.js')

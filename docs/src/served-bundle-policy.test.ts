@@ -1,6 +1,8 @@
 // @vitest-environment node
 
 import crypto from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import { inspectServedHtml } from '../scripts/check-served-bundle.mjs'
 
@@ -10,6 +12,24 @@ function fixturePolicy(source: string) {
 }
 
 describe('served HTML parser policy', () => {
+  test('imports inspection helpers without starting the CLI even when argv impersonates its entry point', () => {
+    const verifier = new URL('../scripts/check-served-bundle.mjs', import.meta.url)
+    const source = [
+      `process.argv[1] = ${JSON.stringify(fileURLToPath(verifier))}`,
+      `await import(${JSON.stringify(verifier.href)})`,
+      "process.stdout.write('inspection helpers imported\\n')",
+    ].join('\n')
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', source], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      maxBuffer: 64 * 1024,
+    })
+
+    expect(result.error).toBeUndefined()
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout).toBe('inspection helpers imported\n')
+  })
+
   test('accepts only inline scripts bound to both response and meta CSP', () => {
     const source = 'globalThis.__zigcssBootstrap = true'
     const policy = fixturePolicy(source)

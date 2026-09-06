@@ -453,11 +453,11 @@ jobs:
         run: npm run test:node-api
 
       - name: Install independent validator
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
 
       - name: Install documentation dependencies
         working-directory: docs
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
 
       - name: Test documentation site
         run: npm --prefix docs run test:run
@@ -467,7 +467,7 @@ jobs:
 
       - name: Install VS Code extension dependencies
         working-directory: vscode-extension
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
 
       - name: Verify dependency policy and production audits
         run: npm run test:dependencies && npm run audit:production && npm run audit:development && npm run audit:documentation && npm run audit:vscode && npm run audit:turbopack-example && npm run audit:sveltekit-example && npm run audit:astro-example && npm run audit:nuxt-example

@@ -878,6 +878,26 @@ test('documentation deployment requires one successful same-repository main Buil
   }
 })
 
+test('locked CI installs avoid duplicate automatic audits while explicit audit gates remain mandatory', () => {
+  const exact = 'npm ci --ignore-scripts --no-audit'
+  for (const [filename, installCount] of [['build.yml', 3], ['docs.yml', 1]]) {
+    const original = cloneSources().get(filename)
+    assert.equal(original.split(exact).length - 1, installCount)
+    for (let index = 0; index < installCount; index += 1) {
+      for (const replacement of ['npm ci --ignore-scripts', `${exact} --audit`]) {
+        const segments = original.split(exact)
+        const changed = segments.slice(0, index + 1).join(exact) + replacement + segments.slice(index + 1).join(exact)
+        const sources = cloneSources()
+        sources.set(filename, changed)
+        assert.throws(
+          () => validateWorkflowSources(sources),
+          /locked documentation dependencies|duplicate automatic npm audits|complete documentation build graph|locked host install/,
+        )
+      }
+    }
+  }
+})
+
 test('the unfiltered Build workflow owns the complete documentation test suite', () => {
   const sources = cloneSources()
   assert.deepEqual(validateDocumentationBuildCoverage(sources.get('build.yml')), {

@@ -62,7 +62,7 @@ describe('documentation workflow', () => {
   })
 
   test('audits the complete documentation build graph before tests and build', () => {
-    const install = workflow.indexOf('npm ci --ignore-scripts')
+    const install = workflow.indexOf('npm ci --ignore-scripts --no-audit')
     const audit = workflow.indexOf('npm run audit:documentation')
     const tests = workflow.indexOf('npm run test:run')
     const build = workflow.indexOf('npm run build')
@@ -77,6 +77,16 @@ describe('documentation workflow', () => {
     expect(audit).toBeGreaterThan(install)
     expect(tests).toBeGreaterThan(audit)
     expect(build).toBeGreaterThan(tests)
+  })
+
+  test('avoids duplicate install-time audits and retains explicit graph audits', () => {
+    const buildWorkflow = fs.readFileSync(path.join(workflowsDir, 'build.yml'), 'utf8')
+    for (const [source, count] of [[buildWorkflow, 3], [workflow, 1]] as const) {
+      const installs = source.split('\n').filter(line => line.trimStart().startsWith('run: npm ci '))
+      expect(installs).toEqual(Array(count).fill('        run: npm ci --ignore-scripts --no-audit'))
+    }
+    expect(workflow).toContain('run: npm run audit:documentation')
+    expect(buildWorkflow).toContain('npm run audit:production && npm run audit:development && npm run audit:documentation && npm run audit:vscode')
   })
 
   test('builds and live-smokes the pinned documentation container before upload', () => {

@@ -348,7 +348,7 @@ export const documentationContainerCiPolicy = Object.freeze({
 })
 
 export const documentationBuildCiPolicy = Object.freeze({
-  installCommand: 'npm ci --ignore-scripts',
+  installCommand: 'npm ci --ignore-scripts --no-audit',
   testCommand: 'npm --prefix docs run test:run',
 })
 
@@ -622,7 +622,7 @@ export function validateDocumentationBuildCoverage(buildWorkflow) {
   if (typeof testJob !== 'string') fail('build.yml Test Suite is unavailable')
   const rootInstallStep = [
     '      - name: Install independent validator',
-    '        run: npm ci --ignore-scripts',
+    '        run: npm ci --ignore-scripts --no-audit',
   ].join('\n')
   const docsInstallStep = [
     '      - name: Install documentation dependencies',
@@ -652,6 +652,10 @@ export function validateDocumentationBuildCoverage(buildWorkflow) {
     || testJob.indexOf(docsTestStep) <= testJob.indexOf(docsInstallStep)
   ) {
     fail('build.yml must install locked documentation dependencies, run the complete docs suite, and live-smoke the development container exactly once')
+  }
+  const installCommands = testJob.split('\n').filter(line => line.trimStart().startsWith('run: npm ci '))
+  if (!same(installCommands, Array(3).fill(`        run: ${documentationBuildCiPolicy.installCommand}`))) {
+    fail('build.yml must disable duplicate automatic npm audits for all three locked installs while retaining explicit audit gates')
   }
   return {
     install: documentationBuildCiPolicy.installCommand,
@@ -764,7 +768,14 @@ export function validateDocumentationWorkflowContract(docsWorkflow, buildWorkflo
     '',
     '      - name: Test documentation',
   ].join('\n')
-  const install = docsWorkflow.indexOf('        run: npm ci --ignore-scripts')
+  const installStep = [
+    '      - name: Install locked dependencies',
+    '        working-directory: docs',
+    `        run: ${documentationBuildCiPolicy.installCommand}`,
+    '',
+    '      - name: Audit complete documentation build graph',
+  ].join('\n')
+  const install = docsWorkflow.indexOf(installStep)
   const audit = docsWorkflow.indexOf(`        run: ${auditCommand}`)
   const tests = docsWorkflow.indexOf('        run: npm run test:run')
   const build = docsWorkflow.indexOf('        run: npm run build')
@@ -1347,7 +1358,7 @@ export function validateTurbopackWorkflowContract(buildWorkflow) {
   ].join('\n')
   const installStep = [
     '      - name: Install independent validator',
-    '        run: npm ci --ignore-scripts',
+    '        run: npm ci --ignore-scripts --no-audit',
   ].join('\n')
   if (
     testJob.indexOf(debugStep) === -1 ||
@@ -1387,7 +1398,7 @@ export function validateNextWebpackWorkflowContract(buildWorkflow) {
   }
   const installStep = [
     '      - name: Install independent validator',
-    '        run: npm ci --ignore-scripts',
+    '        run: npm ci --ignore-scripts --no-audit',
   ].join('\n')
   const debugStep = [
     '      - name: Run Tests',
@@ -1450,7 +1461,7 @@ export function validateSveltekitWorkflowContract(buildWorkflow) {
   ].join('\n')
   const installStep = [
     '      - name: Install independent validator',
-    '        run: npm ci --ignore-scripts',
+    '        run: npm ci --ignore-scripts --no-audit',
   ].join('\n')
   if (
     testJob.indexOf(debugStep) === -1 ||
@@ -1494,7 +1505,7 @@ export function validateAstroWorkflowContract(buildWorkflow) {
   ].join('\n')
   const installStep = [
     '      - name: Install independent validator',
-    '        run: npm ci --ignore-scripts',
+    '        run: npm ci --ignore-scripts --no-audit',
   ].join('\n')
   if (
     testJob.indexOf(debugStep) === -1 ||
@@ -1538,7 +1549,7 @@ export function validateNuxtWorkflowContract(buildWorkflow) {
   ].join('\n')
   const installStep = [
     '      - name: Install independent validator',
-    '        run: npm ci --ignore-scripts',
+    '        run: npm ci --ignore-scripts --no-audit',
   ].join('\n')
   if (
     testJob.indexOf(debugStep) === -1 ||

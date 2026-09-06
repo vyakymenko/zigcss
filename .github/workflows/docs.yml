@@ -102,7 +102,7 @@ jobs:
 
       - name: Install locked dependencies
         working-directory: docs
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
 
       - name: Audit complete documentation build graph
         run: npm run audit:documentation

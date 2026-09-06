@@ -105,7 +105,7 @@
         "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
       ],
       "evidence": [
-        "Documentation validation passed on 2026-09-03: 228/228 tests, production, SEO, bundle, 33-file served-bundle, container, and desktop/mobile browser checks preserved the unpublished 0.7.0-rc.1 versus stable 0.6.0 identity boundary; after CodeQL and descriptor-bound static-server hardening, the 2026-09-06 rerun passed 245/245 tests, production, SEO, bundle, and the exact 33-file served-bundle gate."
+        "Documentation validation passed on 2026-09-03: 228/228 tests, production, SEO, bundle, 33-file served-bundle, container, and desktop/mobile browser checks preserved the unpublished 0.7.0-rc.1 versus stable 0.6.0 identity boundary; after CodeQL and descriptor-bound static-server hardening, the 2026-09-06 rerun passed 246/246 tests, production, SEO, bundle, and the exact 33-file served-bundle gate."
       ]
     },
     {

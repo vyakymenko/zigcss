@@ -259,6 +259,52 @@ test('release preload reports only a finite lifecycle rejection stage', () => {
   }
 })
 
+test('release preload rejects an unadmitted installer root before probing its filesystem path', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-preload-'))
+  try {
+    const archive = 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz'
+    const checksums = 'zigcss-v0.6.0-rc.2-aarch64-macos.sha256'
+    fs.writeFileSync(path.join(temporary, archive), 'archive fixture')
+    fs.writeFileSync(path.join(temporary, checksums), 'manifest fixture')
+    const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
+    const rejectedRoot = path.join(temporary, 'unadmitted', 'node_modules', 'zigcss')
+    const env = {
+      ...process.env,
+      ZIGCSS_RELEASE_SMOKE: '1',
+      ZIGCSS_RELEASE_SMOKE_ARCHIVE: archive,
+      ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: temporary,
+      ZIGCSS_RELEASE_SMOKE_CHECKSUMS: checksums,
+      ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.2',
+    }
+    delete env.NODE_OPTIONS
+    delete env.npm_lifecycle_event
+    delete env.npm_lifecycle_script
+    const result = spawnSync(process.execPath, ['-e', [
+      "const assert = require('node:assert/strict')",
+      "const fs = require('node:fs')",
+      "const path = require('node:path')",
+      'const preload = process.argv[1]',
+      'const rejectedRoot = process.argv[2]',
+      'const originalLstat = fs.lstatSync',
+      'let rejectedProbes = 0',
+      'fs.lstatSync = function (filename, ...args) {',
+      '  if (filename === rejectedRoot) rejectedProbes += 1',
+      '  return Reflect.apply(originalLstat, this, [filename, ...args])',
+      '}',
+      "process.argv = [process.execPath, path.join(rejectedRoot, 'install.js')]",
+      "assert.throws(() => require(preload), /recovery installer identity is invalid/)",
+      'assert.equal(rejectedProbes, 0)',
+      "process.stdout.write('denied before filesystem probe')",
+    ].join('\n'), preload, rejectedRoot], { encoding: 'utf8', env, timeout: 30_000 })
+    assert.equal(result.error, undefined)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, 'denied before filesystem probe')
+    assert.equal(result.stderr, '')
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})
+
 function archiveFilesystem({
   mode = 0o100755,
   resolved = '/usr/bin/tar',
