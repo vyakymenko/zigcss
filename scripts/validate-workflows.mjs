@@ -695,12 +695,23 @@ export function validateDocumentationWorkflowContract(docsWorkflow, buildWorkflo
   if (docsWorkflow.split(buildAdmission).length !== 2) {
     fail('docs.yml must reject untrusted workflow_run source before checkout or execution')
   }
-  const exactCheckout = "          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
-  if (docsWorkflow.split(exactCheckout).length !== 2) {
-    fail('docs.yml must check out the exact successful Build commit')
-  }
+  const checkoutAction = actionPins['actions/checkout']
+  const exactCheckout = [
+    '      - name: Checkout',
+    `        uses: actions/checkout@${checkoutAction.sha} # ${checkoutAction.version}`,
+    '        with:',
+    '          persist-credentials: false',
+  ].join('\n')
+  const buildJob = splitJobs(docsWorkflow, 'docs.yml').get('build')?.join('\n')
   if (docsWorkflow.split('          persist-credentials: false').length !== 2) {
     fail('docs.yml checkout must not persist repository credentials')
+  }
+  if (
+    typeof buildJob !== 'string' ||
+    buildJob.split(exactCheckout).length !== 2 ||
+    /\n\s+ref:/.test(buildJob)
+  ) {
+    fail('docs.yml must use one credential-free default checkout without an untrusted dynamic ref')
   }
   const sourceIdentity = [
     '    outputs:',

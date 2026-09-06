@@ -568,6 +568,12 @@ test('rejects malformed, non-object, and oversized release JSON plus invalid clo
       () => verifyGitHubReleaseAssets({ ...fixture.options, phase: 'ready' }),
       /phase must be absent, attestation, discovery, draft, latest, local, published, setting, or tag/,
     )
+    for (const phase of ['__proto__', 'constructor', 'published\nlocal', new String('published')]) {
+      assert.throws(
+        () => verifyGitHubReleaseAssets({ ...fixture.publishedOptions, phase }),
+        /phase must be absent, attestation, discovery, draft, latest, local, published, setting, or tag/,
+      )
+    }
     assert.throws(
       () => verifyGitHubReleaseAssets({ ...fixture.options, version: 'v0.7.0' }),
       /canonical Semantic Versioning/,
@@ -702,6 +708,17 @@ test('CLI requires every closed option once and emits one compact JSON summary',
     ], { encoding: 'utf8' })
     assert.equal(repeated.status, 1)
     assert.match(repeated.stderr, /invalid or repeated command option/)
+
+    const forgedPhase = spawnSync(process.execPath, [
+      script,
+      '--release-json', fixture.releaseJson,
+      '--assets-directory', fixture.assetsDirectory,
+      '--version', version,
+      '--phase', 'published\nlocal',
+    ], { encoding: 'utf8' })
+    assert.equal(forgedPhase.status, 1)
+    assert.match(forgedPhase.stderr, /release phase must be absent, attestation, discovery, draft, latest, local, published, setting, or tag/)
+    assert.equal(forgedPhase.stderr.split('\n').length, 2)
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true })
     fs.rmSync(stable.root, { recursive: true, force: true })

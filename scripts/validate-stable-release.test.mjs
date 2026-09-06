@@ -193,6 +193,29 @@ test('closes tag admission after immutable publication', () => {
   )
 })
 
+test('stable release CLI rejects repeated and non-allowlisted property names', () => {
+  const commit = 'a'.repeat(40)
+  for (const args of [
+    [
+      '--check',
+      '--release-tag', 'v0.6.0',
+      '--release-tag', 'v0.6.0',
+      '--origin-main-commit', commit,
+    ],
+    [
+      '--check',
+      '--__proto__', 'v0.6.0',
+      '--candidate-commit', commit,
+      '--origin-main-commit', commit,
+    ],
+  ]) {
+    assert.throws(
+      () => execFileSync(process.execPath, [script, ...args], { encoding: 'utf8', stdio: 'pipe' }),
+      /usage: --check/,
+    )
+  }
+})
+
 test('binds exact GitHub, artifact, npm, provenance, channel, and consumer evidence', () => {
   for (const mutate of [
     contract => { delete contract.publicationEvidence.npmShasum },

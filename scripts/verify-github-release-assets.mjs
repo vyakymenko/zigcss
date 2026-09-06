@@ -331,45 +331,58 @@ function decodeAttestationStatement(value) {
   return plainObject(statement, 'release attestation statement')
 }
 
+function canonicalReleasePhase(value) {
+  switch (value) {
+    case 'absent': return 'absent'
+    case 'attestation': return 'attestation'
+    case 'discovery': return 'discovery'
+    case 'draft': return 'draft'
+    case 'latest': return 'latest'
+    case 'local': return 'local'
+    case 'published': return 'published'
+    case 'setting': return 'setting'
+    case 'tag': return 'tag'
+    default:
+      fail('release phase must be absent, attestation, discovery, draft, latest, local, published, setting, or tag')
+  }
+}
+
 function validateOptions(options) {
   plainObject(options, 'verification options')
-  const phases = new Set(['absent', 'attestation', 'discovery', 'draft', 'latest', 'local', 'published', 'setting', 'tag'])
-  if (!phases.has(options.phase)) {
-    fail('release phase must be absent, attestation, discovery, draft, latest, local, published, setting, or tag')
-  }
-  const namesByPhase = {
-    absent: ['phase', 'releaseJson', 'version'],
-    attestation: ['assetsDirectory', 'attestationJson', 'commit', 'phase', 'releaseId', 'repository', 'version'],
-    discovery: ['githubOutput', 'phase', 'releaseJson', 'version'],
-    draft: ['assetsDirectory', 'phase', 'releaseJson', 'version'],
-    latest: ['phase', 'releaseId', 'releaseJson', 'version'],
-    local: ['assetsDirectory', 'phase', 'version'],
-    published: ['assetsDirectory', 'commit', 'phase', 'releaseJson', 'tagRefJson', 'version'],
-    setting: ['phase', 'releaseJson'],
-    tag: ['commit', 'phase', 'tagRefJson', 'version'],
-  }
-  const names = namesByPhase[options.phase]
+  const phase = canonicalReleasePhase(options.phase)
+  const namesByPhase = new Map([
+    ['absent', ['phase', 'releaseJson', 'version']],
+    ['attestation', ['assetsDirectory', 'attestationJson', 'commit', 'phase', 'releaseId', 'repository', 'version']],
+    ['discovery', ['githubOutput', 'phase', 'releaseJson', 'version']],
+    ['draft', ['assetsDirectory', 'phase', 'releaseJson', 'version']],
+    ['latest', ['phase', 'releaseId', 'releaseJson', 'version']],
+    ['local', ['assetsDirectory', 'phase', 'version']],
+    ['published', ['assetsDirectory', 'commit', 'phase', 'releaseJson', 'tagRefJson', 'version']],
+    ['setting', ['phase', 'releaseJson']],
+    ['tag', ['commit', 'phase', 'tagRefJson', 'version']],
+  ])
+  const names = namesByPhase.get(phase)
   const actualNames = Object.keys(options).sort(asciiCompare)
   if (JSON.stringify(actualNames) !== JSON.stringify(names)) {
-    fail(`${options.phase} verification options must contain exactly ${names.join(', ')}`)
+    fail(`${phase} verification options must contain exactly ${names.join(', ')}`)
   }
   let parsedVersion
-  if (options.phase !== 'setting') {
+  if (phase !== 'setting') {
     parsedVersion = parseReleaseVersion(options.version, 'GitHub release version')
     if (parsedVersion.build !== null) fail('GitHub release version must not contain build metadata')
   }
-  if (['attestation', 'published', 'tag'].includes(options.phase) && !/^[0-9a-f]{40}$/u.test(options.commit ?? '')) {
+  if (['attestation', 'published', 'tag'].includes(phase) && !/^[0-9a-f]{40}$/u.test(options.commit ?? '')) {
     fail('release commit must contain 40 lowercase hexadecimal characters')
   }
   let releaseId
-  if (['attestation', 'latest'].includes(options.phase)) {
+  if (['attestation', 'latest'].includes(phase)) {
     if (typeof options.releaseId !== 'string' || !/^[1-9][0-9]*$/u.test(options.releaseId)) {
       fail('release ID must be a canonical positive decimal integer')
     }
     releaseId = Number(options.releaseId)
     if (!Number.isSafeInteger(releaseId)) fail('release ID must be a safe integer')
   }
-  if (options.phase === 'attestation') {
+  if (phase === 'attestation') {
     if (
       typeof options.repository !== 'string'
       || options.repository.length > 201
@@ -378,7 +391,19 @@ function validateOptions(options) {
       fail('release repository must be a canonical owner/name pair')
     }
   }
-  return { ...options, parsedVersion, ...(releaseId === undefined ? {} : { releaseId }) }
+  return {
+    phase,
+    assetsDirectory: options.assetsDirectory,
+    attestationJson: options.attestationJson,
+    commit: options.commit,
+    githubOutput: options.githubOutput,
+    parsedVersion,
+    releaseId,
+    releaseJson: options.releaseJson,
+    repository: options.repository,
+    tagRefJson: options.tagRefJson,
+    version: options.version,
+  }
 }
 
 function validateReleaseIdentity(release, options) {
@@ -757,33 +782,34 @@ function parseCliOptions(args) {
     ['--tag-ref-json', 'tagRefJson'],
     ['--phase', 'phase'],
   ])
-  const values = {}
+  const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
     const option = args[index]
     const value = args[index + 1]
     const key = mapping.get(option)
-    if (key === undefined || value === undefined || Object.hasOwn(values, key)) {
+    if (key === undefined || value === undefined || values.has(key)) {
       fail(`invalid or repeated command option ${JSON.stringify(option)}`)
     }
-    values[key] = value
+    values.set(key, value)
   }
-  const requiredByPhase = {
-    absent: ['releaseJson', 'version', 'phase'],
-    attestation: ['attestationJson', 'assetsDirectory', 'version', 'commit', 'releaseId', 'repository', 'phase'],
-    discovery: ['releaseJson', 'githubOutput', 'version', 'phase'],
-    draft: ['releaseJson', 'assetsDirectory', 'version', 'phase'],
-    latest: ['releaseJson', 'version', 'releaseId', 'phase'],
-    local: ['assetsDirectory', 'version', 'phase'],
-    published: ['releaseJson', 'assetsDirectory', 'tagRefJson', 'version', 'commit', 'phase'],
-    setting: ['releaseJson', 'phase'],
-    tag: ['tagRefJson', 'version', 'commit', 'phase'],
-  }
-  const required = requiredByPhase[values.phase]
-  const actual = Object.keys(values).sort(asciiCompare)
-  if (required === undefined || JSON.stringify(actual) !== JSON.stringify([...required].sort(asciiCompare))) {
+  const phase = canonicalReleasePhase(values.get('phase'))
+  const requiredByPhase = new Map([
+    ['absent', ['releaseJson', 'version', 'phase']],
+    ['attestation', ['attestationJson', 'assetsDirectory', 'version', 'commit', 'releaseId', 'repository', 'phase']],
+    ['discovery', ['releaseJson', 'githubOutput', 'version', 'phase']],
+    ['draft', ['releaseJson', 'assetsDirectory', 'version', 'phase']],
+    ['latest', ['releaseJson', 'version', 'releaseId', 'phase']],
+    ['local', ['assetsDirectory', 'version', 'phase']],
+    ['published', ['releaseJson', 'assetsDirectory', 'tagRefJson', 'version', 'commit', 'phase']],
+    ['setting', ['releaseJson', 'phase']],
+    ['tag', ['tagRefJson', 'version', 'commit', 'phase']],
+  ])
+  const required = requiredByPhase.get(phase)
+  const actual = [...values.keys()].sort(asciiCompare)
+  if (JSON.stringify(actual) !== JSON.stringify([...required].sort(asciiCompare))) {
     fail('command options must exactly match phase: setting=release-json; absent=release-json+version; discovery=release-json+github-output+version; local=assets-directory+version; draft=release-json+assets-directory+version; tag=tag-ref-json+version+commit; published=release-json+assets-directory+tag-ref-json+version+commit; latest=release-json+release-id+version; attestation=attestation-json+assets-directory+repository+release-id+version+commit')
   }
-  return values
+  return Object.fromEntries([...values, ['phase', phase]])
 }
 
 function main() {

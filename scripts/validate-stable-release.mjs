@@ -437,19 +437,19 @@ function parseArgs(args) {
   if (args.length !== 7 || args[0] !== '--check') {
     fail('usage: --check [--release-tag vX.Y.Z --candidate-commit sha --origin-main-commit sha]')
   }
-  const values = {}
+  const values = new Map()
   for (let index = 1; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
-    if (!['--release-tag', '--candidate-commit', '--origin-main-commit'].includes(name) || value === undefined || Object.hasOwn(values, name)) {
+    if (!['--release-tag', '--candidate-commit', '--origin-main-commit'].includes(name) || value === undefined || values.has(name)) {
       fail('usage: --check [--release-tag vX.Y.Z --candidate-commit sha --origin-main-commit sha]')
     }
-    values[name] = value
+    values.set(name, value)
   }
   return {
-    releaseTag: values['--release-tag'],
-    candidateCommit: values['--candidate-commit'],
-    originMainCommit: values['--origin-main-commit'],
+    releaseTag: values.get('--release-tag'),
+    candidateCommit: values.get('--candidate-commit'),
+    originMainCommit: values.get('--origin-main-commit'),
   }
 }
 

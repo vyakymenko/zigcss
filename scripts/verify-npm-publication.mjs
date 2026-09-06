@@ -703,6 +703,13 @@ function same(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+export function sanitizeLogMessage(value) {
+  return String(value)
+    .replace(/\n|\r|\u2028|\u2029/gu, ' ')
+    .replace(/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, ' ')
+    .slice(0, 2_048)
+}
+
 export function validateDownloadedNpmPackage(localPackage, downloadedPackage) {
   validateExpectedPackage(localPackage, localPackage.version)
   if (
@@ -816,7 +823,8 @@ async function main() {
 
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === scriptPath) {
   main().catch(error => {
-    console.error(error.message)
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`npm publication verification failed: ${sanitizeLogMessage(message)}\n`)
     process.exitCode = 1
   })
 }

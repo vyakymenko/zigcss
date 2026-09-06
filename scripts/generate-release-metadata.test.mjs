@@ -3,7 +3,9 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import {
   buildReleaseMetadata,
   checkReleaseAttestationBundles,
@@ -19,6 +21,7 @@ import {
 const version = '0.6.0-rc.2'
 const commit = 'a'.repeat(40)
 const sourceDateEpoch = 1_700_000_000
+const script = fileURLToPath(new URL('./generate-release-metadata.mjs', import.meta.url))
 
 function sha(algorithm, value) {
   return crypto.createHash(algorithm).update(value).digest('hex')
@@ -129,6 +132,10 @@ test('release metadata is deterministic, bounded SPDX 2.3 with exact SHA-256 sub
 
     const firstSbom = sbomText
     const firstChecksums = checksumsText
+    assert.deepEqual(writeReleaseMetadata(options), first)
+    fs.writeFileSync(path.join(root, 'release-assets', first.assets.sbom), 'different metadata\n')
+    assert.throws(() => writeReleaseMetadata(options), /already exists with different content/)
+    fs.writeFileSync(path.join(root, 'release-assets', first.assets.sbom), firstSbom)
     fs.rmSync(path.join(root, 'release-assets', first.assets.sbom))
     fs.rmSync(path.join(root, 'release-assets', first.assets.checksums))
     const second = writeReleaseMetadata(options)
@@ -138,6 +145,42 @@ test('release metadata is deterministic, bounded SPDX 2.3 with exact SHA-256 sub
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('release metadata CLI rejects repeated and non-allowlisted property names', () => {
+  for (const args of [
+    ['--write', '--archive', 'first', '--archive', 'second'],
+    ['--write', '--__proto__', 'polluted'],
+    ['--write', '--constructor', 'polluted'],
+  ]) {
+    const result = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /invalid or repeated option/)
+  }
+})
+
+test('metadata writing rejects an identical symlink when O_NOFOLLOW is unavailable', t => {
+  const { root, options } = fixture()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const result = writeReleaseMetadata(options)
+  const sbom = path.join(fs.realpathSync(root), options.outputDirectory, result.assets.sbom)
+  const identical = path.join(root, 'identical-sbom.json')
+  fs.writeFileSync(identical, fs.readFileSync(sbom))
+  fs.rmSync(sbom)
+  fs.symlinkSync(identical, sbom)
+
+  const originalOpen = fs.openSync
+  let followedSymlinks = 0
+  t.mock.method(fs, 'openSync', (filename, flags, ...args) => {
+    if (filename === sbom && typeof flags === 'number') {
+      followedSymlinks += 1
+      return originalOpen(filename, flags & ~(fs.constants.O_NOFOLLOW ?? 0), ...args)
+    }
+    return originalOpen(filename, flags, ...args)
+  })
+
+  assert.throws(() => writeReleaseMetadata(options), /regular non-symlink file/)
+  assert.equal(followedSymlinks, 1)
 })
 
 test('metadata checks reject tampering, malformed identity, escapes, and symlinks', () => {

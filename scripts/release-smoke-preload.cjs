@@ -23,6 +23,7 @@ const workerThreads = require('node:worker_threads')
 const maximumTraceBytes = 64 * 1024
 const maximumManifestBytes = 64 * 1024
 const maximumArchiveBytes = 512 * 1024 * 1024
+const maximumAssetEntries = 16
 const requestTimeoutMs = 30 * 1000
 const posixArchivePolicies = Object.freeze({
   darwin: Object.freeze({
@@ -49,6 +50,14 @@ const posixArchiveEnvironment = Object.freeze({
   PATH: '/usr/bin:/bin',
 })
 const repositoryRoot = path.resolve(__dirname, '..')
+const assetTemporaryRootPattern = /^(?:zigcss-package-manager-matrix-[A-Za-z0-9]{6}\/preloaded-release|zigcss-release-lifecycle-[A-Za-z0-9]{6}\/release|zigcss-release-(?:node-api-trace|preload(?:-pnp)?|runtime-(?:denial|trace))-[A-Za-z0-9]{6})$/
+const traceTemporaryRootPattern = /^(?:zigcss-native-release-smoke|zigcss-release-(?:node-api-trace|preload|runtime-(?:denial|trace)))-[A-Za-z0-9]{6}$/
+const runtimeTraceNames = Object.freeze([
+  'direct-runtime-trace.jsonl',
+  'node-api-runtime-trace.jsonl',
+  'offline-runtime-trace.jsonl',
+  'runtime-trace.jsonl',
+])
 
 function fail(message) {
   throw new Error(`release smoke preload: ${message}`)
@@ -292,34 +301,86 @@ function boundedStringEnvironment(environment) {
   })
 }
 
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode &&
+    left.nlink === right.nlink
+}
+
+function sameStableIdentity(left, right) {
+  return sameFileIdentity(left, right) && left.size === right.size &&
+    left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs
+}
+
+function sameLocalPath(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string') return false
+  return process.platform === 'win32'
+    ? path.win32.normalize(left).toLowerCase() === path.win32.normalize(right).toLowerCase()
+    : left === right
+}
+
+function exactTemporaryRelative(rootInput, label) {
+  const temporaryRoot = path.resolve(os.tmpdir())
+  const relative = path.relative(temporaryRoot, rootInput).split(path.sep).join('/')
+  const pattern = label === 'asset root'
+    ? assetTemporaryRootPattern
+    : label === 'runtime trace root'
+      ? traceTemporaryRootPattern
+      : null
+  if (
+    relative.length === 0 || relative.startsWith('../') || path.posix.isAbsolute(relative) ||
+    pattern === null || !pattern.test(relative)
+  ) return null
+  return Object.freeze({ relative, temporaryRoot })
+}
+
 function canonicalSmokeDirectory(rootInput, label, allowRepositoryAssets = false) {
   if (typeof rootInput !== 'string' || rootInput.includes('\0') || !path.isAbsolute(rootInput)) {
     fail(`${label} must be an absolute local path`)
   }
   const repositoryAssets = path.join(repositoryRoot, 'release-assets')
-  if (rootInput === repositoryAssets) {
+  let candidate
+  let temporaryAdmission = null
+  if (sameLocalPath(rootInput, repositoryAssets)) {
     if (!allowRepositoryAssets) fail(`${label} must remain inside the smoke temporary root`)
+    candidate = repositoryAssets
   } else {
-    const relative = path.relative(path.resolve(os.tmpdir()), rootInput)
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    temporaryAdmission = exactTemporaryRelative(rootInput, label)
+    if (temporaryAdmission === null) {
       fail(allowRepositoryAssets
         ? `${label} must be the repository assets or remain inside the smoke temporary root`
         : `${label} must remain inside the smoke temporary root`)
     }
+    candidate = path.join(
+      temporaryAdmission.temporaryRoot,
+      ...temporaryAdmission.relative.split('/'),
+    )
+    if (!sameLocalPath(candidate, rootInput)) fail(`${label} must use its exact admitted path`)
   }
-  const stat = fs.lstatSync(rootInput)
-  if (!stat.isDirectory() || stat.isSymbolicLink()) fail(`${label} must be a regular non-symlink directory`)
-  const canonical = fs.realpathSync(rootInput)
-  if (rootInput === repositoryAssets) {
-    if (canonical !== fs.realpathSync(repositoryAssets)) fail(`${label} escapes the repository assets`)
-  } else {
-    const canonicalTemporary = fs.realpathSync(path.resolve(os.tmpdir()))
-    const canonicalRelative = path.relative(canonicalTemporary, canonical)
-    if (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative)) {
-      fail(`${label} escapes its admitted root`)
+  let handle
+  try {
+    handle = fs.opendirSync(candidate)
+    const lexical = fs.lstatSync(candidate, { bigint: true })
+    const canonical = fs.realpathSync(candidate)
+    const bound = fs.lstatSync(canonical, { bigint: true })
+    if (
+      !lexical.isDirectory() || lexical.isSymbolicLink() || !bound.isDirectory() ||
+      bound.isSymbolicLink() || !sameStableIdentity(lexical, bound)
+    ) {
+      fail(`${label} changed during directory-handle admission`)
     }
+    if (temporaryAdmission === null) {
+      if (canonical !== fs.realpathSync(repositoryAssets)) fail(`${label} escapes the repository assets`)
+    } else {
+      const canonicalTemporary = fs.realpathSync(temporaryAdmission.temporaryRoot)
+      const canonicalRelative = path.relative(canonicalTemporary, canonical).split(path.sep).join('/')
+      if (!sameLocalPath(canonicalRelative, temporaryAdmission.relative)) fail(`${label} escapes its admitted root`)
+    }
+    const admittedHandle = handle
+    handle = undefined
+    return Object.freeze({ handle: admittedHandle, path: canonical, stat: bound })
+  } finally {
+    if (handle !== undefined) handle.closeSync()
   }
-  return canonical
 }
 
 function fileSha256(filename) {
@@ -348,14 +409,14 @@ function canonicalLifecyclePackage(
     typeof rootInput !== 'string' || rootInput.includes('\0') || !path.isAbsolute(rootInput) ||
     !boundedStringEnvironment(environment)
   ) return null
-  const temporaryRelative = path.relative(fs.realpathSync(path.resolve(os.tmpdir())), rootInput)
-  if (temporaryRelative.startsWith('..') || path.isAbsolute(temporaryRelative)) return null
   try {
     const rootStat = fs.lstatSync(rootInput)
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null
     const root = fs.realpathSync(rootInput)
+    const temporaryRelative = path.relative(fs.realpathSync(path.resolve(os.tmpdir())), root)
     if (
-      root !== path.resolve(rootInput) || path.basename(root) !== 'zigcss' ||
+      temporaryRelative.startsWith('..') || path.isAbsolute(temporaryRelative) ||
+      path.basename(root) !== 'zigcss' ||
       path.basename(path.dirname(root)) !== 'node_modules'
     ) return null
     const manifestFile = path.join(root, 'package.json')
@@ -364,7 +425,7 @@ function canonicalLifecyclePackage(
       const stat = fs.lstatSync(filename)
       if (
         !stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > maximumBytes ||
-        fs.realpathSync(filename) !== filename
+        !sameLocalPath(fs.realpathSync(filename), filename)
       ) return null
     }
     const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
@@ -387,14 +448,14 @@ function canonicalLifecyclePackage(
         environment.npm_lifecycle_script !== 'node install.js' ||
         environment.npm_package_name !== 'zigcss' ||
         environment.npm_package_version !== version ||
-        path.resolve(environment.npm_package_json ?? '') !== manifestFile ||
+        !sameLocalPath(path.resolve(environment.npm_package_json ?? ''), manifestFile) ||
         environment.NODE_OPTIONS !== process.env.NODE_OPTIONS
       )
     ) return null
     if (requireInstallerArgv) {
       if (
         process.argv.length !== 2 ||
-        fs.realpathSync(process.argv[1]) !== installerFile
+        !sameLocalPath(fs.realpathSync(process.argv[1]), installerFile)
       ) return null
     }
     return Object.freeze({ installerFile, manifestFile, root })
@@ -447,7 +508,8 @@ function lifecycleArchivePath(filename, packageRoot) {
     const archiveStat = fs.lstatSync(filename)
     if (
       !archiveStat.isFile() || archiveStat.isSymbolicLink() || archiveStat.size <= 0 ||
-      archiveStat.size > maximumArchiveBytes || fs.realpathSync(filename) !== filename ||
+      archiveStat.size > maximumArchiveBytes ||
+      !sameLocalPath(fs.realpathSync(filename), filename) ||
       path.basename(filename) !== archiveName
     ) return null
     const temporary = path.dirname(filename)
@@ -456,7 +518,7 @@ function lifecycleArchivePath(filename, packageRoot) {
     if (
       !temporaryStat.isDirectory() || temporaryStat.isSymbolicLink() ||
       !/^\.install-[A-Za-z0-9]{6}$/.test(name) ||
-      fs.realpathSync(path.dirname(temporary)) !== path.join(packageRoot, 'bin')
+      !sameLocalPath(fs.realpathSync(path.dirname(temporary)), path.join(packageRoot, 'bin'))
     ) return null
     return filename
   } catch {
@@ -497,11 +559,11 @@ function trustedLifecycleShell() {
 }
 
 function stableCurrentNode(command) {
-  if (command !== process.execPath) return false
+  if (!sameLocalPath(command, process.execPath)) return false
   try {
     const stat = fs.lstatSync(command)
     return stat.isFile() && !stat.isSymbolicLink() && stat.size > 0 &&
-      stat.size <= 256 * 1024 * 1024 && fs.realpathSync(command) === command &&
+      stat.size <= 256 * 1024 * 1024 && sameLocalPath(fs.realpathSync(command), command) &&
       (process.platform === 'win32' || (stat.mode & 0o111) !== 0)
   } catch {
     return false
@@ -574,6 +636,11 @@ function installAssetProcessBoundary(denyProcess) {
   })
 
   if (lifecycle !== null) {
+    process.once('exit', code => {
+      if (code !== 0) {
+        fs.writeSync(2, `release smoke preload: installer stopped after ${admittedOperations} of 2 admitted archive operations\n`)
+      }
+    })
     immutableFunction(childProcess, 'spawnSync', function guardedArchiveListing(command, args, options) {
       const archive = Array.isArray(args) ? lifecycleArchivePath(args[1], lifecycle.root) : null
       if (
@@ -582,7 +649,7 @@ function installAssetProcessBoundary(denyProcess) {
         !exactPlainOptions(options, [
           'cwd', 'encoding', 'env', 'killSignal', 'maxBuffer', 'timeout', 'windowsHide',
         ]) ||
-        options.cwd !== path.dirname(archive) || options.encoding !== 'utf8' ||
+        !sameLocalPath(options.cwd, path.dirname(archive)) || options.encoding !== 'utf8' ||
         !exactArchiveEnvironment(options.env) || options.killSignal !== 'SIGKILL' ||
         options.maxBuffer !== maximumManifestBytes || options.timeout !== requestTimeoutMs ||
         options.windowsHide !== true
@@ -597,7 +664,8 @@ function installAssetProcessBoundary(denyProcess) {
         admittedOperations !== 1 || !trustedArchiveExecutable(command) ||
         !exactDataArray(args, ['-xOf', admittedArchive, binaryName]) ||
         !exactPlainOptions(options, ['cwd', 'env', 'stdio', 'windowsHide']) ||
-        options.cwd !== path.dirname(admittedArchive) || !exactArchiveEnvironment(options.env) ||
+        !sameLocalPath(options.cwd, path.dirname(admittedArchive)) ||
+        !exactArchiveEnvironment(options.env) ||
         !exactDataArray(options.stdio, ['ignore', 'pipe', 'pipe']) || options.windowsHide !== true
       ) return denyProcess('child_process.spawn')
       admittedOperations += 1
@@ -609,8 +677,15 @@ function installAssetProcessBoundary(denyProcess) {
       }
     })
   } else {
+    let lifecycleSpawnStage = 'not-attempted'
+    process.once('exit', code => {
+      if (code !== 0 && lifecycleSpawnStage.startsWith('rejected-')) {
+        fs.writeSync(2, `release smoke preload: lifecycle child ${lifecycleSpawnStage}\n`)
+      }
+    })
     immutableFunction(childProcess, 'spawnSync', () => denyProcess('child_process.spawnSync'))
     immutableFunction(childProcess, 'spawn', function guardedLifecycleSpawn(command, args, options) {
+      lifecycleSpawnStage = 'checking'
       const expectedShell = trustedLifecycleShell()
       const optionKeys = process.platform === 'win32'
         ? ['env', 'stdioString', 'stdio', 'cwd', 'shell', 'windowsVerbatimArguments']
@@ -621,12 +696,20 @@ function installAssetProcessBoundary(denyProcess) {
       const expectedArgs = process.platform === 'win32'
         ? ['/d', '/s', '/c', 'node install.js']
         : ['-c', 'node install.js']
-      const npmLifecycleAdmitted = expectedShell !== null && command === expectedShell &&
-        lifecyclePackage !== null && exactDataArray(args, expectedArgs) &&
-        exactPlainOptions(options, optionKeys) && options.shell === false &&
-        options.stdio === 'inherit' && [undefined, true].includes(options.stdioString) &&
-        (process.platform !== 'win32' || options.windowsVerbatimArguments === true) &&
-        stableCurrentNode(process.execPath)
+      const lifecycleChecks = Object.freeze({
+        shell: expectedShell !== null && sameLocalPath(command, expectedShell),
+        package: lifecyclePackage !== null,
+        arguments: exactDataArray(args, expectedArgs),
+        options: exactPlainOptions(options, optionKeys),
+        shellDisabled: options?.shell === false,
+        stdio: options?.stdio === 'inherit',
+        stdioString: [undefined, true].includes(options?.stdioString),
+        windowsArguments: process.platform !== 'win32' || options?.windowsVerbatimArguments === true,
+        node: stableCurrentNode(process.execPath),
+      })
+      const lifecycleRejection = Object.entries(lifecycleChecks)
+        .find(([, admitted]) => !admitted)?.[0] ?? null
+      const npmLifecycleAdmitted = lifecycleRejection === null
       const directInstaller = isPlainDenseArray(args, 1) && args.length === 1 &&
         typeof args[0] === 'string'
         ? canonicalLifecyclePackage(path.dirname(args[0]), options?.env, false, false)
@@ -634,7 +717,7 @@ function installAssetProcessBoundary(denyProcess) {
       const yarnPnpAdmitted = directInstaller !== null && stableCurrentNode(command) &&
         exactDataArray(args, [directInstaller.installerFile]) &&
         exactPlainOptions(options, ['cwd', 'env', 'stdio']) &&
-        options.cwd === process.cwd() &&
+        sameLocalPath(options.cwd, process.cwd()) &&
         exactDataArray(options.stdio, [process.stdin, process.stdout, process.stderr]) &&
         isConfinedYarnPnpPackage(directInstaller.root, options.cwd) &&
         exactYarnPnpNodeOptions(options.env, options.cwd) &&
@@ -645,9 +728,13 @@ function installAssetProcessBoundary(denyProcess) {
         options.env.npm_config_proxy === 'http://127.0.0.1:9' &&
         options.env.npm_config_https_proxy === 'http://127.0.0.1:9'
       if (admittedOperations !== 0 || (!npmLifecycleAdmitted && !yarnPnpAdmitted)) {
-        return denyProcess('child_process.spawn')
+        lifecycleSpawnStage = admittedOperations !== 0
+          ? 'rejected-operation-count'
+          : `rejected-${lifecycleRejection ?? 'recovery-shape'}`
+        return denyProcess(`child_process.spawn:${lifecycleSpawnStage}`)
       }
       admittedOperations += 1
+      lifecycleSpawnStage = 'admitted'
       admittedChildSpawn = true
       try {
         if (npmLifecycleAdmitted) {
@@ -682,12 +769,38 @@ const archiveName = process.env.ZIGCSS_RELEASE_SMOKE_ARCHIVE
 const checksumsName = process.env.ZIGCSS_RELEASE_SMOKE_CHECKSUMS
 if (typeof assetRootInput !== 'string' || typeof version !== 'string') fail('asset root and version are required')
 if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.test(version)) fail('version is invalid')
-if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(archiveName ?? '')) fail('archive name is invalid')
-if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(checksumsName ?? '')) fail('checksum name is invalid')
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(archiveName ?? '')) fail('archive name is invalid')
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(checksumsName ?? '')) fail('checksum name is invalid')
 if (archiveName === checksumsName) fail('archive and checksum names must be distinct')
 
-const assetRoot = canonicalSmokeDirectory(assetRootInput, 'asset root', true)
-const assetEntries = fs.readdirSync(assetRoot, { withFileTypes: true })
+const assetDirectory = canonicalSmokeDirectory(assetRootInput, 'asset root', true)
+const assetRoot = assetDirectory.path
+
+function readBoundedAssetEntries() {
+  const entries = []
+  try {
+    while (true) {
+      const entry = assetDirectory.handle.readSync()
+      if (entry === null) break
+      if (entries.length === maximumAssetEntries) {
+        fail(`asset root must contain at most ${maximumAssetEntries} entries`)
+      }
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(entry.name)) {
+        fail('asset root contains a noncanonical entry name')
+      }
+      entries.push(entry)
+    }
+  } finally {
+    assetDirectory.handle.closeSync()
+  }
+  const after = fs.lstatSync(assetRoot, { bigint: true })
+  if (!after.isDirectory() || !sameStableIdentity(assetDirectory.stat, after)) {
+    fail('asset root changed while its bounded inventory was admitted')
+  }
+  return entries
+}
+
+const assetEntries = readBoundedAssetEntries()
 
 function openReleaseAsset(requestedName, maximumBytes) {
   const entry = assetEntries.find(candidate => candidate.name === requestedName)
@@ -710,13 +823,12 @@ function openReleaseAsset(requestedName, maximumBytes) {
       fail(`${name} is unavailable: ${error.message}`)
     }
     const opened = fs.fstatSync(descriptor, { bigint: true })
-    const pathStat = fs.lstatSync(filename, { bigint: true })
+    const canonical = fs.realpathSync(filename)
+    const pathStat = fs.lstatSync(canonical, { bigint: true })
     if (
       !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
-      opened.dev !== pathStat.dev || opened.ino !== pathStat.ino ||
-      opened.mode !== pathStat.mode || opened.nlink !== pathStat.nlink ||
-      opened.size !== pathStat.size || opened.mtimeNs !== pathStat.mtimeNs ||
-      opened.ctimeNs !== pathStat.ctimeNs || opened.size <= 0n ||
+      opened.nlink !== 1n || !sameStableIdentity(opened, pathStat) ||
+      !sameLocalPath(canonical, filename) || opened.size <= 0n ||
       opened.size > BigInt(maximumBytes)
     ) fail(`${name} must be a bounded stable regular file inside the asset root`)
     const asset = Object.freeze({
@@ -745,6 +857,10 @@ try {
       `https://github.com/vyakymenko/zigcss/releases/download/v${version}/${name}`,
       asset,
     )
+  }
+  const after = fs.lstatSync(assetRoot, { bigint: true })
+  if (!after.isDirectory() || !sameStableIdentity(assetDirectory.stat, after)) {
+    fail('asset root changed while its fixed release files were opened')
   }
 } catch (error) {
   for (const asset of allowed.values()) fs.closeSync(asset.descriptor)
@@ -842,47 +958,27 @@ function openRuntimeFile(
   label,
   maximumBytes,
   permitEmpty,
-  admittedRoot,
   flags = fs.constants.O_RDONLY,
   allowSystemExecutable = false,
 ) {
-  if (typeof filename !== 'string' || filename.includes('\0') || !path.isAbsolute(filename)) {
-    fail(`${label} must be an absolute local path`)
-  }
-  const normalized = path.resolve(filename)
-  const lexicalRoot = path.resolve(admittedRoot)
-  const lexicalRelative = path.relative(lexicalRoot, normalized)
-  const admittedSystemPath = allowSystemExecutable && runtimeSystemExecutables.has(normalized)
-  if (
-    normalized !== filename ||
-    (!admittedSystemPath &&
-      (lexicalRelative.startsWith('..') || path.isAbsolute(lexicalRelative)))
-  ) fail(`${label} escapes its admitted root`)
   let descriptor
   try {
-    const canonical = fs.realpathSync(normalized)
-    const canonicalRoot = fs.realpathSync(admittedRoot)
-    const canonicalRelative = path.relative(canonicalRoot, canonical)
-    const admittedCanonicalSystemPath =
-      allowSystemExecutable && runtimeSystemExecutables.has(canonical)
-    if (
-      !admittedCanonicalSystemPath &&
-      (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative))
-    ) fail(`${label} resolves outside its admitted root`)
     descriptor = fs.openSync(
-      canonical,
+      filename,
       flags |
         (fs.constants.O_NOFOLLOW ?? 0) |
         (fs.constants.O_NONBLOCK ?? 0) |
         (fs.constants.O_CLOEXEC ?? 0),
     )
     const opened = fs.fstatSync(descriptor, { bigint: true })
+    const canonical = fs.realpathSync(filename)
     const pathStat = fs.lstatSync(canonical, { bigint: true })
+    const admittedCanonicalSystemPath =
+      allowSystemExecutable && runtimeSystemExecutables.has(canonical)
     if (
       !opened.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink() ||
-      opened.dev !== pathStat.dev || opened.ino !== pathStat.ino ||
-      opened.size !== pathStat.size || opened.mtimeNs !== pathStat.mtimeNs ||
-      opened.ctimeNs !== pathStat.ctimeNs ||
+      !sameStableIdentity(opened, pathStat) ||
+      (!admittedCanonicalSystemPath && !sameLocalPath(canonical, filename)) ||
       (!permitEmpty && opened.size === 0n) || opened.size > BigInt(maximumBytes)
     ) fail(`${label} must be a bounded stable regular file`)
     return { canonical, descriptor, stat: opened }
@@ -892,18 +988,46 @@ function openRuntimeFile(
   }
 }
 
-function canonicalRuntimeFile(filename, label, maximumBytes, admittedRoot, allowSystemExecutable = false) {
+function canonicalRuntimeFile(filename, label, maximumBytes, allowSystemExecutable = false) {
   const opened = openRuntimeFile(
     filename,
     label,
     maximumBytes,
     false,
-    admittedRoot,
     fs.constants.O_RDONLY,
     allowSystemExecutable,
   )
   fs.closeSync(opened.descriptor)
   return opened.canonical
+}
+
+function exactRuntimeTracePath(input, traceRootInput, traceRoot) {
+  const admittedName = runtimeTraceNames
+    .find(name => sameLocalPath(path.join(traceRootInput, name), input))
+  if (admittedName === undefined) fail('runtime trace must use one exact admitted filename')
+  return path.join(traceRoot, admittedName)
+}
+
+function exactRuntimeBinaryPath(input, traceRoot) {
+  const binaryName = process.platform === 'win32' ? 'zigcss.exe' : 'zigcss'
+  const fixtureName = process.platform === 'win32' ? 'native-fixture.exe' : 'sh'
+  const localRelatives = [
+    ['direct', binaryName],
+    ['consumer', 'node_modules', 'zigcss', 'bin', binaryName],
+    [fixtureName],
+  ]
+  const localRelative = localRelatives.find(segments => sameLocalPath(
+    path.join(traceRoot, ...segments),
+    input,
+  ))
+  if (localRelative !== undefined) {
+    return Object.freeze({ path: path.join(traceRoot, ...localRelative), system: false })
+  }
+  const system = [...runtimeSystemExecutables].find(candidate => candidate === input)
+  if (process.platform !== 'darwin' || system === undefined) {
+    fail('runtime binary must use one exact admitted filename')
+  }
+  return Object.freeze({ path: system, system: true })
 }
 
 function installRuntimeTrace() {
@@ -913,23 +1037,36 @@ function installRuntimeTrace() {
   const traceInput = process.env.ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE
   const binaryInput = process.env.ZIGCSS_RELEASE_SMOKE_RUNTIME_BINARY
   if (typeof traceRootInput !== 'string') fail('runtime trace root is required')
-  const traceRoot = canonicalSmokeDirectory(traceRootInput, 'runtime trace root')
-  const openedTrace = openRuntimeFile(
-    traceInput,
-    'runtime trace',
-    maximumTraceBytes,
-    true,
-    traceRootInput,
-    fs.constants.O_RDWR | fs.constants.O_APPEND,
-  )
+  const traceDirectory = canonicalSmokeDirectory(traceRootInput, 'runtime trace root')
+  const traceRoot = traceDirectory.path
+  let openedTrace
+  let expectedBinary
+  try {
+    openedTrace = openRuntimeFile(
+      exactRuntimeTracePath(traceInput, traceRootInput, traceRoot),
+      'runtime trace',
+      maximumTraceBytes,
+      true,
+      fs.constants.O_RDWR | fs.constants.O_APPEND,
+    )
+    const admittedBinary = exactRuntimeBinaryPath(binaryInput, traceRoot)
+    expectedBinary = canonicalRuntimeFile(
+      admittedBinary.path,
+      'runtime binary',
+      256 * 1024 * 1024,
+      admittedBinary.system,
+    )
+    const after = fs.lstatSync(traceRoot, { bigint: true })
+    if (!after.isDirectory() || !sameStableIdentity(traceDirectory.stat, after)) {
+      fail('runtime trace root changed during descriptor admission')
+    }
+  } catch (error) {
+    if (openedTrace !== undefined) fs.closeSync(openedTrace.descriptor)
+    throw error
+  } finally {
+    traceDirectory.handle.closeSync()
+  }
   const traceDescriptor = openedTrace.descriptor
-  const expectedBinary = canonicalRuntimeFile(
-    binaryInput,
-    'runtime binary',
-    256 * 1024 * 1024,
-    traceRootInput,
-    process.platform === 'darwin',
-  )
 
   let nativeSpawns = 0
   let networkAttempts = 0
@@ -981,12 +1118,13 @@ function installRuntimeTrace() {
   immutableFunction(childProcess, 'spawn', function tracedNativeSpawn(command, args, options) {
     let canonicalCommand
     try {
-      if (command !== expectedBinary) throw new Error('spawn command does not match the admitted binary')
+      if (!sameLocalPath(command, expectedBinary)) {
+        throw new Error('spawn command does not match the admitted binary')
+      }
       canonicalCommand = canonicalRuntimeFile(
         expectedBinary,
         'spawn command',
         256 * 1024 * 1024,
-        traceRoot,
         process.platform === 'darwin',
       )
     } catch {
@@ -1023,7 +1161,7 @@ function installRuntimeTrace() {
       && options.stdio.every(value => value === 'pipe')
     )
     if (
-      canonicalCommand !== expectedBinary
+      !sameLocalPath(canonicalCommand, expectedBinary)
       || nativeSpawns !== 0
       || !plainArgs
       || args.some(arg => typeof arg !== 'string' || arg.includes('\0'))

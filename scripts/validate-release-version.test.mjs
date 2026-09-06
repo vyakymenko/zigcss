@@ -1146,6 +1146,17 @@ No later stable identity is selected.
 
 ## [0.6.0] - 2026-08-18
 `), true)
+  assert.equal(unreleasedSectionHasMaterialChanges(`
+## [Unreleased]
+
+<!<!-- reserved for the next release -->-- material
+
+## [0.6.0] - 2026-08-18
+`), true)
+  assert.throws(
+    () => unreleasedSectionHasMaterialChanges('## [Unreleased]\n\n<!-- unterminated\n'),
+    /unterminated HTML comment/,
+  )
   assert.throws(
     () => unreleasedSectionHasMaterialChanges('## [Unreleased]\n\n## [Unreleased]\n'),
     /exactly one \[Unreleased\] section/,

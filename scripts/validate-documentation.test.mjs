@@ -144,6 +144,34 @@ test('documentation syntax tools cannot be redirected to attacker-controlled exe
   )
 })
 
+test('documentation validation rejects predictable executable paths below the OS temp directory', {
+  skip: process.platform === 'win32',
+}, t => {
+  const originalTmpDir = process.env.TMPDIR
+  const originalNvim = process.env.NVIM
+  const privateTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-doc-tool-root-'))
+  t.after(() => {
+    if (originalTmpDir === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = originalTmpDir
+    if (originalNvim === undefined) delete process.env.NVIM
+    else process.env.NVIM = originalNvim
+    fs.rmSync(privateTemp, { recursive: true, force: true })
+  })
+
+  process.env.TMPDIR = privateTemp
+  const predictable = path.join(privateTemp, 'nvim-0.11.7', 'bin', 'nvim')
+  fs.mkdirSync(path.dirname(predictable), { recursive: true })
+  fs.writeFileSync(predictable, '#!/bin/sh\nprintf "NVIM v0.11.7\\n"\n', { mode: 0o700 })
+  process.env.NVIM = predictable
+
+  assert.throws(
+    () => validateExecutableFences([
+      { source: 'fixture.md', startLine: 1, language: 'lua', content: 'return true' },
+    ], { cssModuleDocuments: [] }, repositoryRoot),
+    /finite admitted executable locations/,
+  )
+})
+
 test('every executable documentation fence passes its real syntax or compiler gate', () => {
   const summary = validateRepositoryDocumentation(repositoryRoot, { execute: true })
   assert.ok(summary.executableFences >= 40)

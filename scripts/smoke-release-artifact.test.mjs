@@ -168,6 +168,97 @@ test('release smoke preload rejects asset roots outside its finite fixture roots
   }
 })
 
+test('runtime binary admission uses the canonical root beneath a symlinked OS temp prefix', {
+  skip: process.platform === 'win32',
+}, () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-temp-alias-'))
+  try {
+    const realTemporary = path.join(parent, 'real')
+    const linkedTemporary = path.join(parent, 'linked')
+    fs.mkdirSync(realTemporary, { mode: 0o700 })
+    fs.symlinkSync(realTemporary, linkedTemporary, 'dir')
+    const traceRoot = fs.mkdtempSync(path.join(linkedTemporary, 'zigcss-release-runtime-trace-'))
+    const canonicalTraceRoot = fs.realpathSync(traceRoot)
+    assert.notEqual(traceRoot, canonicalTraceRoot)
+
+    const archive = 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz'
+    const checksums = 'zigcss-v0.6.0-rc.2-aarch64-macos.sha256'
+    const trace = path.join(traceRoot, 'runtime-trace.jsonl')
+    const direct = path.join(traceRoot, 'direct')
+    fs.mkdirSync(direct, { mode: 0o700 })
+    const binary = path.join(direct, 'zigcss')
+    fs.writeFileSync(path.join(traceRoot, archive), 'archive fixture')
+    fs.writeFileSync(path.join(traceRoot, checksums), 'manifest fixture')
+    fs.writeFileSync(trace, '')
+    fs.writeFileSync(binary, 'finite canonical binary fixture\n', { mode: 0o700 })
+    const canonicalBinary = fs.realpathSync(binary)
+    assert.equal(canonicalBinary, path.join(canonicalTraceRoot, 'direct', 'zigcss'))
+
+    const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
+    const result = spawnSync(process.execPath, ['-e', ''], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+        TMPDIR: linkedTemporary,
+        ZIGCSS_RELEASE_SMOKE: '1',
+        ZIGCSS_RELEASE_SMOKE_ARCHIVE: archive,
+        ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: traceRoot,
+        ZIGCSS_RELEASE_SMOKE_CHECKSUMS: checksums,
+        ZIGCSS_RELEASE_SMOKE_RUNTIME: '1',
+        ZIGCSS_RELEASE_SMOKE_RUNTIME_BINARY: canonicalBinary,
+        ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE: trace,
+        ZIGCSS_RELEASE_SMOKE_RUNTIME_TRACE_ROOT: traceRoot,
+        ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.2',
+      },
+    })
+    assert.equal(result.error, undefined)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout, '')
+    const records = fs.readFileSync(trace, 'utf8').trimEnd().split('\n').map(line => JSON.parse(line))
+    assert.deepEqual(records.map(record => record.event), ['runtime-start', 'runtime-summary'])
+    assert.equal(records.at(-1).nativeSpawns, 0)
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('release preload reports only a finite lifecycle rejection stage', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-preload-'))
+  try {
+    const archive = 'zigcss-v0.6.0-rc.2-aarch64-macos.tar.gz'
+    const checksums = 'zigcss-v0.6.0-rc.2-aarch64-macos.sha256'
+    fs.writeFileSync(path.join(temporary, archive), 'archive fixture')
+    fs.writeFileSync(path.join(temporary, checksums), 'manifest fixture')
+    const preload = path.join(repositoryRoot, 'scripts', 'release-smoke-preload.cjs')
+    const env = {
+      ...process.env,
+      NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
+      ZIGCSS_PRIVATE_SENTINEL: 'must-not-appear-in-release-diagnostics',
+      ZIGCSS_RELEASE_SMOKE: '1',
+      ZIGCSS_RELEASE_SMOKE_ARCHIVE: archive,
+      ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: temporary,
+      ZIGCSS_RELEASE_SMOKE_CHECKSUMS: checksums,
+      ZIGCSS_RELEASE_SMOKE_VERSION: '0.6.0-rc.2',
+    }
+    delete env.npm_config_script_shell
+    const result = spawnSync(process.execPath, ['-e', [
+      "const childProcess = require('node:child_process')",
+      "try { childProcess.spawn(process.execPath, ['--version']) } catch (error) {",
+      "  if (error.code !== 'ZIGCSS_PROCESS_DISABLED') throw error",
+      '  process.exitCode = 1',
+      '}',
+    ].join('\n')], { encoding: 'utf8', env })
+    assert.equal(result.error, undefined)
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.equal(result.stderr, 'release smoke preload: lifecycle child rejected-shell\n')
+    assert.doesNotMatch(result.stderr, /must-not-appear-in-release-diagnostics/)
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})
+
 function archiveFilesystem({
   mode = 0o100755,
   resolved = '/usr/bin/tar',
@@ -837,9 +928,30 @@ test('npm lifecycle preload serves descriptor-admitted assets through Yarn PnP f
   }
 })
 
-test('npm lifecycle preload admits only one exact installer and its two trusted archive operations', t => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-lifecycle-'))
-  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }))
+function checkNpmLifecyclePaths(t, pathVariant) {
+  let temporaryBase = os.tmpdir()
+  const temporaryEnvironment = {}
+  if (pathVariant === 'OS path aliases' && process.platform !== 'win32') {
+    const aliasRoot = fs.mkdtempSync(path.join(temporaryBase, 'zigcss-release-lifecycle-alias-'))
+    t.after(() => fs.rmSync(aliasRoot, { recursive: true, force: true }))
+    const realRoot = path.join(aliasRoot, 'real')
+    const linkedRoot = path.join(aliasRoot, 'linked')
+    fs.mkdirSync(realRoot, { mode: 0o700 })
+    fs.symlinkSync(realRoot, linkedRoot, 'dir')
+    temporaryBase = linkedRoot
+    temporaryEnvironment.TMPDIR = linkedRoot
+  }
+  const createdTemporary = fs.mkdtempSync(path.join(temporaryBase, 'zigcss-release-lifecycle-'))
+  t.after(() => fs.rmSync(createdTemporary, { recursive: true, force: true }))
+  const canonicalTemporary = fs.realpathSync(createdTemporary)
+  const temporary = pathVariant === 'OS path aliases' && process.platform === 'win32'
+    ? canonicalTemporary.replace(/^[A-Za-z]/, letter => letter === letter.toUpperCase()
+      ? letter.toLowerCase()
+      : letter.toUpperCase())
+    : createdTemporary
+  if (pathVariant === 'OS path aliases') {
+    assert.notEqual(temporary, canonicalTemporary, 'fixture must exercise a real path alias')
+  }
   let descriptor
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
@@ -881,6 +993,7 @@ test('npm lifecycle preload admits only one exact installer and its two trusted 
   const npmCli = localNpmCliPath()
   const npmEnvironment = {
     ...process.env,
+    ...temporaryEnvironment,
     npm_config_audit: 'false',
     npm_config_cache: path.join(temporary, 'npm-cache'),
     npm_config_fund: 'false',
@@ -922,7 +1035,9 @@ test('npm lifecycle preload admits only one exact installer and its two trusted 
       ZIGCSS_RELEASE_SMOKE_ASSET_ROOT: releaseRoot,
       ZIGCSS_RELEASE_SMOKE_CHECKSUMS: descriptor.assets.checksums,
       ZIGCSS_RELEASE_SMOKE_VERSION: descriptor.version,
-      npm_config_script_shell: lifecycleShellExecutable(),
+      npm_config_script_shell: pathVariant === 'OS path aliases' && process.platform === 'win32'
+        ? lifecycleShellExecutable().toUpperCase()
+        : lifecycleShellExecutable(),
       PATH: `${shadowRoot}${path.delimiter}${npmEnvironment.PATH}`,
     },
     timeout: 30_000,
@@ -935,7 +1050,13 @@ test('npm lifecycle preload admits only one exact installer and its two trusted 
     crypto.createHash('sha256').update(fs.readFileSync(installedBinary)).digest('hex'),
     crypto.createHash('sha256').update(fs.readFileSync(binary)).digest('hex'),
   )
-})
+}
+
+for (const pathVariant of ['native paths', 'OS path aliases']) {
+  test(`npm lifecycle preload admits one exact installer and two archive operations with ${pathVariant}`, t => {
+    checkNpmLifecyclePaths(t, pathVariant)
+  })
+}
 
 test('development reference provider host installs a process-wide deny-network policy', () => {
   const policy = path.join(repositoryRoot, 'preprocessor', 'network-policy.mjs')

@@ -309,20 +309,83 @@ function outputFile(options, asset, label) {
 }
 
 function atomicWriteNewOrIdentical(filename, content, label) {
-  try {
-    const stat = fs.lstatSync(filename)
-    if (!stat.isFile() || stat.isSymbolicLink()) fail(`${label} must be a regular non-symlink file`)
-    if (stat.size > maximumMetadataBytes) fail(`${label} exceeds the metadata limit`)
-    if (fs.readFileSync(filename, 'utf8') === content) return
-    fail(`${label} already exists with different content`)
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error
+  const expected = Buffer.from(content, 'utf8')
+  if (expected.length > maximumMetadataBytes) fail(`${label} exceeds the metadata limit`)
+
+  function requireNamedDescriptorIdentity(opened) {
+    const named = fs.lstatSync(filename, { bigint: true })
+    if (!named.isFile() || named.isSymbolicLink()) {
+      fail(`${label} must be a regular non-symlink file`)
+    }
+    if (
+      named.dev !== opened.dev
+      || named.ino !== opened.ino
+      || named.mode !== opened.mode
+      || named.nlink !== opened.nlink
+      || named.size !== opened.size
+      || named.mtimeNs !== opened.mtimeNs
+      || named.ctimeNs !== opened.ctimeNs
+    ) {
+      fail(`${label} changed while it was read`)
+    }
   }
+
+  function existingFileIsIdentical() {
+    let descriptor
+    try {
+      descriptor = fs.openSync(filename, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
+    } catch (error) {
+      if (error.code === 'ENOENT') return false
+      if (error.code === 'ELOOP') fail(`${label} must be a regular non-symlink file`)
+      throw error
+    }
+
+    try {
+      const before = fs.fstatSync(descriptor, { bigint: true })
+      if (!before.isFile()) fail(`${label} must be a regular non-symlink file`)
+      requireNamedDescriptorIdentity(before)
+      if (before.size > BigInt(maximumMetadataBytes)) fail(`${label} exceeds the metadata limit`)
+      if (before.size !== BigInt(expected.length)) fail(`${label} already exists with different content`)
+
+      const actual = Buffer.allocUnsafe(expected.length)
+      let offset = 0
+      while (offset < actual.length) {
+        const count = fs.readSync(descriptor, actual, offset, actual.length - offset, offset)
+        if (count === 0) fail(`${label} changed while it was read`)
+        offset += count
+      }
+      const after = fs.fstatSync(descriptor, { bigint: true })
+      if (
+        before.dev !== after.dev
+        || before.ino !== after.ino
+        || before.mode !== after.mode
+        || before.nlink !== after.nlink
+        || before.size !== after.size
+        || before.mtimeNs !== after.mtimeNs
+        || before.ctimeNs !== after.ctimeNs
+      ) {
+        fail(`${label} changed while it was read`)
+      }
+      requireNamedDescriptorIdentity(after)
+      if (!actual.equals(expected)) fail(`${label} already exists with different content`)
+      return true
+    } finally {
+      fs.closeSync(descriptor)
+    }
+  }
+
+  if (existingFileIsIdentical()) return
 
   const temporary = `${filename}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`
   try {
-    fs.writeFileSync(temporary, content, { encoding: 'utf8', flag: 'wx', mode: 0o644 })
-    fs.renameSync(temporary, filename)
+    fs.writeFileSync(temporary, expected, { flag: 'wx', mode: 0o644 })
+    try {
+      fs.linkSync(temporary, filename)
+      if (!existingFileIsIdentical()) fail(`${label} disappeared during atomic creation`)
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      if (!existingFileIsIdentical()) fail(`${label} disappeared during atomic creation`)
+    }
   } finally {
     fs.rmSync(temporary, { force: true })
   }
@@ -1166,26 +1229,29 @@ function parseCliOptions(args) {
     '--commit',
     '--source-date-epoch',
   ])
-  const values = {}
+  const values = new Map()
   for (let index = 1; index < args.length; index += 2) {
     const name = args[index]
     const value = args[index + 1]
-    if (!allowed.has(name) || value === undefined || Object.hasOwn(values, name)) fail(`invalid or repeated option ${name}`)
-    values[name] = value
+    if (!allowed.has(name) || value === undefined || values.has(name)) {
+      fail(`invalid or repeated option ${JSON.stringify(name)}`)
+    }
+    values.set(name, value)
   }
-  if (Object.keys(values).length !== allowed.size) fail('release metadata command requires every closed option')
-  if (!/^(?:0|[1-9]\d*)$/.test(values['--source-date-epoch'])) fail('source date epoch must be a decimal integer')
+  if (values.size !== allowed.size) fail('release metadata command requires every closed option')
+  const sourceDateEpoch = values.get('--source-date-epoch')
+  if (!/^(?:0|[1-9]\d*)$/.test(sourceDateEpoch)) fail('source date epoch must be a decimal integer')
   return {
     mode,
     options: {
       root: repositoryRoot,
-      archive: values['--archive'],
-      binary: values['--binary'],
-      outputDirectory: values['--output-directory'],
-      target: values['--target'],
-      version: values['--version'],
-      commit: values['--commit'],
-      sourceDateEpoch: Number(values['--source-date-epoch']),
+      archive: values.get('--archive'),
+      binary: values.get('--binary'),
+      outputDirectory: values.get('--output-directory'),
+      target: values.get('--target'),
+      version: values.get('--version'),
+      commit: values.get('--commit'),
+      sourceDateEpoch: Number(sourceDateEpoch),
     },
   }
 }

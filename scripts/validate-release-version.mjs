@@ -330,10 +330,31 @@ export function unreleasedSectionHasMaterialChanges(changelog) {
 
   const remainder = changelog.slice(headings[0].index + headings[0][0].length)
   const nextReleaseHeading = remainder.search(/^## (?!#)/m)
-  const section = (nextReleaseHeading === -1 ? remainder : remainder.slice(0, nextReleaseHeading))
-    .replace(/<!--[\s\S]*?-->/g, '')
+  const section = nextReleaseHeading === -1 ? remainder : remainder.slice(0, nextReleaseHeading)
+  let insideComment = false
+  const visibleLines = section.split('\n').map(line => {
+    let visible = ''
+    for (let index = 0; index < line.length;) {
+      if (insideComment) {
+        if (line.startsWith('-->', index)) {
+          insideComment = false
+          index += 3
+        } else {
+          index += 1
+        }
+      } else if (line.startsWith('<!--', index)) {
+        insideComment = true
+        index += 4
+      } else {
+        visible += line[index]
+        index += 1
+      }
+    }
+    return visible
+  })
+  if (insideComment) fail('CHANGELOG.md [Unreleased] contains an unterminated HTML comment')
 
-  return section.split('\n').some(line => {
+  return visibleLines.some(line => {
     const normalized = line.trim()
     if (normalized === '' || /^###(?:\s|$)/.test(normalized)) return false
     return !emptyUnreleasedMarkers.has(normalized)

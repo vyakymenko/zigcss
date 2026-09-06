@@ -33,7 +33,7 @@ const cleanAuditReport = Object.freeze({
   }),
 })
 
-const auditEndpoint = 'https://registry.example.test/-/npm/v1/security/advisories/bulk'
+const auditEndpoint = 'https://registry.npmjs.org/-/npm/v1/security/advisories/bulk'
 const transientAuditReport = Object.freeze({
   message: `network timeout at: ${auditEndpoint}`,
   method: 'POST',
@@ -63,6 +63,9 @@ test('production and development audits have distinct fail-closed scopes', () =>
     '--package-lock-only',
     '--audit-level=high',
     '--json',
+    '--registry=https://registry.npmjs.org',
+    '--fetch-retries=0',
+    '--fetch-timeout=20000',
   ])
   assert.deepEqual(
     auditArguments(developmentDependencySurface, { omitDevelopment: false }),
@@ -75,6 +78,9 @@ test('production and development audits have distinct fail-closed scopes', () =>
       '--package-lock-only',
       '--audit-level=high',
       '--json',
+      '--registry=https://registry.npmjs.org',
+      '--fetch-retries=0',
+      '--fetch-timeout=20000',
     ],
   )
 
@@ -136,10 +142,13 @@ test('documentation and VS Code build graphs lock the reviewed advisory fixes', 
   )
 })
 
-test('audit environment removes ambient dependency-scope overrides case-insensitively', () => {
+test('audit environment removes ambient scope, registry, and transport overrides case-insensitively', () => {
   const sanitized = auditEnvironment({
     PATH: '/usr/bin',
     npm_config_registry: 'https://registry.example.test',
+    NPM_CONFIG_REGISTRY: 'https://registry.example.test/other',
+    npm_CONFIG_fetch_retries: '100',
+    NpM_cOnFiG_fEtCh_TiMeOuT: '3600000',
     npm_config_omit: 'dev optional',
     NPM_CONFIG_INCLUDE: 'dev',
     Npm_Config_Production: 'true',
@@ -153,7 +162,6 @@ test('audit environment removes ambient dependency-scope overrides case-insensit
 
   assert.deepEqual(sanitized, {
     PATH: '/usr/bin',
-    npm_config_registry: 'https://registry.example.test',
     no_color: '0',
     NO_COLOR: '1',
   })
@@ -167,6 +175,9 @@ test('audit environment removes ambient dependency-scope overrides case-insensit
       'npm_config_optional',
       'npm_config_peer',
       'npm_config_production',
+      'npm_config_registry',
+      'npm_config_fetch_retries',
+      'npm_config_fetch_timeout',
     ].includes(name.toLowerCase())),
     false,
   )
@@ -266,7 +277,9 @@ test('audit execution retries one bounded timeout and then validates the report'
     timeoutMilliseconds: 90_000,
   })
   const invocations = []
+  const retries = []
   const counts = runAudit(dependencySurfaces[1], '/fixture/repository', {
+    onRetry: retry => retries.push(retry),
     spawn(command, args, options) {
       invocations.push({ command, args, options })
       if (invocations.length === 1) {
@@ -278,11 +291,13 @@ test('audit execution retries one bounded timeout and then validates the report'
 
   assert.deepEqual(counts, cleanAuditReport.metadata.vulnerabilities)
   assert.equal(invocations.length, 2)
+  assert.deepEqual(retries, [{ attempt: 1, reason: 'process-timeout' }])
   for (const invocation of invocations) {
     assert.equal(invocation.command, 'npm')
     assert.deepEqual(invocation.args, auditArguments(dependencySurfaces[1]))
     assert.equal(invocation.options.cwd, '/fixture/repository')
     assert.equal(invocation.options.timeout, auditExecutionPolicy.timeoutMilliseconds)
+    assert.equal(invocation.options.killSignal, 'SIGKILL')
     assert.equal(invocation.options.maxBuffer, 16 * 1024 * 1024)
   }
 })
@@ -333,6 +348,10 @@ test('audit execution retries only structured transient npm endpoint failures', 
   for (const terminal of [
     { ...transientAuditReport, message: 'authentication required', statusCode: 401 },
     { ...transientAuditReport, uri: 'https://registry.example.test/not-the-audit-endpoint', statusCode: 503 },
+    { ...transientAuditReport, uri: 'https://registry.example.test/-/npm/v1/security/advisories/bulk', statusCode: 503 },
+    { ...transientAuditReport, uri: 'http://registry.npmjs.org/-/npm/v1/security/advisories/bulk', statusCode: 503 },
+    { ...transientAuditReport, uri: `${auditEndpoint}?token=private`, statusCode: 503 },
+    { ...transientAuditReport, uri: 'https://user:private@registry.npmjs.org/-/npm/v1/security/advisories/bulk', statusCode: 503 },
   ]) {
     let attempts = 0
     assert.throws(
@@ -348,6 +367,39 @@ test('audit execution retries only structured transient npm endpoint failures', 
   }
 })
 
+test('audit retry diagnostics expose only bounded reason codes and attempt numbers', () => {
+  const retries = []
+  let invocations = 0
+  assert.throws(() => runAudit(dependencySurfaces[1], '/fixture/repository', {
+    onRetry: retry => retries.push(retry),
+    spawn() {
+      invocations += 1
+      return {
+        status: 1,
+        stdout: JSON.stringify({
+          ...transientAuditReport,
+          statusCode: 503,
+          message: 'private-token\nforged log line',
+        }),
+        stderr: 'private-token\nforged log line',
+      }
+    },
+  }), /could not reach the npm audit endpoint after 4 bounded attempts/)
+  assert.equal(invocations, 4)
+  assert.deepEqual(retries, [1, 2, 3, 4].map(attempt => ({ attempt, reason: 'http-503' })))
+  assert(retries.every(Object.isFrozen))
+
+  for (const result of [
+    { status: 1, stdout: '{private-token', stderr: 'private-token\nforged log line' },
+    { error: Object.assign(new Error('private-token\nforged log line'), { code: 'ENOENT' }) },
+  ]) {
+    assert.throws(() => runAudit(dependencySurfaces[0], '/fixture/repository', {
+      spawn: () => result,
+      onRetry: () => assert.fail('terminal failures must not retry'),
+    }), error => !error.message.includes('private-token') && !error.message.includes('\n'))
+  }
+})
+
 test('audit execution never retries non-timeout failures or invalid reports', () => {
   let executionFailures = 0
   assert.throws(
@@ -357,7 +409,7 @@ test('audit execution never retries non-timeout failures or invalid reports', ()
         return { error: Object.assign(new Error('npm is unavailable'), { code: 'ENOENT' }) }
       },
     }),
-    /root npm package audit failed to run after 1 attempt: npm is unavailable/,
+    /root npm package audit failed to run after 1 attempt: process-execution-failure/,
   )
   assert.equal(executionFailures, 1)
 

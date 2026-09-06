@@ -6,13 +6,14 @@ import {
 } from '../../../preprocessor/protocol.mjs'
 import { sanitizeRuntimeEnvironment } from '../../../preprocessor/environment.mjs'
 
-const mode = process.argv[2]
 process.env = sanitizeRuntimeEnvironment()
 
-if (mode === 'hang') {
+async function hang() {
   process.stdin.resume()
   setInterval(() => {}, 1000)
-} else if (mode === 'flood') {
+}
+
+async function flood() {
   process.stdin.resume()
   const chunk = Buffer.alloc(64 * 1024, 120)
   const write = () => {
@@ -20,9 +21,13 @@ if (mode === 'hang') {
     setImmediate(write)
   }
   write()
-} else if (mode === 'exit') {
+}
+
+async function exit() {
   process.exit(7)
-} else {
+}
+
+async function respond(mode) {
   const chunks = []
   for await (const chunk of process.stdin) chunks.push(chunk)
   const input = Buffer.concat(chunks)
@@ -54,3 +59,19 @@ if (mode === 'hang') {
     else process.stdout.end(response)
   }
 }
+
+const behaviors = new Map([
+  ['environment', () => respond('environment')],
+  ['exit', exit],
+  ['extra', () => respond('extra')],
+  ['flood', flood],
+  ['hang', hang],
+  ['malformed', () => respond('malformed')],
+  ['stderr', () => respond('stderr')],
+  ['success', () => respond('success')],
+  ['wrong-id', () => respond('wrong-id')],
+])
+const behavior = behaviors.get(process.argv[2]) ?? (() => {
+  throw new Error('fixture behavior must be one exact admitted mode')
+})
+await behavior()

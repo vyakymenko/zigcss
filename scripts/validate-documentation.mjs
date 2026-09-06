@@ -569,7 +569,6 @@ function documentationNeovimCandidates() {
     'C:\\Program Files\\Neovim\\bin\\nvim.exe',
   ]
   for (const version of ['0.11.7', '0.12.4']) {
-    candidates.push(path.join(os.tmpdir(), `nvim-${version}`, 'bin', 'nvim'))
     candidates.push(`/home/runner/work/_temp/nvim-${version}/bin/nvim`)
   }
   return candidates

@@ -781,7 +781,7 @@ test('documentation deployment requires one successful same-repository main Buil
     "github.event.workflow_run.head_sha || github.sha",
     'github.sha',
   ))
-  assert.throws(() => validateWorkflowSources(wrongCommit), /exact successful Build commit/)
+  assert.throws(() => validateWorkflowSources(wrongCommit), /exact checked-out source SHA/)
 
   const credentialedCheckout = cloneSources()
   credentialedCheckout.set('docs.yml', credentialedCheckout.get('docs.yml').replace(
@@ -789,6 +789,16 @@ test('documentation deployment requires one successful same-repository main Buil
     '          persist-credentials: true',
   ))
   assert.throws(() => validateWorkflowSources(credentialedCheckout), /must not persist repository credentials/)
+
+  const dynamicCheckout = cloneSources()
+  dynamicCheckout.set('docs.yml', dynamicCheckout.get('docs.yml').replace(
+    '          persist-credentials: false\n',
+    '          persist-credentials: false\n          ref: ${{ github.event.workflow_run.head_sha }}\n',
+  ))
+  assert.throws(
+    () => validateWorkflowSources(dynamicCheckout),
+    /without an untrusted dynamic ref/,
+  )
 
   const missingRepositoryBoundary = cloneSources()
   missingRepositoryBoundary.set('docs.yml', missingRepositoryBoundary.get('docs.yml').replace(

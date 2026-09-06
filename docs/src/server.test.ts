@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -11,6 +11,7 @@ import {
   CONTAINER_CONTENT_SECURITY_POLICY,
   CONTAINER_PERMISSIONS_POLICY,
   createDocsServer,
+  MAX_STATIC_FILE_BYTES,
   META_CONTENT_SECURITY_POLICY,
   SECURITY_HEADERS,
 } from '../server.js'
@@ -35,7 +36,7 @@ describe('docs static server containment', () => {
   let server: Server
 
   beforeEach(async () => {
-    fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-server-test-'))
+    fixtureRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-server-test-')))
     distDir = path.join(fixtureRoot, 'dist')
     fs.mkdirSync(distDir)
     fs.writeFileSync(path.join(distDir, 'index.html'), '<h1>zigcss docs</h1>')
@@ -50,6 +51,7 @@ describe('docs static server containment', () => {
   })
 
   afterEach(async () => {
+    vi.restoreAllMocks()
     if (server?.listening) {
       await new Promise<void>((resolve, reject) => {
         server.close(error => error ? reject(error) : resolve())
@@ -109,6 +111,8 @@ describe('docs static server containment', () => {
     '/..%2fsecret.json',
     '/%2e%2e%2fsecret.json',
     '/%2e%2e%5csecret.json',
+    '/safe%2f..%2fsecret.json',
+    '/safe%5c..%5csecret.json',
     '/%2e%2e%2f%2e%2e%2fpackage.json',
     '/zigcss/%2e%2e%2fsecret.json',
   ])('rejects encoded traversal %s', async urlPath => {
@@ -125,6 +129,128 @@ describe('docs static server containment', () => {
 
     expect(response.status).toBe(403)
     expect(response.body).not.toContain('"secret":true')
+  })
+
+  test('rejects every request below a symlinked directory', async () => {
+    const outside = path.join(fixtureRoot, 'outside')
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(outside, 'nested.json'), '{"nestedSecret":true}')
+    fs.symlinkSync(outside, path.join(distDir, 'linked-directory'), process.platform === 'win32' ? 'junction' : 'dir')
+
+    const response = await request('/linked-directory/nested.json')
+
+    expect(response.status).toBe(403)
+    expect(response.body).not.toContain('nestedSecret')
+  })
+
+  test.each([
+    ['file', 'before'],
+    ['file', 'after'],
+    ['directory', 'before'],
+    ['directory', 'after'],
+  ] as const)('rejects a %s replacement %s the descriptor is opened', async (replacement, timing) => {
+    const directory = path.join(distDir, 'assets')
+    const outside = path.join(fixtureRoot, 'outside')
+    fs.mkdirSync(directory)
+    fs.mkdirSync(outside)
+    const asset = path.join(directory, 'race.json')
+    fs.writeFileSync(asset, '{"public":true}')
+    fs.writeFileSync(path.join(outside, 'race.json'), '{"externalSecret":true}')
+
+    const originalOpen = fs.openSync.bind(fs)
+    let replaced = false
+    let opened: number | undefined
+    const replace = () => {
+      if (replacement === 'file') {
+        fs.renameSync(asset, path.join(directory, 'original.json'))
+        fs.symlinkSync(path.join(outside, 'race.json'), asset)
+      } else {
+        fs.renameSync(directory, path.join(distDir, 'original-assets'))
+        fs.symlinkSync(outside, directory, process.platform === 'win32' ? 'junction' : 'dir')
+      }
+    }
+    vi.spyOn(fs, 'openSync').mockImplementation((file, flags, mode) => {
+      if (file !== asset || replaced) return originalOpen(file, flags, mode)
+      replaced = true
+      if (timing === 'before') replace()
+      opened = originalOpen(file, flags, mode)
+      if (timing === 'after') replace()
+      return opened
+    })
+
+    const response = await request('/assets/race.json')
+
+    expect(replaced).toBe(true)
+    expect(response.status).toBe(403)
+    expect(response.body).not.toContain('externalSecret')
+    expect(response.headers['cache-control']).toBe('no-store')
+    if (opened !== undefined)
+      expect(() => fs.fstatSync(opened!)).toThrow(expect.objectContaining({ code: 'EBADF' }))
+  })
+
+  test('rejects a parent directory replaced during inventory construction', async () => {
+    const directory = path.join(distDir, 'assets')
+    const outside = path.join(fixtureRoot, 'outside')
+    fs.mkdirSync(directory)
+    fs.mkdirSync(outside)
+    const asset = path.join(directory, 'race.json')
+    fs.writeFileSync(asset, '{"public":true}')
+    fs.writeFileSync(path.join(outside, 'race.json'), '{"externalSecret":true}')
+    const originalRealpath = fs.realpathSync.bind(fs)
+    let replaced = false
+    vi.spyOn(fs, 'realpathSync').mockImplementation((file, options) => {
+      const canonical = originalRealpath(file, options)
+      if (file === asset && !replaced) {
+        replaced = true
+        fs.renameSync(directory, path.join(distDir, 'original-assets'))
+        fs.symlinkSync(outside, directory, process.platform === 'win32' ? 'junction' : 'dir')
+      }
+      return canonical
+    })
+
+    const response = await request('/assets/race.json')
+
+    expect(replaced).toBe(true)
+    expect(response.status).toBe(403)
+    expect(response.body).not.toContain('externalSecret')
+  })
+
+  test.each(['truncate', 'grow', 'rewrite'] as const)('rejects a file that changes during its bounded read: %s', async mutation => {
+    const asset = path.join(distDir, 'app.css')
+    const originalRead = fs.readSync.bind(fs)
+    let changed = false
+    let opened: number | undefined
+    vi.spyOn(fs, 'readSync').mockImplementation((...args: Parameters<typeof fs.readSync>) => {
+      const count = originalRead(...args)
+      if (!changed) {
+        changed = true
+        opened = args[0]
+        if (mutation === 'truncate') fs.truncateSync(asset, 0)
+        else if (mutation === 'grow') fs.appendFileSync(asset, '/* changed */')
+        else fs.writeFileSync(asset, 'x'.repeat(fs.statSync(asset).size))
+      }
+      return count
+    })
+
+    const response = await request('/app.css')
+
+    expect(changed).toBe(true)
+    expect(response.status).toBe(403)
+    expect(response.body).toBe('Static file changed')
+    expect(() => fs.fstatSync(opened!)).toThrow(expect.objectContaining({ code: 'EBADF' }))
+  })
+
+  test('accepts empty assets and rejects oversized sparse files before allocating their contents', async () => {
+    fs.writeFileSync(path.join(distDir, 'empty.css'), '')
+    const asset = path.join(distDir, 'oversized.css')
+    fs.writeFileSync(asset, '')
+    fs.truncateSync(asset, MAX_STATIC_FILE_BYTES + 1)
+
+    const empty = await request('/empty.css')
+    const oversized = await request('/oversized.css')
+
+    expect(empty).toMatchObject({ status: 200, body: '', headers: { 'content-length': '0' } })
+    expect(oversized).toMatchObject({ status: 413, body: 'Static file too large' })
   })
 
   test('returns 400 for malformed URL encoding and keeps serving requests', async () => {

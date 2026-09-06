@@ -725,7 +725,11 @@ function child(command, args, options = {}) {
   })
   if (result.error !== undefined) fail(`${options.label ?? command} failed to start: ${result.error.message}`)
   if (result.status !== 0 || result.signal !== null) {
-    fail(`${options.label ?? command} failed: ${result.stderr || result.stdout || result.signal || `exit ${result.status}`}`)
+    const termination = result.signal === null ? `exit ${result.status}` : `signal ${result.signal}`
+    const output = [result.stderr, result.stdout]
+      .filter(value => typeof value === 'string' && value.trim().length > 0)
+      .join('\n')
+    fail(`${options.label ?? command} failed (${termination}): ${output || 'no child output'}`)
   }
   return result
 }

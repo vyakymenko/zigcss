@@ -74,6 +74,8 @@ The terminal invokes `scripts/smoke-public-delivery.mjs` directly rather than th
 
 After installation, the terminal requires the exact package and CLI version, bounded regular non-symlink files, an executable native binary, and fixed limits for time, process output, file count, and installed bytes. It compiles CSS, SCSS, indented Sass, Less, and Stylus through the installed CLI, then compiles all five inputs with both synchronous and asynchronous APIs through both CommonJS and ESM package resolution. A prerelease must also emit the exact release-candidate warning; a stable build must remain quiet.
 
+The same anonymous npm process also runs `npm audit signatures --json --include-attestations`. The verifier binds the installed lockfile to the exact canonical registry tarball and SHA-512, requires a verified registry signature and exactly the npm publish and SLSA v1 attestations, and rejects missing, invalid, or ambiguous results. The publication readback separately binds SLSA provenance to the repository, release workflow, tag, and exact release commit.
+
 This is deliberately a post-publication assertion, not permission to publish. Failure leaves the release run failed for investigation; it never authorizes moving or recreating a tag, overwriting a package version, or bypassing the next-version admission contract.
 
 ## Consumer behavior

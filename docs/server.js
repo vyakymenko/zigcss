@@ -56,7 +56,74 @@ class StaticRequestError extends Error {
   }
 }
 
-export function resolveStaticFile(distDir, urlPath) {
+export const MAX_STATIC_FILE_BYTES = 16 * 1024 * 1024
+const MAX_STATIC_ENTRIES = 4096
+const MAX_STATIC_DEPTH = 32
+
+function sameIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino &&
+    left.size === right.size && left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+}
+
+function requireStableDirectories(parents) {
+  for (const parent of parents) {
+    const current = fs.lstatSync(parent.file, { bigint: true })
+    if (!current.isDirectory() || current.isSymbolicLink() ||
+        !sameIdentity(parent.metadata, current)) {
+      throw new StaticRequestError(403, 'Static directory changed')
+    }
+  }
+}
+
+function staticInventory(root) {
+  const directories = new Set([''])
+  const files = new Map()
+  const forbidden = new Set()
+  let entryCount = 0
+
+  const visit = (directory, segments, parents) => {
+    if (segments.length > MAX_STATIC_DEPTH)
+      throw new StaticRequestError(500, 'Static inventory limit exceeded')
+    requireStableDirectories(parents)
+    const handle = fs.opendirSync(directory)
+    try {
+      for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+        if (++entryCount > MAX_STATIC_ENTRIES)
+          throw new StaticRequestError(500, 'Static inventory limit exceeded')
+        const entrySegments = [...segments, entry.name]
+        const route = entrySegments.join('/')
+        const entryPath = path.join(directory, entry.name)
+        const metadata = fs.lstatSync(entryPath, { bigint: true })
+        if (metadata.isSymbolicLink()) {
+          forbidden.add(route)
+        } else if (metadata.isDirectory()) {
+          directories.add(route)
+          visit(entryPath, entrySegments, [...parents, { file: entryPath, metadata }])
+        } else if (metadata.isFile()) {
+          const canonical = fs.realpathSync(entryPath)
+          const relative = path.relative(root, canonical)
+          if (
+            relative === '..' ||
+            relative.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relative)
+          ) {
+            throw new StaticRequestError(403, 'Forbidden')
+          }
+          files.set(route, { file: canonical, metadata, parents })
+        }
+      }
+    } finally {
+      handle.closeSync()
+    }
+    requireStableDirectories(parents)
+  }
+
+  visit(root, [], [{ file: root, metadata: fs.lstatSync(root, { bigint: true }) }])
+  return { directories, files, forbidden }
+}
+
+function requestedStaticRoute(urlPath) {
   let decodedPath
   try {
     decodedPath = decodeURIComponent(urlPath)
@@ -67,49 +134,80 @@ export function resolveStaticFile(distDir, urlPath) {
   if (decodedPath.includes('\0'))
     throw new StaticRequestError(400, 'Malformed URL path')
 
-  const root = fs.realpathSync(distDir)
   const mountedPath = decodedPath === PAGES_BASE_PATH
     ? '/'
     : decodedPath.startsWith(`${PAGES_BASE_PATH}/`)
       ? decodedPath.slice(PAGES_BASE_PATH.length)
       : decodedPath
-  const portablePath = mountedPath.replace(/\\/g, '/').replace(/^\/+/, '')
-  let candidate = path.resolve(root, portablePath)
+  const segments = mountedPath.replaceAll('\\', '/').split('/')
+  if (segments.includes('..')) throw new StaticRequestError(403, 'Forbidden')
+  return segments.filter(segment => segment !== '' && segment !== '.').join('/')
+}
 
-  const candidateRelative = path.relative(root, candidate)
-  if (
-    candidateRelative === '..' ||
-    candidateRelative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(candidateRelative)
-  )
+function resolveStaticEntry(distDir, urlPath) {
+  const root = fs.realpathSync(distDir)
+  const route = requestedStaticRoute(urlPath)
+  const inventory = staticInventory(root)
+  if ([...inventory.forbidden].some(prefix => route === prefix || route.startsWith(`${prefix}/`))) {
     throw new StaticRequestError(403, 'Forbidden')
+  }
 
-  if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory())
-    candidate = path.join(candidate, 'index.html')
+  let candidate = inventory.files.get(route)
+  if (candidate === undefined && inventory.directories.has(route)) {
+    candidate = inventory.files.get(route === '' ? 'index.html' : `${route}/index.html`)
+  }
 
   // Preserve the SPA fallback only for extensionless application routes.
   // A missing script, stylesheet, font, or image must never receive HTML.
-  if (!fs.existsSync(candidate) && path.extname(candidate) !== '')
+  if (candidate === undefined && path.posix.extname(route) !== '')
     throw new StaticRequestError(404, 'Not found')
-  if (!fs.existsSync(candidate))
-    candidate = path.join(root, 'index.html')
+  if (candidate === undefined)
+    candidate = inventory.files.get('index.html')
 
-  if (!fs.existsSync(candidate))
+  if (candidate === undefined)
     throw new StaticRequestError(404, 'Not found')
+  return { root, candidate }
+}
 
-  const realCandidate = fs.realpathSync(candidate)
-  const realRelative = path.relative(root, realCandidate)
-  if (
-    realRelative === '..' ||
-    realRelative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(realRelative)
-  )
-    throw new StaticRequestError(403, 'Forbidden')
+export function resolveStaticFile(distDir, urlPath) {
+  return resolveStaticEntry(distDir, urlPath).candidate.file
+}
 
-  if (!fs.statSync(realCandidate).isFile())
-    throw new StaticRequestError(404, 'Not found')
+function readStaticFile(candidate) {
+  requireStableDirectories(candidate.parents)
+  let descriptor
+  try {
+    descriptor = fs.openSync(candidate.file, fs.constants.O_RDONLY |
+      (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0))
+  } catch (error) {
+    if (error.code === 'ELOOP') throw new StaticRequestError(403, 'Forbidden')
+    throw error
+  }
 
-  return realCandidate
+  try {
+    // The inventory is only a pathname allowlist. Bind its identity to one
+    // descriptor before reading, and never reopen that pathname for delivery.
+    const opened = fs.fstatSync(descriptor, { bigint: true })
+    if (!opened.isFile() || !sameIdentity(candidate.metadata, opened))
+      throw new StaticRequestError(403, 'Static file changed')
+    if (opened.size > BigInt(MAX_STATIC_FILE_BYTES))
+      throw new StaticRequestError(413, 'Static file too large')
+    requireStableDirectories(candidate.parents)
+    const bytes = Buffer.alloc(Number(opened.size))
+    let offset = 0
+    while (offset < bytes.length) {
+      const count = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset)
+      if (count === 0) throw new StaticRequestError(403, 'Static file changed')
+      offset += count
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true })
+    if (!sameIdentity(opened, after))
+      throw new StaticRequestError(403, 'Static file changed')
+    requireStableDirectories(candidate.parents)
+    return bytes
+  } finally {
+    fs.closeSync(descriptor)
+  }
 }
 
 export function contentTypeFor(file) {
@@ -137,8 +235,13 @@ function serveStatic(req, res, urlPath, distDir) {
   }
 
   let fp
+  let root
+  let bytes
   try {
-    fp = resolveStaticFile(distDir, urlPath)
+    const resolved = resolveStaticEntry(distDir, urlPath)
+    fp = resolved.candidate.file
+    root = resolved.root
+    bytes = readStaticFile(resolved.candidate)
   } catch (error) {
     const status = error instanceof StaticRequestError ? error.status : 500
     const message = error instanceof StaticRequestError ? error.message : 'Static file error'
@@ -151,23 +254,10 @@ function serveStatic(req, res, urlPath, distDir) {
   }
 
   const mime = contentTypeFor(fp)
-  let stat
-  let root
-  try {
-    stat = fs.statSync(fp)
-    root = fs.realpathSync(distDir)
-  } catch {
-    res.writeHead(500, {
-      ...SECURITY_HEADERS,
-      'Cache-Control': 'no-store',
-      'Content-Type': 'text/plain; charset=utf-8',
-    })
-    return res.end('Static file error')
-  }
   const headers = {
     ...SECURITY_HEADERS,
     'Cache-Control': cacheControlFor(root, fp),
-    'Content-Length': stat.size,
+    'Content-Length': bytes.length,
     'Content-Type': mime,
   }
   if (req.method === 'HEAD') {
@@ -175,21 +265,8 @@ function serveStatic(req, res, urlPath, distDir) {
     return res.end()
   }
 
-  const stream = fs.createReadStream(fp)
-  stream.on('error', () => {
-    if (!res.headersSent) {
-      res.writeHead(500, {
-        ...SECURITY_HEADERS,
-        'Cache-Control': 'no-store',
-        'Content-Type': 'text/plain; charset=utf-8',
-      })
-      res.end('Static file error')
-    } else {
-      res.destroy()
-    }
-  })
   res.writeHead(200, headers)
-  stream.pipe(res)
+  res.end(bytes)
 }
 
 export function createDocsServer({ distDir = DIST_DIR } = {}) {

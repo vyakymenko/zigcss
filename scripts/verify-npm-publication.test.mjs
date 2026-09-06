@@ -8,6 +8,7 @@ import { npmPackageExecutableFiles } from './npm-package-artifact.mjs'
 import {
   downloadRegistryAttestations,
   npmPublicationReadbackPolicy,
+  sanitizeLogMessage,
   validateDownloadedNpmPackage,
   validateNpmAttestationReadback,
   validateNpmPublicationReadback,
@@ -167,6 +168,13 @@ const visibleDist = distSource(expected)
 const visibleAttestations = attestationFixture(version, expected)
 const stableTags = JSON.stringify({ latest: stableVersion, next: version })
 const stableDist = distSource(stableExpected)
+
+test('log sanitizer removes forged lines, terminal controls, and bounds diagnostics', () => {
+  const sanitized = sanitizeLogMessage('registry failed\r\n[success] forged\u2028next\u0000\u001b[31m')
+  assert.doesNotMatch(sanitized, /[\r\n\u2028\u2029\u0000-\u001f\u007f-\u009f]/u)
+  assert.match(sanitized, /^registry failed  \[success\] forged next  \[31m$/u)
+  assert.equal(sanitizeLogMessage('x'.repeat(4_096)).length, 2_048)
+})
 
 test('readback accepts exact version, tags, integrity, shasum, and canonical tarball URL', () => {
   assert.deepEqual(npmPublicationReadbackPolicy, { attempts: 12, delayMs: 5_000 })

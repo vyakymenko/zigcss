@@ -59,6 +59,7 @@ export const auditExecutionPolicy = Object.freeze({
   timeoutMilliseconds: 90_000,
 })
 
+const auditRegistry = 'https://registry.npmjs.org'
 const retryableAuditStatusCodes = new Set([408, 425, 429, 500, 502, 503, 504])
 const auditEndpointPath = '/-/npm/v1/security/advisories/bulk'
 
@@ -86,6 +87,9 @@ const ambientDependencyScopeKeys = new Set([
   'npm_config_optional',
   'npm_config_peer',
   'npm_config_production',
+  'npm_config_registry',
+  'npm_config_fetch_retries',
+  'npm_config_fetch_timeout',
 ])
 
 const ignoredDirectories = new Set([
@@ -372,7 +376,14 @@ export function auditArguments(surface, { omitDevelopment = true } = {}) {
   } else {
     args.push('--include=prod', '--include=dev', '--include=optional', '--include=peer')
   }
-  args.push('--package-lock-only', '--audit-level=high', '--json')
+  args.push(
+    '--package-lock-only',
+    '--audit-level=high',
+    '--json',
+    `--registry=${auditRegistry}`,
+    '--fetch-retries=0',
+    '--fetch-timeout=20000',
+  )
   return args
 }
 
@@ -386,13 +397,7 @@ export function auditEnvironment(environment = process.env) {
 }
 
 function isAuditEndpoint(uri) {
-  if (typeof uri !== 'string') return false
-  try {
-    const parsed = new URL(uri)
-    return ['http:', 'https:'].includes(parsed.protocol) && parsed.pathname.endsWith(auditEndpointPath)
-  } catch {
-    return false
-  }
+  return uri === `${auditRegistry}${auditEndpointPath}`
 }
 
 function isRetryableAuditEndpointFailure(result, report) {
@@ -427,7 +432,22 @@ export function resolveAuditInvocation(arguments_) {
   throw new Error('usage: node scripts/audit-production-dependencies.mjs --check|--audit|--audit-development [directory]')
 }
 
-export function runAudit(surface, root, { omitDevelopment = true, spawn = spawnSync } = {}) {
+function reportAuditRetry({ attempt, reason }) {
+  process.stderr.write(`Dependency audit attempt ${attempt}/${auditExecutionPolicy.maximumAttempts}: ${reason}\n`)
+}
+
+function auditRetryReason(result, report) {
+  if (result.error?.code === 'ETIMEDOUT') return 'process-timeout'
+  if (!isRetryableAuditEndpointFailure(result, report)) return null
+  if (retryableAuditStatusCodes.has(report.statusCode)) return `http-${report.statusCode}`
+  return 'endpoint-network-failure'
+}
+
+export function runAudit(surface, root, {
+  omitDevelopment = true,
+  spawn = spawnSync,
+  onRetry = reportAuditRetry,
+} = {}) {
   const args = auditArguments(surface, { omitDevelopment })
   for (let attempt = 1; attempt <= auditExecutionPolicy.maximumAttempts; attempt += 1) {
     const result = spawn('npm', args, {
@@ -436,6 +456,7 @@ export function runAudit(surface, root, { omitDevelopment = true, spawn = spawnS
       env: auditEnvironment(process.env),
       maxBuffer: 16 * 1024 * 1024,
       timeout: auditExecutionPolicy.timeoutMilliseconds,
+      killSignal: 'SIGKILL',
     })
 
     let report
@@ -454,17 +475,17 @@ export function runAudit(surface, root, { omitDevelopment = true, spawn = spawnS
       }
     }
 
-    const retryable = result.error?.code === 'ETIMEDOUT'
-      || isRetryableAuditEndpointFailure(result, report)
-    if (retryable && attempt < auditExecutionPolicy.maximumAttempts) continue
-    if (retryable) {
+    const retryReason = auditRetryReason(result, report)
+    if (retryReason !== null) onRetry(Object.freeze({ attempt, reason: retryReason }))
+    if (retryReason !== null && attempt < auditExecutionPolicy.maximumAttempts) continue
+    if (retryReason !== null) {
       fail(`${surface.label} audit could not reach the npm audit endpoint after ${attempt} bounded attempts`)
     }
     if (result.error) {
-      fail(`${surface.label} audit failed to run after ${attempt} attempt${attempt === 1 ? '' : 's'}: ${result.error.message}`)
+      fail(`${surface.label} audit failed to run after ${attempt} attempt${attempt === 1 ? '' : 's'}: process-execution-failure`)
     }
     if (reportParsingError !== undefined) {
-      fail(`${surface.label} audit returned invalid JSON (exit ${result.status}): ${reportParsingError.message}; ${String(result.stderr ?? '').trim()}`)
+      fail(`${surface.label} audit returned invalid JSON: invalid-audit-report`)
     }
     parseAuditReport(report, surface.label)
   }
