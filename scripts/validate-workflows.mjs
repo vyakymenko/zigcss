@@ -1787,8 +1787,38 @@ export function validateNativeIntegrityWorkflowContract(sources) {
   if (release.split(integrityGate).length !== 2) {
     fail('release.yml must verify every tag archive against the committed native integrity manifest')
   }
-  if (build.includes('node scripts/validate-native-integrity.mjs \\\n            --archive')) {
-    fail('build.yml must not compare unreleased development archives with published release digests')
+  const buildIntegrityGate = [
+    '      - name: Verify Candidate Native Integrity Before Admission',
+    '        shell: bash',
+    '        run: |',
+    '          set -euo pipefail',
+    '          phase="$(node -p "JSON.parse(require(\'node:fs\').readFileSync(\'release/next-release.json\', \'utf8\')).state")"',
+    '          case "$phase" in',
+    '            candidate-ready|closed)',
+    '              node scripts/validate-native-integrity.mjs \\',
+    '                --archive "release-assets/$RELEASE_ARCHIVE" \\',
+    '                --target "${{ matrix.target }}" \\',
+    '                --version "$RELEASE_VERSION"',
+    '              ;;',
+    '            planned|publication-failed)',
+    '              ;;',
+    '            *)',
+    "              printf 'unsupported release phase: %s\\n' \"$phase\" >&2",
+    '              exit 1',
+    '              ;;',
+    '          esac',
+  ].join('\n')
+  const buildJob = splitJobs(build, 'build.yml').get('build')?.join('\n')
+  if (typeof buildJob !== 'string' || build.split(buildIntegrityGate).length !== 2) {
+    fail('build.yml must verify every admitted native archive against committed integrity while preserving planned and failed phases')
+  }
+  const buildCreate = buildJob.indexOf('      - name: Create Native Smoke Archive\n')
+  const buildVerify = buildJob.indexOf(buildIntegrityGate)
+  const directArchiveHandoff = `            --source-date-epoch "$SOURCE_DATE_EPOCH"\n\n${buildIntegrityGate}`
+  const directMetadataHandoff = `${buildIntegrityGate}\n\n      - name: Generate Native Smoke Metadata\n`
+  if (buildCreate === -1 || buildVerify <= buildCreate
+    || !buildJob.includes(directArchiveHandoff) || !buildJob.includes(directMetadataHandoff)) {
+    fail('build.yml must verify admitted native archives immediately before generating metadata and provenance')
   }
   if (release.split('node scripts/validate-native-integrity.mjs').length !== 4) {
     fail('release.yml native integrity command inventory changed')
@@ -1801,7 +1831,7 @@ export function validateNativeIntegrityWorkflowContract(sources) {
   if (prepackCheck === -1 || npmPack <= prepackCheck) {
     fail('release.yml must validate committed native integrity before packing npm')
   }
-  if (build.split('node scripts/validate-native-integrity.mjs').length !== 4) {
+  if (build.split('node scripts/validate-native-integrity.mjs').length !== 5) {
     fail('build.yml native integrity command inventory changed')
   }
   if (`${build}\n${release}`.includes('validate-native-integrity.mjs --write')) {
@@ -1818,6 +1848,7 @@ export function validateNativeIntegrityWorkflowContract(sources) {
     fail('build.yml must test and check the native integrity policy exactly once')
   }
   return {
+    buildArchiveGates: 1,
     buildEpochReads: 2,
     releaseArchiveGates: 1,
     releaseEpochReads: 1,

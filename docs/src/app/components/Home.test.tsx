@@ -65,7 +65,7 @@ describe('Home', () => {
     expect(screen.getByRole('heading', { name: /pinned hosts\. same native binary/i })).toBeInTheDocument()
     const verifiedGates = nextRelease.gates.filter(gate => gate.state === 'verified').length
     const readiness = {
-      planned: '5/8 admission gates verified · candidateReady=false until seven pre-tag gates pass · stable remains 0.6.0',
+      planned: `${verifiedGates}/8 admission gates verified · candidateReady=false until seven pre-tag gates pass · stable remains 0.6.0`,
       'candidate-ready': '7/8 admission gates verified · candidateReady=true after seven pre-tag gates passed · stable remains 0.6.0',
       closed: '8/8 admission gates verified · candidateReady=false after immutable publication · stable remains 0.6.0',
       'publication-failed': `${verifiedGates}/8 admission gates verified · publication failed · candidateReady=false after failed publication · stable remains 0.6.0`,
@@ -77,8 +77,11 @@ describe('Home', () => {
     if (phase === 'publication-failed') {
       expect([5, 6, 7]).toContain(verifiedGates)
       expect(nextRelease.gates.at(-1)?.state).toBe('failed')
+    } else if (phase === 'planned') {
+      expect(verifiedGates).toBeGreaterThanOrEqual(1)
+      expect(verifiedGates).toBeLessThanOrEqual(5)
     } else {
-      expect(verifiedGates).toBe({ planned: 5, 'candidate-ready': 7, closed: 8 }[phase])
+      expect(verifiedGates).toBe({ 'candidate-ready': 7, closed: 8 }[phase])
     }
     expect(screen.getByText(readiness[phase], { exact: true })).toBeInTheDocument()
     const identities = {

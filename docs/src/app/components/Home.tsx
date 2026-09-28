@@ -252,8 +252,8 @@ function Deploy() {
             </div>
             <p className="mt-9 terminal-label">interfaces</p>
             <p className="mt-3 font-mono text-xs leading-6 text-[#a6b2a4]">CLI · JS wrapper · Zig API · helpers.addCssCompile · CSS LSP</p>
-            <p className="mt-9 terminal-label">0.7.0-rc.1 · failed release identity · do not reuse</p>
-            <p className="mt-3 font-mono text-xs leading-6 text-[#829080]">7/8 admission gates verified · publication failed · candidateReady=false after failed publication · stable remains 0.6.0</p>
+            <p className="mt-9 terminal-label">0.7.0-rc.2 · unpublished source proofs</p>
+            <p className="mt-3 font-mono text-xs leading-6 text-[#829080]">3/8 admission gates verified · candidateReady=false until seven pre-tag gates pass · stable remains 0.6.0</p>
             <h4 className="mt-3 text-lg font-semibold">Pinned hosts. Same native binary.</h4>
             <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.12em] text-[#829080]">direct adapters</p>
             <div className="mt-2 flex flex-wrap gap-2" aria-label="Direct current-source builder adapters">

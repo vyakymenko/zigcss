@@ -1,6 +1,6 @@
 {
   "name": "zigcss",
-  "version": "0.7.0-rc.1",
+  "version": "0.7.0-rc.2",
   "description": "Self-contained native CSS, SCSS, Sass, Less, and Stylus compiler written in Zig",
   "main": "api.cjs",
   "types": "api.d.ts",

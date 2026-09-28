@@ -165,15 +165,30 @@ function validateTarballUrl(value, version, filename) {
   return parsed.href
 }
 
+function validateExpectedNext(version, expectedNext) {
+  if (expectedNext === undefined) return undefined
+  const stable = parseReleaseVersion(version, 'stable npm publication version')
+  if (stable.prerelease !== null || stable.build !== null) {
+    fail('expected next tag may only be specified for a stable release')
+  }
+  const next = parseReleaseVersion(expectedNext, 'expected npm next version')
+  if (next.base !== stable.base || next.prerelease === null || next.build !== null) {
+    fail('expected next tag must be a prerelease of the same stable version')
+  }
+  return next.value
+}
+
 export function validateNpmPublicationReadback(
   version,
   versionSource,
   tagsSource,
   distSource,
   expectedPackage,
+  expectedNext,
 ) {
   const parsedVersion = parseReleaseVersion(version, 'npm publication version')
   const channel = parsedVersion.prerelease === null ? 'latest' : 'next'
+  const requiredNext = validateExpectedNext(version, expectedNext)
   const expected = validateExpectedPackage(expectedPackage, version)
 
   const publishedVersion = parseJson(versionSource, 'published version response')
@@ -205,6 +220,9 @@ export function validateNpmPublicationReadback(
     }
   } else if (!parsedTags.has('next') || parsedTags.get('next').prerelease === null) {
     fail('stable publication must retain a prerelease next tag')
+  }
+  if (requiredNext !== undefined && tags.next !== requiredNext) {
+    fail(`next tag must remain ${requiredNext}, received ${JSON.stringify(tags.next)}`)
   }
 
   const dist = parseJson(distSource, 'distribution metadata response')
@@ -730,6 +748,7 @@ export function validateDownloadedNpmPackage(localPackage, downloadedPackage) {
 
 export async function verifyNpmPublication(version, options = {}) {
   parseReleaseVersion(version, 'npm publication version')
+  const expectedNext = validateExpectedNext(version, options.expectedNext)
   const localPackage = options.localPackage ?? (
     typeof options.archive === 'string'
       ? inspectNpmPackageArchive(options.archive, version)
@@ -766,6 +785,7 @@ export async function verifyNpmPublication(version, options = {}) {
         response.tagsSource,
         response.distSource,
         localPackage,
+        expectedNext,
       )
       const attestationBytes = await downloadAttestations(
         result.attestationUrl,
@@ -795,23 +815,28 @@ export async function verifyNpmPublication(version, options = {}) {
 }
 
 function parseArgs(args) {
-  if (args.length !== 4) fail('usage: --version semver --archive absolute-path')
+  if (args.length !== 4 && args.length !== 6) {
+    fail('usage: --version semver --archive absolute-path [--expected-next prerelease-semver]')
+  }
   const values = new Map()
   for (let index = 0; index < args.length; index += 2) {
-    if (!['--version', '--archive'].includes(args[index]) || values.has(args[index]) || args[index + 1].length === 0) {
-      fail('usage: --version semver --archive absolute-path')
+    if (!['--version', '--archive', '--expected-next'].includes(args[index]) || values.has(args[index]) || !args[index + 1]) {
+      fail('usage: --version semver --archive absolute-path [--expected-next prerelease-semver]')
     }
     values.set(args[index], args[index + 1])
   }
   if (!values.has('--version') || !values.has('--archive')) {
-    fail('usage: --version semver --archive absolute-path')
+    fail('usage: --version semver --archive absolute-path [--expected-next prerelease-semver]')
   }
   return values
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
-  const result = await verifyNpmPublication(args.get('--version'), { archive: args.get('--archive') })
+  const result = await verifyNpmPublication(args.get('--version'), {
+    archive: args.get('--archive'),
+    expectedNext: args.get('--expected-next'),
+  })
   process.stdout.write(`npm publication verified: ${JSON.stringify({
     attempts: result.attempts,
     channel: result.channel,

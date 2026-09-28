@@ -207,6 +207,38 @@ test('readback accepts the exact stable version on latest while retaining next',
   )
 })
 
+test('stable readback can require the exact preceding prerelease on next', () => {
+  const promotedVersion = '0.7.0'
+  const precedingPrerelease = '0.7.0-rc.2'
+  const promotedPackage = packageFixture(promotedVersion)
+  const publishedVersion = JSON.stringify(promotedVersion)
+  const publishedDist = distSource(promotedPackage)
+  const readback = next => validateNpmPublicationReadback(
+    promotedVersion,
+    publishedVersion,
+    JSON.stringify({ latest: promotedVersion, next }),
+    publishedDist,
+    promotedPackage,
+    precedingPrerelease,
+  )
+
+  assert.equal(readback(precedingPrerelease).channel, 'latest')
+  assert.throws(() => readback('0.7.0-rc.1'), /next tag must remain 0\.7\.0-rc\.2/)
+  assert.throws(() => readback('0.6.0-rc.2'), /next tag must remain 0\.7\.0-rc\.2/)
+  assert.throws(
+    () => validateNpmPublicationReadback(
+      version, visibleVersion, visibleTags, visibleDist, expected, precedingPrerelease,
+    ),
+    /expected next tag may only be specified for a stable release/,
+  )
+  assert.throws(
+    () => validateNpmPublicationReadback(
+      promotedVersion, publishedVersion, stableTags, publishedDist, promotedPackage, '0.6.0-rc.2',
+    ),
+    /expected next tag must be a prerelease of the same stable version/,
+  )
+})
+
 test('readback rejects malformed, mismatched, wrong-channel, and unbounded responses', () => {
   const validate = (versionValue, tagsValue, distValue = visibleDist) => (
     validateNpmPublicationReadback(version, versionValue, tagsValue, distValue, expected)
@@ -656,6 +688,30 @@ test('verification retries bounded metadata and tarball propagation failures', a
     maximumBytes: 256 * 1024,
   }])
   assert.equal(inspections, 1)
+})
+
+test('stable verification passes its expected next identity through the retry loop', async () => {
+  const promotedVersion = '0.7.0'
+  const precedingPrerelease = '0.7.0-rc.2'
+  const promotedPackage = packageFixture(promotedVersion)
+  let downloads = 0
+  await assert.rejects(
+    verifyNpmPublication(promotedVersion, {
+      localPackage: promotedPackage,
+      commit,
+      expectedNext: precedingPrerelease,
+      attempts: 1,
+      delayMs: 0,
+      read: async () => ({
+        versionSource: JSON.stringify(promotedVersion),
+        tagsSource: JSON.stringify({ latest: promotedVersion, next: '0.7.0-rc.1' }),
+        distSource: distSource(promotedPackage),
+      }),
+      download: async () => { downloads += 1; throw new Error('unexpected download') },
+    }),
+    /next tag must remain 0\.7\.0-rc\.2/,
+  )
+  assert.equal(downloads, 0)
 })
 
 test('verification retries when downloaded registry bytes do not match', async () => {

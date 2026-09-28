@@ -22,7 +22,7 @@ function expectReleaseStatusCopy(contract: ReleaseStatusContract, guide: string)
       identity: openIdentity,
       interlock: 'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass',
       ready: false,
-      verified: 5,
+      verified: contract.gates.filter(gate => gate.state === 'verified').length,
     },
     'candidate-ready': {
       identity: openIdentity,
@@ -47,6 +47,10 @@ function expectReleaseStatusCopy(contract: ReleaseStatusContract, guide: string)
   const phase = phases[contract.state as keyof typeof phases]
   expect(contract.candidateReady).toBe(phase.ready)
   expect(contract.gates).toHaveLength(8)
+  if (contract.state === 'planned') {
+    expect(phase.verified).toBeGreaterThanOrEqual(1)
+    expect(phase.verified).toBeLessThanOrEqual(5)
+  }
   if (contract.state === 'publication-failed') expect([5, 6, 7]).toContain(phase.verified)
   expect(contract.gates.map(gate => gate.state)).toEqual(Array.from({ length: 8 }, (_, index) => (
     index < phase.verified ? 'verified' : index === 7 && contract.state === 'publication-failed' ? 'failed' : 'pending'
@@ -65,14 +69,14 @@ function expectReleaseStatusCopy(contract: ReleaseStatusContract, guide: string)
 
 test('status readiness assertions accept only the exact planned, admitted, or terminal phase', () => {
   for (const [state, ready, verified, identity, interlock] of [
-    ['planned', false, 5, 'Active source candidate 0.7.0-rc.1 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass'],
-    ['candidate-ready', true, 7, 'Active source candidate 0.7.0-rc.1 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed'],
-    ['closed', false, 8, 'ZigCSS 0.7.0-rc.1 is the published prerelease on npm `next`.', 'Its `candidateReady` interlock is `false` after immutable publication'],
+    ...[1, 2, 3, 4, 5].map(verified => ['planned', false, verified, 'Active source candidate 0.7.0-rc.2 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass'] as const),
+    ['candidate-ready', true, 7, 'Active source candidate 0.7.0-rc.2 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed'],
+    ['closed', false, 8, 'ZigCSS 0.7.0-rc.2 is the published prerelease on npm `next`.', 'Its `candidateReady` interlock is `false` after immutable publication'],
     ...[5, 6, 7].map(verified => ['publication-failed', false, verified, 'ZigCSS 0.7.0-rc.1 release attempt failed and the exact identity is permanently closed.', 'Its `candidateReady` interlock is `false` after the failed publication attempt'] as const),
   ] as const) {
     const contract = {
       state,
-      candidateVersion: '0.7.0-rc.1',
+      candidateVersion: state === 'publication-failed' ? '0.7.0-rc.1' : '0.7.0-rc.2',
       candidateReady: ready,
       gates: Array.from({ length: 8 }, (_, index) => ({ state: index < verified ? 'verified' : index === 7 && state === 'publication-failed' ? 'failed' : 'pending' })),
     }

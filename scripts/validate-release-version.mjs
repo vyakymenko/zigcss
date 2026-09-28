@@ -252,13 +252,10 @@ function validateNextReleasePhase(contract) {
   if (contract.state === 'planned') {
     expectEqual(contract.schemaVersion, 1, 'planned next release schemaVersion')
     expectEqual(contract.candidateReady, false, 'planned next release candidateReady')
-    expectEqual(verifiedGates, 5, 'planned next release verified gates')
+    if (verifiedGates < 1 || verifiedGates > 5) fail('planned next release verified gate count must be 1 through 5')
     expectEqual(publicationState, 'pending', 'planned next release publication gate')
-    for (const id of nextReleaseGateIds.slice(0, 5)) {
-      expectEqual(gateStates.get(id), 'verified', `planned next release ${id}`)
-    }
-    for (const id of nextReleaseGateIds.slice(5)) {
-      expectEqual(gateStates.get(id), 'pending', `planned next release ${id}`)
+    for (const [index, id] of nextReleaseGateIds.entries()) {
+      expectEqual(gateStates.get(id), index < verifiedGates ? 'verified' : 'pending', `planned next release ${id}`)
     }
   } else if (contract.state === 'candidate-ready') {
     expectEqual(contract.schemaVersion, 1, 'candidate-ready next release schemaVersion')
@@ -442,7 +439,7 @@ export function validateReleaseSources(sources) {
   }
   expectEqual(nextRelease.ownerPackage, 'REL-011', 'planned release owner package')
   expectEqual(nextRelease.releaseGapFamily, 'next-release-candidate', 'planned release family')
-  expectEqual(nextRelease.candidateVersion, '0.7.0-rc.1', 'planned release candidate version')
+  expectEqual(nextRelease.candidateVersion, '0.7.0-rc.2', 'planned release candidate version')
   expectEqual(nextRelease.candidateTag, `v${plannedCandidate.value}`, 'planned release candidate tag')
   if (plannedCandidate.prerelease === null || plannedCandidate.build !== null) {
     fail('planned release candidate must be a prerelease without build metadata')

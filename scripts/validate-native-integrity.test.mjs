@@ -6,6 +6,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { createReleaseArchive } from './create-release-archive.mjs'
 import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
 import {
   maximumArchiveBytes,
@@ -15,10 +16,13 @@ import {
   validateNativeIntegritySources,
   verifyNativeArchive,
 } from './validate-native-integrity.mjs'
+import { assertArtifactMatchesTarget } from './verify-artifact-target.mjs'
 
 const scriptPath = fileURLToPath(new URL('./validate-native-integrity.mjs', import.meta.url))
 const version = '0.7.0-rc.1'
 const sourceDateEpoch = 1_788_438_195
+const currentVersion = '0.7.0-rc.2'
+const currentSourceDateEpoch = 1_790_585_245
 const historicalStableVersion = '0.6.0'
 
 function sha256(bytes) {
@@ -72,8 +76,8 @@ test('committed manifest owns the exact five-target release inventory and stable
   const result = validateNativeIntegrity()
   assert.equal(result.schemaVersion, 1)
   assert.equal(result.package, 'zigcss')
-  assert.equal(result.version, version)
-  assert.equal(result.sourceDateEpoch, sourceDateEpoch)
+  assert.equal(result.version, currentVersion)
+  assert.equal(result.sourceDateEpoch, currentSourceDateEpoch)
   assert.deepEqual(result.archives.map(archive => archive.target), releaseTargets.map(target => target.target))
   assert.deepEqual(
     result.archives.map(archive => archive.filename),
@@ -83,47 +87,47 @@ test('committed manifest owns the exact five-target release inventory and stable
 })
 
 test('CLI is closed and prints only the manifest-owned epoch for the exact version', () => {
-  const archive = `release-assets/${releaseAssetsFor(version, 'aarch64-macos').archive}`
+  const archive = `release-assets/${releaseAssetsFor(currentVersion, 'aarch64-macos').archive}`
   assert.deepEqual(parseNativeIntegrityArguments(['--check']), { mode: 'check' })
   assert.deepEqual(
-    parseNativeIntegrityArguments(['--print-source-date-epoch', '--version', version]),
-    { mode: 'print-source-date-epoch', version },
+    parseNativeIntegrityArguments(['--print-source-date-epoch', '--version', currentVersion]),
+    { mode: 'print-source-date-epoch', version: currentVersion },
   )
   assert.deepEqual(parseNativeIntegrityArguments([
     '--target', 'aarch64-macos',
-    '--version', version,
+    '--version', currentVersion,
     '--archive', archive,
   ]), {
     mode: 'verify-archive',
     archive,
     target: 'aarch64-macos',
-    version,
+    version: currentVersion,
   })
 
   for (const args of [
     [],
     ['--check', '--extra'],
     ['--print-source-date-epoch'],
-    ['--version', version, '--print-source-date-epoch'],
+    ['--version', currentVersion, '--print-source-date-epoch'],
     ['--print-source-date-epoch', '--version', ''],
     ['--archive', 'a', '--target', 'x86_64-linux'],
-    ['--archive', 'a', '--archive', 'b', '--version', version],
-    ['--archive', 'a', '--target', 'x86_64-linux', '--unknown', version],
-    ['--archive', '--target', '--target', 'x86_64-linux', '--version', version],
+    ['--archive', 'a', '--archive', 'b', '--version', currentVersion],
+    ['--archive', 'a', '--target', 'x86_64-linux', '--unknown', currentVersion],
+    ['--archive', '--target', '--target', 'x86_64-linux', '--version', currentVersion],
   ]) {
     assert.throws(() => parseNativeIntegrityArguments(args), /native integrity:/)
   }
 
-  const printed = spawnSync(process.execPath, [scriptPath, '--print-source-date-epoch', '--version', version], {
+  const printed = spawnSync(process.execPath, [scriptPath, '--print-source-date-epoch', '--version', currentVersion], {
     encoding: 'utf8',
   })
   assert.equal(printed.status, 0, printed.stderr)
-  assert.equal(printed.stdout, `${sourceDateEpoch}\n`)
+  assert.equal(printed.stdout, `${currentSourceDateEpoch}\n`)
   assert.equal(printed.stderr, '')
 
   const checked = spawnSync(process.execPath, [scriptPath, '--check'], { encoding: 'utf8' })
   assert.equal(checked.status, 0, checked.stderr)
-  assert.equal(checked.stdout, `Native integrity verified: 5 archives for zigcss@${version}.\n`)
+  assert.equal(checked.stdout, `Native integrity verified: 5 archives for zigcss@${currentVersion}.\n`)
   assert.equal(checked.stderr, '')
 
   const extra = spawnSync(process.execPath, [scriptPath, '--check', '--extra'], { encoding: 'utf8' })
@@ -136,7 +140,30 @@ test('CLI is closed and prints only the manifest-owned epoch for the exact versi
     { encoding: 'utf8' },
   )
   assert.notEqual(wrongVersion.status, 0)
-  assert.match(wrongVersion.stderr, /requested version must be 0\.7\.0-rc\.1/)
+  assert.match(wrongVersion.stderr, /requested version must be 0\.7\.0-rc\.2/)
+})
+
+test('new canonical Windows archive with matching target and version cannot bypass the committed digest', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-native-windows-drift-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const binary = path.join(root, 'zigcss.exe')
+  const bytes = Buffer.alloc(256)
+  bytes.write('MZ', 0, 'ascii')
+  bytes.writeUInt32LE(0x40, 0x3c)
+  bytes.write('PE\0\0', 0x40, 'binary')
+  bytes.writeUInt16LE(0x8664, 0x44)
+  bytes.write(`zigcss ${currentVersion}`, 96, 'utf8')
+  assert.deepEqual(assertArtifactMatchesTarget(bytes, 'x86_64-windows'), { arch: 'x86_64', format: 'pe' })
+  fs.writeFileSync(binary, bytes)
+
+  const archive = path.join(root, releaseAssetsFor(currentVersion, 'x86_64-windows').archive)
+  createReleaseArchive({ binary, archive, sourceDateEpoch: currentSourceDateEpoch })
+  const committed = validateNativeIntegrity().archives.find(record => record.target === 'x86_64-windows')
+  assert.notEqual(sha256(fs.readFileSync(archive)), committed.sha256)
+  assert.throws(
+    () => verifyNativeArchive({ archive, target: 'x86_64-windows', version: currentVersion }),
+    /native archive SHA-256 does not match the committed digest for x86_64-windows/,
+  )
 })
 
 test('exact schema, package identity, version, epoch, inventory, filenames, and digests fail closed', t => {

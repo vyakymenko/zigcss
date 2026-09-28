@@ -21,7 +21,7 @@ import { expectedPackedFiles } from './validate-preprocessor-package.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const script = path.join(repositoryRoot, 'scripts', 'validate-release-admission.mjs')
-const candidateVersion = '0.7.0-rc.1'
+const candidateVersion = '0.7.0-rc.2'
 const candidateTag = `v${candidateVersion}`
 const commit = 'a'.repeat(40)
 const finalBuildRunId = 39_999_999_999
@@ -320,6 +320,27 @@ test('planned mutation fixtures are independent of admitted and terminal contrac
   }
 })
 
+test('planned candidate records new gates in order without borrowing prior release evidence', () => {
+  const stable = readStableReleaseContract()
+  for (let verified = 1; verified <= 5; verified += 1) {
+    const contract = plannedContract()
+    for (const gate of contract.gates.slice(verified, 5)) {
+      gate.state = 'pending'
+      gate.evidence = []
+    }
+    const result = validateNextReleaseContract(contract, candidateSources(candidateVersion), stable)
+    assert.equal(result.verifiedGates, verified)
+    assert.equal(result.state, 'planned')
+  }
+  const outOfOrder = plannedContract()
+  outOfOrder.gates[1].state = 'pending'
+  outOfOrder.gates[1].evidence = []
+  assert.throws(
+    () => validateNextReleaseContract(outOfOrder, candidateSources(candidateVersion), stable),
+    /planned candidate gates must become verified in order/,
+  )
+})
+
 test('refuses the exact planned tag until every pre-tag gate is explicitly verified', () => {
   assert.throws(
     () => validateReleaseAdmission(
@@ -408,9 +429,9 @@ test('admits only the ready exact candidate on the exact origin main commit', ()
       sources,
       historical,
       historicalSources,
-      { releaseTag: 'v0.7.0-rc.2', candidateCommit: commit, originMainCommit: commit },
+      { releaseTag: 'v0.7.0-rc.3', candidateCommit: commit, originMainCommit: commit },
     ),
-    /sole planned candidate v0\.7\.0-rc\.1/,
+    /sole planned candidate v0\.7\.0-rc\.2/,
   )
 })
 
@@ -784,7 +805,7 @@ test('closed publication evidence rejects shape, identity, channel, provenance, 
     contract => { contract.publicationEvidence.githubAssetInventorySha256 = 'B'.repeat(64) },
     contract => { contract.publicationEvidence.githubAssetInventorySha256 = '0'.repeat(64) },
     contract => { contract.publicationEvidence.assetsPerTarget = 4 },
-    contract => { contract.publicationEvidence.npmVersion = '0.7.0-rc.2' },
+    contract => { contract.publicationEvidence.npmVersion = '0.7.0-rc.3' },
     contract => { contract.publicationEvidence.npmDistTag = 'latest' },
     contract => { contract.publicationEvidence.npmLatest = candidateVersion },
     contract => { contract.publicationEvidence.npmNext = '0.6.0-rc.2' },
@@ -822,9 +843,9 @@ test('closed publication evidence rejects shape, identity, channel, provenance, 
   }
 })
 
-test('rejects every closed 0.6 tag before considering candidate readiness', () => {
+test('rejects published and failed historical tags before considering candidate readiness', () => {
   const contract = readyContract()
-  for (const releaseTag of ['v0.6.0-rc.2', 'v0.6.0', 'v0.5.9']) {
+  for (const releaseTag of ['v0.6.0-rc.2', 'v0.6.0', 'v0.7.0-rc.1', 'v0.5.9']) {
     assert.throws(
       () => validateReleaseAdmission(
         contract,
@@ -841,12 +862,16 @@ test('rejects every closed 0.6 tag before considering candidate readiness', () =
 
 test('rejects candidate identity, closed history, approval policy, and gate-policy drift', () => {
   for (const mutate of [
-    contract => { contract.candidateVersion = '0.7.0-rc.2' },
+    contract => { contract.candidateVersion = '0.7.0-rc.3' },
     contract => { contract.candidateTag = 'v0.7.0' },
     contract => { contract.npmDistTag = 'latest' },
     contract => { contract.githubPrerelease = false },
     contract => { contract.closedHistory[1].commit = '0'.repeat(40) },
     contract => { contract.closedHistory[0].githubImmutable = true },
+    contract => { contract.failedHistory[0].tagCommit = '0'.repeat(40) },
+    contract => { contract.failedHistory[0].releaseRunId += 1 },
+    contract => { contract.failedHistory[0].githubSurface = 'immutable-published' },
+    contract => { contract.failedHistory = [] },
     contract => { contract.publicationApproval.environment = 'release' },
     contract => { contract.publicationApproval.environmentId += 1 },
     contract => { contract.publicationApproval.requiredReviewer.id += 1 },
@@ -984,10 +1009,10 @@ test('rejects incomplete, divergent, or unbounded active source inputs', () => {
   assert.throws(
     () => validateNextReleaseContract(
       plannedContract(),
-      candidateSources('0.7.0-rc.2'),
+      candidateSources('0.7.0-rc.3'),
       readStableReleaseContract(),
     ),
-    /active source version must remain 0\.6\.0 or advance exactly to 0\.7\.0-rc\.1/,
+    /active source version must remain 0\.6\.0 or advance exactly to 0\.7\.0-rc\.2/,
   )
 })
 
@@ -999,7 +1024,7 @@ test('publication-ready state requires synchronized candidate package and integr
       candidateSources('0.6.0'),
       readStableReleaseContract(),
     ),
-    /candidate-ready active version must be "0\.7\.0-rc\.1"/,
+    /candidate-ready active version must be "0\.7\.0-rc\.2"/,
   )
 
   assert.throws(
@@ -1008,7 +1033,7 @@ test('publication-ready state requires synchronized candidate package and integr
       candidateSources('0.6.0'),
       readStableReleaseContract(),
     ),
-    /closed active version must be "0\.7\.0-rc\.1"/,
+    /closed active version must be "0\.7\.0-rc\.2"/,
   )
 
   const mismatched = candidateSources(candidateVersion)
@@ -1017,7 +1042,7 @@ test('publication-ready state requires synchronized candidate package and integr
   mismatched.set('native-integrity.json', `${JSON.stringify(integrity, null, 2)}\n`)
   assert.throws(
     () => validateNextReleaseContract(contract, mismatched, readStableReleaseContract()),
-    /manifest version must be 0\.7\.0-rc\.1/,
+    /manifest version must be 0\.7\.0-rc\.2/,
   )
 })
 

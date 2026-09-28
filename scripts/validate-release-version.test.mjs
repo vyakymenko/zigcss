@@ -15,7 +15,7 @@ import {
   validateReleaseVersion,
 } from './validate-release-version.mjs'
 
-const activeVersion = '0.7.0-rc.1'
+const activeVersion = '0.7.0-rc.2'
 const activeBaseVersion = '0.7.0'
 const publishedStableVersion = '0.6.0'
 const synchronizedSurfaceCount = 46
@@ -66,6 +66,10 @@ const closedNoUnpublishedPaths = Object.freeze([
 function cloneSources(currentSources = readReleaseSources()) {
   const sources = new Map(currentSources)
   const contract = JSON.parse(sources.get('release/next-release.json'))
+  const onDiskContract = JSON.parse(readReleaseSources().get('release/next-release.json'))
+  const plannedVerifiedGates = onDiskContract.state === 'planned'
+    ? onDiskContract.gates.filter(gate => gate.state === 'verified').length
+    : 5
   // Mutation fixtures start from planned source copy even after the real
   // checkout is admitted or a publication attempt fails before npm delivery.
   // Validate the real phase before rewinding it; the separate on-disk test
@@ -82,7 +86,7 @@ function cloneSources(currentSources = readReleaseSources()) {
   if (contract.state === 'candidate-ready') {
     contract.state = 'planned'
     contract.candidateReady = false
-    for (const gate of contract.gates.slice(5)) {
+    for (const gate of contract.gates.slice(plannedVerifiedGates)) {
       gate.state = 'pending'
       gate.evidence = []
     }
@@ -97,9 +101,9 @@ function cloneSources(currentSources = readReleaseSources()) {
       sources,
       'docs/src/content/docs/guide/status.md',
       '7 of 8 admission gates now carry recorded evidence',
-      '5 of 8 admission gates now carry recorded evidence',
+      `${plannedVerifiedGates} of 8 admission gates now carry recorded evidence`,
     )
-    replace(sources, 'docs/src/app/components/Home.tsx', '7/8 admission gates verified', '5/8 admission gates verified')
+    replace(sources, 'docs/src/app/components/Home.tsx', '7/8 admission gates verified', `${plannedVerifiedGates}/8 admission gates verified`)
     replace(sources, 'docs/src/app/components/Home.tsx', 'candidateReady=true after seven pre-tag gates passed', 'candidateReady=false until seven pre-tag gates pass')
     replace(
       sources,
@@ -213,17 +217,12 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
     [
       'docs/src/content/docs/guide/format-compatibility.md',
       `The ZigCSS source checkout from the failed ${activeVersion} release attempt compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths; its exact package identity is permanently closed and was not published.`,
-      `The ZigCSS ${activeVersion} source candidate compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths; this candidate is not published.`,
+      `The current unpublished ${activeVersion} source checkout compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
     ],
     [
       'docs/src/content/docs/guide/recovery-cli.md',
       `The ZigCSS source checkout from the failed ${activeVersion} release attempt owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. Its exact package identity is permanently closed and was not published;`,
-      `The ZigCSS ${activeVersion} source-built candidate owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. It is not published;`,
-    ],
-    [
-      'NPM_PUBLISH.md',
-      '`release/next-release.json` records exact candidate',
-      '`release/next-release.json` selects exact candidate',
+      `The current unpublished ${activeVersion} source checkout owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. The package is not published yet;`,
     ],
     [
       'NPM_PUBLISH.md',
@@ -233,15 +232,8 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
   ]) {
     if (sources.get(filename).includes(failed)) replace(sources, filename, failed, planned)
   }
-  for (const [filename, incidentPrefix] of [
-    ['docs/src/content/docs/guide/status.md', '[Release run 34116379683](https://github.com/vyakymenko/zigcss/actions/runs/34116379683) '],
-    ['NPM_PUBLISH.md', 'Release run [34116379683](https://github.com/vyakymenko/zigcss/actions/runs/34116379683) '],
-    ['CHANGELOG.md', 'Release run [34116379683](https://github.com/vyakymenko/zigcss/actions/runs/34116379683) '],
-  ]) {
-    const paragraphs = sources.get(filename).split('\n\n')
-    assert.ok(paragraphs.filter(paragraph => paragraph.startsWith(incidentPrefix)).length <= 1)
-    sources.set(filename, paragraphs.filter(paragraph => !paragraph.startsWith(incidentPrefix)).join('\n\n'))
-  }
+  // The rc.1 incident belongs to the permanent historical record in every
+  // rc.2 fixture, including after a separate rc.2 publication failure.
 }
 
 function replace(sources, filename, current, replacement) {
@@ -269,6 +261,12 @@ function injectCopyProbe(sources, filename, value) {
     return
   }
   sources.set(filename, `${sources.get(filename)}\n${value}\n`)
+}
+
+function changedSourcePaths(left, right) {
+  return [...new Set([...left.keys(), ...right.keys()])]
+    .filter(filename => left.get(filename) !== right.get(filename))
+    .sort()
 }
 
 function setActiveSourceVersion(sources, version) {
@@ -352,6 +350,8 @@ function setActiveSourceVersion(sources, version) {
 }
 
 function setCandidateReadyPhase(sources) {
+  const plannedVerifiedGates = JSON.parse(sources.get('release/next-release.json'))
+    .gates.filter(gate => gate.state === 'verified').length
   mutateJson(sources, 'release/next-release.json', contract => {
     contract.state = 'candidate-ready'
     contract.candidateReady = true
@@ -369,13 +369,13 @@ function setCandidateReadyPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/status.md',
-    '5 of 8 admission gates now carry recorded evidence',
+    `${plannedVerifiedGates} of 8 admission gates now carry recorded evidence`,
     '7 of 8 admission gates now carry recorded evidence',
   )
   replace(
     sources,
     'docs/src/app/components/Home.tsx',
-    '5/8 admission gates verified',
+    `${plannedVerifiedGates}/8 admission gates verified`,
     '7/8 admission gates verified',
   )
   replace(sources, 'docs/src/app/components/Home.tsx', 'candidateReady=false until seven pre-tag gates pass', 'candidateReady=true after seven pre-tag gates passed')
@@ -430,6 +430,12 @@ function setClosedPhase(sources) {
     'docs/src/content/docs/guide/status.md',
     'immutable npm `latest` version with SLSA provenance, preserved `next`, and anonymous five-syntax install',
     'immutable npm `latest` version with SLSA provenance and anonymous five-syntax install',
+  )
+  replace(
+    sources,
+    'docs/src/content/docs/guide/status.md',
+    'npm `latest` remained `0.6.0` and `next` remained `0.6.0-rc.2`.',
+    'npm latest was 0.6.0; the historical prerelease was 0.6.0-rc.2.',
   )
   replace(
     sources,
@@ -569,6 +575,18 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'NPM_PUBLISH.md',
+    'Stable `zigcss@0.6.0` remains on `latest` and historical `0.6.0-rc.2` remains on `next`.',
+    `Stable \`zigcss@${publishedStableVersion}\` remains on \`latest\`.\n\nHistorical \`0.6.0-rc.2\` remains available by its exact immutable version.`,
+  )
+  replace(
+    sources,
+    'NPM_PUBLISH.md',
+    'Historical readback confirmed that neither rc.1 release surface existed; `latest` remained `0.6.0` and `next` remained `0.6.0-rc.2`.',
+    'Historical readback confirmed that neither rc.1 release surface existed; its failed identity remains recorded separately from this publication.',
+  )
+  replace(
+    sources,
+    'NPM_PUBLISH.md',
     'The existing npm `next` tag remains bound to `0.6.0-rc.2`. Stable publication does not delete, overwrite, or republish that package, and it does not publish Homebrew, editor-extension, container, service, or other npm channels.',
     `Stable publication did not delete, overwrite, or republish the immutable \`0.6.0-rc.2\` package, and it did not publish Homebrew, editor-extension, container, service, or other npm channels.\n\nnpm \`next\` serves \`zigcss@${activeVersion}\`; npm \`latest\` remains \`zigcss@${publishedStableVersion}\`.`,
   )
@@ -615,7 +633,7 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/format-compatibility.md',
-    `The ZigCSS ${activeVersion} source candidate compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths; this candidate is not published.`,
+    `The current unpublished ${activeVersion} source checkout compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
     `ZigCSS ${activeVersion} prerelease is published on npm \`next\` and compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
   )
   replace(
@@ -633,7 +651,7 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/recovery-cli.md',
-    `The ZigCSS ${activeVersion} source-built candidate owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. It is not published;`,
+    `The current unpublished ${activeVersion} source checkout owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. The package is not published yet;`,
     `ZigCSS ${activeVersion} prerelease is published on npm \`next\` and owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus;`,
   )
   replace(
@@ -688,8 +706,8 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'CHANGELOG.md',
-    `Prerelease target \`${activeVersion}\` is candidate-ready with \`candidateReady: true\` after all seven pre-tag gates passed. Published stable identity remains immutable at \`${publishedStableVersion}\`.\n\n### Added`,
-    `## [${activeVersion}] - 2026-09-04\n\nReleased from protected tag \`v${activeVersion}\` as the first immutable GitHub Release and immutable \`zigcss@${activeVersion}\` on npm \`next\`.\n\n### Added`,
+    `## [Unreleased]\n\nNo later stable identity is selected.\n\nPrerelease target \`${activeVersion}\` is candidate-ready with \`candidateReady: true\` after all seven pre-tag gates passed. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
+    `## [Unreleased]\n\nNo later stable identity is selected.\n\n## [${activeVersion}] - 2026-09-04\n\nReleased from protected tag \`v${activeVersion}\` as the first immutable GitHub Release and immutable \`zigcss@${activeVersion}\` on npm \`next\`.`,
   )
 }
 
@@ -897,6 +915,7 @@ test('planned mutation fixtures remain independent of an admitted on-disk source
   const admittedSnapshot = new Map(admitted)
   const normalized = cloneSources(admitted)
 
+  assert.deepEqual(changedSourcePaths(normalized, planned), [], 'admitted fixture must return to the planned source bytes')
   assert.deepEqual(normalized, planned)
   assert.deepEqual(admitted, admittedSnapshot, 'fixture normalization must not mutate the admitted sources')
   assert.deepEqual(validateReleaseSources(normalized), validateReleaseSources(admitted))
@@ -919,7 +938,12 @@ test('planned fixtures normalize valid npm-absent failure phases without changin
       const failedSnapshot = new Map(failed)
       const normalized = cloneSources(failed)
 
-      assert.deepEqual(normalized, expectedNormalized, `${githubState}: ${verifiedPreTagGates} verified pre-tag gates`)
+      assert.deepEqual(
+        changedSourcePaths(normalized, expectedNormalized),
+        [],
+        `${githubState}: ${verifiedPreTagGates} verified pre-tag gates`,
+      )
+      assert.deepEqual(normalized, expectedNormalized)
       assert.deepEqual(failed, failedSnapshot, 'normalization must preserve the real failed sources and terminal evidence')
       assert.equal(normalized.get('README.md'), failed.get('README.md'), 'immutable README bytes cannot change')
       assert.deepEqual(validateReleaseSources(normalized), validateReleaseSources(failed))
@@ -1453,11 +1477,14 @@ test('active and closed published-stable documentation boundaries fail independe
   assert.throws(() => validateReleaseSources(missingStatusBoundary), /status guide active versus published version boundary/)
 
   const staleStatusGateProgress = cloneSources()
+  const plannedGateCount = JSON.parse(staleStatusGateProgress.get('release/next-release.json'))
+    .gates.filter(gate => gate.state === 'verified').length
+  assert.ok(plannedGateCount > 0)
   replace(
     staleStatusGateProgress,
     'docs/src/content/docs/guide/status.md',
-    '5 of 8 admission gates now carry recorded evidence',
-    '4 of 8 admission gates now carry recorded evidence',
+    `${plannedGateCount} of 8 admission gates now carry recorded evidence`,
+    `${plannedGateCount - 1} of 8 admission gates now carry recorded evidence`,
   )
   assert.throws(() => validateReleaseSources(staleStatusGateProgress), /status guide candidate gate progress/)
 
@@ -1465,8 +1492,8 @@ test('active and closed published-stable documentation boundaries fail independe
   replace(
     staleHomeGateProgress,
     'docs/src/app/components/Home.tsx',
-    '5/8 admission gates verified',
-    '4/8 admission gates verified',
+    `${plannedGateCount}/8 admission gates verified`,
+    `${plannedGateCount - 1}/8 admission gates verified`,
   )
   assert.throws(() => validateReleaseSources(staleHomeGateProgress), /home candidate gate progress/)
 

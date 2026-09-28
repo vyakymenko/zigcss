@@ -642,9 +642,10 @@ test('all four Zig setup placements use the repository-owned terminal and retain
   assert.throws(() => validateSetupZigAction(temporary), /missing integrity contract/)
 })
 
-test('native archives use one committed epoch and only tag releases enforce committed digests', () => {
+test('admitted Build archives and tag archives both match committed digests', () => {
   const sources = cloneSources()
   assert.deepEqual(validateNativeIntegrityWorkflowContract(sources), {
+    buildArchiveGates: 1,
     buildEpochReads: 2,
     releaseArchiveGates: 1,
     releaseEpochReads: 1,
@@ -690,18 +691,74 @@ test('native archives use one committed epoch and only tag releases enforce comm
     /native integrity command inventory|before packing npm/,
   )
 
-  const developmentDigestGate = cloneSources()
-  developmentDigestGate.set('build.yml', developmentDigestGate.get('build.yml').replace(
+  const missingBuildGate = cloneSources()
+  missingBuildGate.set('build.yml', missingBuildGate.get('build.yml').replace(
+    '      - name: Verify Candidate Native Integrity Before Admission',
+    '      - name: Removed Candidate Native Integrity Gate',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(missingBuildGate),
+    /verify every admitted native archive/,
+  )
+
+  const candidateSkipped = cloneSources()
+  candidateSkipped.set('build.yml', candidateSkipped.get('build.yml').replace(
+    '            candidate-ready|closed)',
+    '            closed)',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(candidateSkipped),
+    /verify every admitted native archive/,
+  )
+
+  const failedIdentityCompared = cloneSources()
+  failedIdentityCompared.set('build.yml', failedIdentityCompared.get('build.yml').replace(
+    '            candidate-ready|closed)',
+    '            candidate-ready|closed|publication-failed)',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(failedIdentityCompared),
+    /preserving planned and failed phases/,
+  )
+
+  const wrongTarget = cloneSources()
+  wrongTarget.set('build.yml', wrongTarget.get('build.yml').replace(
+    '                --target "${{ matrix.target }}" \\',
+    '                --target "x86_64-linux" \\',
+  ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(wrongTarget),
+    /verify every admitted native archive/,
+  )
+
+  const reorderedGate = cloneSources()
+  const reorderedSource = reorderedGate.get('build.yml')
+  const gateStart = reorderedSource.indexOf('      - name: Verify Candidate Native Integrity Before Admission\n')
+  const gateEnd = reorderedSource.indexOf('      - name: Generate Native Smoke Metadata\n', gateStart)
+  assert.ok(gateStart >= 0 && gateEnd > gateStart)
+  const gateStep = reorderedSource.slice(gateStart, gateEnd)
+  reorderedGate.set('build.yml', reorderedSource.slice(0, gateStart)
+    + reorderedSource.slice(gateEnd).replace(
+      '      - name: Smoke Native Archive and npm Installation\n',
+      `${gateStep}      - name: Smoke Native Archive and npm Installation\n`,
+    ))
+  assert.throws(
+    () => validateNativeIntegrityWorkflowContract(reorderedGate),
+    /immediately before generating metadata and provenance/,
+  )
+
+  const extraUnconditionalGate = cloneSources()
+  extraUnconditionalGate.set('build.yml', extraUnconditionalGate.get('build.yml').replace(
     '      - name: Generate Native Smoke Metadata',
-    '      - name: Development digest comparison\n'
+    '      - name: Unconditional digest comparison\n'
       + '        run: |\n'
       + '          node scripts/validate-native-integrity.mjs \\\n'
       + '            --archive "release-assets/$RELEASE_ARCHIVE"\n\n'
       + '      - name: Generate Native Smoke Metadata',
   ))
   assert.throws(
-    () => validateNativeIntegrityWorkflowContract(developmentDigestGate),
-    /must not compare unreleased development archives/,
+    () => validateNativeIntegrityWorkflowContract(extraUnconditionalGate),
+    /immediately before generating metadata and provenance|native integrity command inventory changed/,
   )
 
   const sameRunTrustData = cloneSources()

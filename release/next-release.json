@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 1,
   "ownerPackage": "REL-011",
   "releaseGapFamily": "next-release-candidate",
-  "state": "publication-failed",
+  "state": "planned",
   "candidateReady": false,
-  "candidateVersion": "0.7.0-rc.1",
-  "candidateTag": "v0.7.0-rc.1",
+  "candidateVersion": "0.7.0-rc.2",
+  "candidateTag": "v0.7.0-rc.2",
   "npmDistTag": "next",
   "githubPrerelease": true,
   "closedHistory": [
@@ -28,6 +28,19 @@
       "npmDistTag": "latest",
       "npmVersionImmutable": true,
       "githubPrerelease": false
+    }
+  ],
+  "failedHistory": [
+    {
+      "version": "0.7.0-rc.1",
+      "tag": "v0.7.0-rc.1",
+      "tagCommit": "5fe379306743ca752ae851f32fa38e6ff9502f2c",
+      "finalBuildRunId": 34112508917,
+      "releaseRunId": 34116379683,
+      "releaseConclusion": "failure",
+      "githubSurface": "absent",
+      "npmSurface": "absent",
+      "reason": "x86_64-windows native archive SHA-256 mismatch"
     }
   ],
   "publicationApproval": {
@@ -62,141 +75,74 @@
       "id": "candidate-selection",
       "state": "verified",
       "evidenceRequirements": [
-        "The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.1 was selected."
+        "The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.2 was selected; the failed v0.7.0-rc.1 identity remains permanently closed."
       ],
       "evidence": [
-        "Verified 2026-09-03: GitHub tag and release v0.7.0-rc.1 and npm zigcss@0.7.0-rc.1 were absent; npm latest remained 0.6.0 and next remained 0.6.0-rc.2."
+        "Verified 2026-09-28: GitHub tag and release v0.7.0-rc.2 and npm zigcss@0.7.0-rc.2 were absent; npm latest remained 0.6.0 and next remained 0.6.0-rc.2. The failed v0.7.0-rc.1 tag remains at 5fe379306743ca752ae851f32fa38e6ff9502f2c."
       ]
     },
     {
       "id": "version-synchronization",
       "state": "verified",
       "evidenceRequirements": [
-        "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.1."
+        "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.2."
       ],
       "evidence": [
-        "Exact version validation passed on 2026-09-04: all 46 active source surfaces agree on 0.7.0-rc.1 while closed published stable evidence remains 0.6.0."
+        "Verified 2026-09-28: npm run test:version passed 24/24 and npm run check:version confirmed 46 synchronized package, CLI, Zig, Docker, editor, lockfile, and current-source documentation surfaces for 0.7.0-rc.2."
       ]
     },
     {
       "id": "native-integrity",
       "state": "verified",
       "evidenceRequirements": [
-        "All five architecture-matched release archives reproduce the committed 0.7.0-rc.1 SHA-256 inventory."
+        "All five architecture-matched release archives reproduce the committed 0.7.0-rc.2 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission."
       ],
       "evidence": [
-        "Two builds from distinct absolute prefix, local-cache, and global-cache roots produced byte-identical ReleaseFast binaries and all five committed 0.7.0-rc.1 archive SHA-256 digests on 2026-09-03."
+        "Verified 2026-09-28: all five 0.7.0-rc.2 ReleaseFast native binaries and normalized archives were rebuilt twice independently with Zig 0.15.2 and matched byte-for-byte; the five archive SHA-256 values are committed in native-integrity.json. npm run test:native-integrity passed 13/13, npm run check:native-integrity passed, and Build checks candidate-ready archives against the committed inventory before metadata, smoke, or upload."
       ]
     },
     {
       "id": "local-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "The complete Debug, ReleaseSafe, package, consumer, builder, documentation, and audit gates pass for the candidate source."
       ],
-      "evidence": [
-        "Local validation passed on 2026-09-03: Debug and ReleaseSafe completed 1728/1728 tests each; the final combined Node suite completed 407/407 with no skips; package, consumer, builder, editor, dependency, container, and audit gates passed; exact Nix 2.35.2 completed sandboxed aarch64-linux flake check, build, install checks, and run.",
-        "Follow-up validation on 2026-09-07 passed 25/25 release smoke tests, reproduced and rejected the npm CRLF hashbang mutation, and passed real macOS archive installation plus 28/28 current-native Turbopack, Next.js Webpack, SvelteKit, Astro, Nuxt, and Parcel checks without skips. Candidate-ready transition regressions passed 19/19 version and 19/19 admission tests; hosted Windows confirmation remains required.",
-        "The second 2026-09-07 follow-up passed 26/26 release smoke tests and two real macOS native/npm smokes, including a tilde-containing temporary path; each recorded 15 native invocations and zero network attempts. All four builders passed 11/11 exact-current-compiler checks without skips. Bounded CI tool provisioning passed 72/72 workflow regressions; hosted Windows and Ubuntu confirmation remain required.",
-        "The Neovim follow-up on 2026-09-07 passed 6/6 policy tests under each pinned editor environment, including subprocess environment regressions, and real headless 0.11.7 and 0.12.4 capability, diagnostic, hover, rejection, and shutdown smokes. Another 218/218 wrapper, preprocessor, format, and benchmark fixture tests passed locally without skips; the exact new hosted Build remains required."
-      ]
+      "evidence": []
     },
     {
       "id": "documentation-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
       ],
-      "evidence": [
-        "Documentation validation passed on 2026-09-03: 228/228 tests, production, SEO, bundle, 33-file served-bundle, container, and desktop/mobile browser checks preserved the unpublished 0.7.0-rc.1 versus stable 0.6.0 identity boundary; after CodeQL and descriptor-bound static-server hardening, the 2026-09-06 rerun passed 246/246 tests, production, SEO, bundle, and the exact 33-file served-bundle gate.",
-        "The 2026-09-07 follow-up passed 247/247 documentation tests, production build, 11 SEO pages, 10 sitemap URLs, the 103.5 KiB gzip landing JavaScript budget, and exact delivery of all 33 served files; the builder guide documents private exact-lock cache preparation without claiming offline bootstrap.",
-        "The second 2026-09-07 follow-up repeated all 247/247 documentation tests, production build, SEO, bundle budget, and 33-file served-bundle checks after documenting explicit CI build-system provisioning and its networked distribution-package boundary."
-      ]
+      "evidence": []
     },
     {
       "id": "hosted-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "A recorded same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for a pre-admission checkpoint, with its run ID and completion time stored without a commit hash.",
         "Recorded default-setup CodeQL analysis covers the Actions, JavaScript/TypeScript, and Ruby categories for the pre-admission checkpoint with no error or warning status and zero open CodeQL alerts; tag admission revalidates Build and CodeQL against the exact runtime candidate commit."
       ],
-      "evidence": [
-        "Build run 34106675136 completed success for the pre-admission checkpoint at 2026-09-07T10:12:50Z; the Release workflow revalidates the exact runtime candidate commit.",
-        "CodeQL default setup passed for the pre-admission checkpoint at 2026-09-07T09:34:58Z: Actions, JavaScript/TypeScript, and Ruby; error=0; warning=0; open alerts=0; security-events: read; same commit Build and CodeQL are enforced for the exact runtime candidate commit by the Release workflow.",
-        "Final Build run 34112508917 attempt 1 passed all 12 jobs for exact tag commit 5fe379306743ca752ae851f32fa38e6ff9502f2c at 2026-09-07T11:14:49Z.",
-        "CodeQL default setup run 34112508925 passed for the same commit 5fe379306743ca752ae851f32fa38e6ff9502f2c at 2026-09-07T10:40:16Z with Actions, JavaScript/TypeScript, and Ruby analyses; error=0; warning=0; open alerts=0; security-events: read."
-      ]
+      "evidence": []
     },
     {
       "id": "origin-main-integration",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "Candidate-ready evidence stores no candidate commit hash; after that contract is committed, tag admission requires the peeled runtime candidate commit to equal a fresh exact origin/main readback.",
         "Repository ruleset 22261144 (`Protect release tags`) is re-read immediately before tag admission as active for the tag target including `refs/tags/v*`, with exact update and deletion rules, no bypass actors, and `current_user_can_bypass: never`.",
         "Before tag creation, the repository immutable-releases endpoint records enabled=true and enforced_by_owner=false through a live admin read; the create-release job then waits on the immutable-release environment until its required reviewer repeats that live read immediately before approval."
       ],
-      "evidence": [
-        "Candidate-ready policy records no commit hash; tag admission compares the peeled runtime candidate commit with a fresh origin/main readback.",
-        "Repository ruleset 22261144 Protect release tags read back active for target tag including refs/tags/v* with exact update and deletion rules, bypass_actors=[], current_user_can_bypass=never.",
-        "Repository immutable releases setting read back enabled=true and enforced_by_owner=false before tag creation at 2026-09-07T11:23:31Z; the immutable-release environment blocks create-release until its required reviewer repeats the live read immediately before approval.",
-        "The fresh origin/main readback and lightweight protected v0.7.0-rc.1 tag both resolved to 5fe379306743ca752ae851f32fa38e6ff9502f2c immediately before the tag push; remote tag identity was verified at 2026-09-07T11:23:33Z. The failed tag remains unchanged and permanently unavailable for another attempt."
-      ]
+      "evidence": []
     },
     {
       "id": "tag-workflow-publication",
-      "state": "failed",
+      "state": "pending",
       "evidenceRequirements": [
         "The protected tag workflow publishes the first repository GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next."
       ],
-      "evidence": [
-        "Release run 34116379683 attempt 1 ended with failure at 2026-09-07T11:27:17Z for tag commit 5fe379306743ca752ae851f32fa38e6ff9502f2c. GitHub surface absent; npm surface absent. The exact v0.7.0-rc.1 identity is permanently closed and must not be reused.",
-        "Windows job 101724146947 failed Verify Committed Native Integrity at 2026-09-07T11:25:56Z: the x86_64-windows archive SHA-256 did not match the committed digest. All four other target jobs passed. Create Release, Publish to npm, and Verify Anonymous Public Delivery were skipped; no environment approval was issued.",
-        "Authenticated GitHub release discovery returned null and canonical npm zigcss/0.7.0-rc.1 returned HTTP 404 at 2026-09-07T11:36:56Z. npm latest remained 0.6.0 and next remained 0.6.0-rc.2; remote v0.7.0-rc.1 still resolved to 5fe379306743ca752ae851f32fa38e6ff9502f2c.",
-        "Diagnosis: commit 939286cac2c03b08eac15c35d20ce1df38c322bc changed Windows runtime output handling after inventory commit 4497948. A fresh Zig 0.15.2 ReleaseFast cross-build reproduced the exact-tag Build Windows archive byte-for-byte: 3926170 bytes, SHA-256 db62cb322a4a4ef83100a8b57b956a98e8f56e132d9ff01bd8bbe6d81799034f. The prior 3925146-byte archive has committed SHA-256 b3e07178b744cec613fdd6a712101d6168c5c1a58ad1251e21f77a4076030ea6.",
-        "The failed Release Windows archive itself was not uploaded, so its actual digest is not asserted. The same-commit Build archive independently reproduces the integrity rejection. The deterministic ZIP encoder is not the cause; Build lacked an archive-to-committed-inventory check before tagging. A new candidate requires regenerated five-target evidence and a pre-tag integrity gate, without changing this failed identity."
-      ]
+      "evidence": []
     }
-  ],
-  "publicationFailureEvidence": {
-    "tagCommit": "5fe379306743ca752ae851f32fa38e6ff9502f2c",
-    "finalBuildEvidence": {
-      "workflow": "Build",
-      "commit": "5fe379306743ca752ae851f32fa38e6ff9502f2c",
-      "runId": 34112508917,
-      "runAttempt": 1,
-      "conclusion": "success",
-      "completedAt": "2026-09-07T11:14:49Z"
-    },
-    "releaseWorkflowEvidence": {
-      "workflow": "Release",
-      "commit": "5fe379306743ca752ae851f32fa38e6ff9502f2c",
-      "runId": 34116379683,
-      "runAttempt": 1,
-      "conclusion": "failure",
-      "completedAt": "2026-09-07T11:27:17Z"
-    },
-    "githubSurface": {
-      "state": "absent",
-      "releaseId": null,
-      "releaseUrl": null,
-      "publishedAt": null,
-      "assetCount": 0,
-      "assetBytes": 0,
-      "assetInventorySha256": null,
-      "releaseAttestation": "absent"
-    },
-    "npmSurface": {
-      "state": "absent",
-      "version": "0.7.0-rc.1",
-      "distTag": "next",
-      "latest": "0.6.0",
-      "next": "0.6.0-rc.2",
-      "fileCount": 0,
-      "unpackedSize": 0,
-      "integrity": null,
-      "shasum": null,
-      "provenancePredicateType": null,
-      "anonymousInstall": "not-run"
-    }
-  }
+  ]
 }

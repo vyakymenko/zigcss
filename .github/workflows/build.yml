@@ -144,6 +144,26 @@ jobs:
             --archive "release-assets/$RELEASE_ARCHIVE" \
             --source-date-epoch "$SOURCE_DATE_EPOCH"
 
+      - name: Verify Candidate Native Integrity Before Admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase="$(node -p "JSON.parse(require('node:fs').readFileSync('release/next-release.json', 'utf8')).state")"
+          case "$phase" in
+            candidate-ready|closed)
+              node scripts/validate-native-integrity.mjs \
+                --archive "release-assets/$RELEASE_ARCHIVE" \
+                --target "${{ matrix.target }}" \
+                --version "$RELEASE_VERSION"
+              ;;
+            planned|publication-failed)
+              ;;
+            *)
+              printf 'unsupported release phase: %s\n' "$phase" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Generate Native Smoke Metadata
         shell: bash
         run: |

@@ -17,7 +17,20 @@ import { expectedPackedFiles } from './validate-preprocessor-package.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
-export const plannedCandidateVersion = '0.7.0-rc.1'
+export const plannedCandidateVersion = '0.7.0-rc.2'
+export const failedCandidateHistory = Object.freeze([
+  Object.freeze({
+    version: '0.7.0-rc.1',
+    tag: 'v0.7.0-rc.1',
+    tagCommit: '5fe379306743ca752ae851f32fa38e6ff9502f2c',
+    finalBuildRunId: 34112508917,
+    releaseRunId: 34116379683,
+    releaseConclusion: 'failure',
+    githubSurface: 'absent',
+    npmSurface: 'absent',
+    reason: 'x86_64-windows native archive SHA-256 mismatch',
+  }),
+])
 export const candidateReleaseSourcePaths = Object.freeze([
   'VERSION',
   'native-integrity.json',
@@ -43,19 +56,19 @@ export const candidateGatePolicy = Object.freeze([
   Object.freeze({
     id: 'candidate-selection',
     evidenceRequirements: Object.freeze([
-      'The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.1 was selected.',
+      'The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.2 was selected; the failed v0.7.0-rc.1 identity remains permanently closed.',
     ]),
   }),
   Object.freeze({
     id: 'version-synchronization',
     evidenceRequirements: Object.freeze([
-      'Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.1.',
+      'Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.2.',
     ]),
   }),
   Object.freeze({
     id: 'native-integrity',
     evidenceRequirements: Object.freeze([
-      'All five architecture-matched release archives reproduce the committed 0.7.0-rc.1 SHA-256 inventory.',
+      'All five architecture-matched release archives reproduce the committed 0.7.0-rc.2 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission.',
     ]),
   }),
   Object.freeze({
@@ -116,6 +129,7 @@ const baseContractKeys = Object.freeze([
   'npmDistTag',
   'githubPrerelease',
   'closedHistory',
+  'failedHistory',
   'publicationApproval',
   'preTagSurfaces',
   'postTagSurfaces',
@@ -330,6 +344,19 @@ function validateClosedHistory(history, stableContract) {
   const expected = expectedClosedHistory(stableContract)
   if (!same(history, expected)) {
     fail('closedHistory no longer matches the closed 0.6.0 publication evidence')
+  }
+}
+
+function validateFailedHistory(history) {
+  if (!same(history, failedCandidateHistory)) {
+    fail('failedHistory must preserve the terminal 0.7.0-rc.1 identity and failure evidence')
+  }
+  for (const entry of history) {
+    parseReleaseVersion(entry.version, 'failedHistory.version')
+    validateReleaseTag(entry.version, entry.tag)
+    if (compareReleaseVersionPrecedence(plannedCandidateVersion, entry.version) <= 0) {
+      fail('new candidate must follow every permanently closed failed identity')
+    }
   }
 }
 
@@ -588,8 +615,9 @@ function validatePublicationEvidence(
   if (!canonicalCommit.test(evidence.tagCommit) || /^0+$/.test(evidence.tagCommit)) {
     fail('publicationEvidence.tagCommit must be a nonzero canonical lowercase SHA-1')
   }
-  if (contract.closedHistory.some(entry => entry.commit === evidence.tagCommit)) {
-    fail('publicationEvidence.tagCommit must not reuse a closed historical publication commit')
+  if (contract.closedHistory.some(entry => entry.commit === evidence.tagCommit)
+    || contract.failedHistory.some(entry => entry.tagCommit === evidence.tagCommit)) {
+    fail('publicationEvidence.tagCommit must not reuse a closed historical identity commit')
   }
   const finalBuild = evidence.finalBuildEvidence
   const finalBuildCompletedAt = validateFinalBuildEvidence(
@@ -700,8 +728,9 @@ function validatePublicationFailureEvidence(
   if (!canonicalCommit.test(evidence.tagCommit) || /^0+$/.test(evidence.tagCommit)) {
     fail('publicationFailureEvidence.tagCommit must be a nonzero canonical lowercase SHA-1')
   }
-  if (contract.closedHistory.some(entry => entry.commit === evidence.tagCommit)) {
-    fail('publicationFailureEvidence.tagCommit must not reuse a closed historical publication commit')
+  if (contract.closedHistory.some(entry => entry.commit === evidence.tagCommit)
+    || contract.failedHistory.some(entry => entry.tagCommit === evidence.tagCommit)) {
+    fail('publicationFailureEvidence.tagCommit must not reuse a closed historical identity commit')
   }
 
   let finalBuildCompletedAt = null
@@ -903,7 +932,16 @@ function validateCandidateState(contract, gates, stableContract) {
   const publication = gates.get(postTagSurfaces[0])
   if (contract.state === 'planned') {
     expectEqual(contract.candidateReady, false, 'planned candidateReady')
-    for (const id of plannedVerifiedSurfaces) expectGateState(gates, id, 'verified', 'planned candidate')
+    expectGateState(gates, preTagSurfaces[0], 'verified', 'planned candidate')
+    let pendingSeen = false
+    for (const id of plannedVerifiedSurfaces.slice(1)) {
+      const state = gates.get(id)?.state
+      if (state === 'pending') {
+        pendingSeen = true
+      } else if (state !== 'verified' || pendingSeen) {
+        fail(`planned candidate gates must become verified in order before ${id}`)
+      }
+    }
     for (const id of preTagSurfaces.slice(plannedVerifiedSurfaces.length)) {
       expectGateState(gates, id, 'pending', 'planned candidate')
     }
@@ -975,6 +1013,7 @@ function validateCandidateState(contract, gates, stableContract) {
 export function validateNextReleaseContract(contract, sources, stableContract) {
   validateContractShape(contract)
   validateClosedHistory(contract.closedHistory, stableContract)
+  validateFailedHistory(contract.failedHistory)
   const publishedStable = parseReleaseVersion(stableContract.candidateVersion, 'published stable version')
   if (compareReleaseVersionPrecedence(contract.candidateVersion, publishedStable.value) <= 0) {
     fail('planned candidate must be newer than the closed published stable version')
@@ -1043,7 +1082,10 @@ export function validateReleaseAdmission(
   const attempt = validateAttemptOptions(options)
   if (attempt === undefined) return result
 
-  const historicalTags = new Set(candidateContract.closedHistory.map(entry => entry.tag))
+  const historicalTags = new Set([
+    ...candidateContract.closedHistory.map(entry => entry.tag),
+    ...candidateContract.failedHistory.map(entry => entry.tag),
+  ])
   const attemptVersion = attempt.releaseTag.slice(1)
   if (
     historicalTags.has(attempt.releaseTag)

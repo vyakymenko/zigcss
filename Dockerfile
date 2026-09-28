@@ -14,7 +14,7 @@ RUN test "$(wc -c < /tmp/zig.tar.xz)" -eq 49471996
 ARG TARGETARCH
 FROM zig-${TARGETARCH} AS development
 
-ARG ZIGCSS_VERSION=0.7.0-rc.1
+ARG ZIGCSS_VERSION=0.7.0-rc.2
 ARG ZIG_VERSION=0.15.2
 ARG TARGETARCH
 LABEL org.opencontainers.image.title="ZigCSS development" \
