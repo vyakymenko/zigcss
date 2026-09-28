@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "ownerPackage": "REL-011",
   "releaseGapFamily": "next-release-candidate",
-  "state": "planned",
-  "candidateReady": false,
+  "state": "candidate-ready",
+  "candidateReady": true,
   "candidateVersion": "0.7.0-rc.2",
   "candidateTag": "v0.7.0-rc.2",
   "npmDistTag": "next",
@@ -103,38 +103,47 @@
     },
     {
       "id": "local-validation",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "The complete Debug, ReleaseSafe, package, consumer, builder, documentation, and audit gates pass for the candidate source."
       ],
-      "evidence": []
+      "evidence": [
+        "Verified 2026-09-28: same-repository main Build run 36401181444 attempt 1 completed success at 2026-09-28T10:11:18Z. Its Test Suite passed the complete Debug graph, package managers, consumers, all pinned builder hosts, Neovim, documentation, dependency audits, containers, and benchmark policy; all five architecture-matched jobs passed the complete ReleaseSafe native graph. Local Node/package/builder/documentation gates and two independent five-target release archive reproductions also passed."
+      ]
     },
     {
       "id": "documentation-validation",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
       ],
-      "evidence": []
+      "evidence": [
+        "Verified 2026-09-28: exact-source Documentation push run 36401181476 completed success at 2026-09-28T09:05:21Z, including documentation tests, production build, served-bundle checks, and live container smoke. Local documentation tests passed 9/9, website tests passed 248/248, and the production /zigcss/ bundle served 33 files with exact bytes and content types; active 0.7.0-rc.2 remains visibly unpublished while stable 0.6.0 remains the published identity."
+      ]
     },
     {
       "id": "hosted-validation",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "A recorded same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for a pre-admission checkpoint, with its run ID and completion time stored without a commit hash.",
         "Recorded default-setup CodeQL analysis covers the Actions, JavaScript/TypeScript, and Ruby categories for the pre-admission checkpoint with no error or warning status and zero open CodeQL alerts; tag admission revalidates Build and CodeQL against the exact runtime candidate commit."
       ],
-      "evidence": []
+      "evidence": [
+        "pre-admission checkpoint: same-repository main Build run 36401181444 completed success at 2026-09-28T10:11:18Z with Test Suite, five native jobs, five provenance jobs, and Native Package Evidence. CodeQL default setup Actions, JavaScript/TypeScript, and Ruby for the same commit observed at 2026-09-28T10:12:39Z with error=0, warning=0, open alerts=0 under security-events: read. Release workflow revalidates Build and CodeQL for the exact runtime candidate commit before publication."
+      ]
     },
     {
       "id": "origin-main-integration",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "Candidate-ready evidence stores no candidate commit hash; after that contract is committed, tag admission requires the peeled runtime candidate commit to equal a fresh exact origin/main readback.",
         "Repository ruleset 22261144 (`Protect release tags`) is re-read immediately before tag admission as active for the tag target including `refs/tags/v*`, with exact update and deletion rules, no bypass actors, and `current_user_can_bypass: never`.",
         "Before tag creation, the repository immutable-releases endpoint records enabled=true and enforced_by_owner=false through a live admin read; the create-release job then waits on the immutable-release environment until its required reviewer repeats that live read immediately before approval."
       ],
-      "evidence": []
+      "evidence": [
+        "Verified 2026-09-28T10:12:39Z before tag creation: exact origin/main readback matched the pre-admission Build source. Live ruleset 22261144 Protect release tags is active for target tag refs/tags/v* with update and deletion rules, bypass_actors=[], and current_user_can_bypass=never.",
+        "Live immutable releases setting enabled=true and enforced_by_owner=false. The immutable-release environment required reviewer repeats both live readbacks immediately before approval. Tag admission binds the exact runtime candidate commit to a fresh origin/main readback; static evidence stores no commit hash."
+      ]
     },
     {
       "id": "tag-workflow-publication",

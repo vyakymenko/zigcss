@@ -22,7 +22,7 @@ Every future tag-triggered publication must first prove, through the bounded Git
 
 ## Next candidate admission
 
-`release/next-release.json` records exact candidate `0.7.0-rc.2`, tag `v0.7.0-rc.2`, npm channel `next`, and GitHub prerelease delivery under a separate fail-closed contract. It is currently `planned` with `candidateReady: false`; this selection does not authorize creating the tag or publishing either release surface. Stable `zigcss@0.6.0` remains on `latest` and historical `0.6.0-rc.2` remains on `next`.
+`release/next-release.json` records exact candidate `0.7.0-rc.2`, tag `v0.7.0-rc.2`, npm channel `next`, and GitHub prerelease delivery under a separate fail-closed contract. It is currently `candidate-ready` with `candidateReady: true`; this selection does not authorize creating the tag or publishing either release surface. Stable `zigcss@0.6.0` remains on `latest` and historical `0.6.0-rc.2` remains on `next`.
 
 The historical prerelease attempt `zigcss@0.7.0-rc.1` failed and its exact identity is permanently closed. GitHub surface: `absent`; npm surface: `absent`. The failed `v0.7.0-rc.1` tag remains unchanged as evidence and must never be moved, recreated, or reused.
 

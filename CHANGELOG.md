@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No later stable identity is selected.
 
-Planned prerelease target `0.7.0-rc.2` is selected in `release/next-release.json` but remains unpublished with `candidateReady: false` until all seven pre-tag gates pass. Published stable identity remains immutable at `0.6.0`.
+Prerelease target `0.7.0-rc.2` is candidate-ready with `candidateReady: true` after all seven pre-tag gates passed. Published stable identity remains immutable at `0.6.0`.
 
 The historical prerelease attempt `0.7.0-rc.1` failed; its exact identity is permanently closed. GitHub surface `absent`; npm surface `absent`. The new `0.7.0-rc.2` candidate has a separate release contract. Published stable identity remains immutable at `0.6.0`.
 

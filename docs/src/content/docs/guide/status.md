@@ -4,9 +4,9 @@ ZigCSS 0.6.0 is the published stable release: all five machine rows are native-g
 
 Active source candidate 0.7.0-rc.2 is selected in `release/next-release.json` but is not published.
 
-Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass; published stable identity remains 0.6.0 throughout this work.
+Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; published stable identity remains 0.6.0 throughout this work.
 
-3 of 8 admission gates now carry recorded evidence: candidate selection, active-version synchronization, and native archive reproducibility. Local validation, documentation/site validation, hosted Build validation, exact `origin/main` integration, and publication remain pending for 0.7.0-rc.2.
+7 of 8 admission gates now carry recorded evidence: candidate selection, active-version synchronization, native archive reproducibility, local validation, documentation/site validation, hosted Build validation, and exact `origin/main` integration. Tag-workflow publication remains pending for 0.7.0-rc.2.
 
 The historical 0.7.0-rc.1 release attempt failed, and its exact identity is permanently closed. [Release run 34116379683](https://github.com/vyakymenko/zigcss/actions/runs/34116379683) failed at 2026-09-07 11:27:17 UTC: the Windows x64 archive did not match its pinned SHA-256 despite the earlier local and hosted admission evidence. The other four target archive jobs passed, but GitHub Release creation and npm publication were skipped. Readback at 2026-09-07 11:36:56 UTC confirmed both release surfaces absent; npm `latest` remained `0.6.0` and `next` remained `0.6.0-rc.2`. Never move, recreate, or reuse `v0.7.0-rc.1` or its exact package identity.
 
