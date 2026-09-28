@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "ownerPackage": "REL-011",
   "releaseGapFamily": "next-release-candidate",
-  "state": "planned",
-  "candidateReady": false,
+  "state": "candidate-ready",
+  "candidateReady": true,
   "candidateVersion": "0.7.0-rc.3",
   "candidateTag": "v0.7.0-rc.3",
   "npmDistTag": "next",
@@ -111,46 +111,58 @@
     },
     {
       "id": "native-integrity",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "All five architecture-matched release archives reproduce the committed 0.7.0-rc.3 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission."
       ],
-      "evidence": []
+      "evidence": [
+        "2026-09-28: Pinned Zig 0.15.2 independently reproduced all five 0.7.0-rc.3 architecture-matched archives twice from fresh caches; each SHA-256 matched the committed native integrity inventory. All five downloaded Build run 36428201955 archives also matched the inventory byte-for-byte. The candidate-ready Build will rerun exact archive integrity before tag admission."
+      ]
     },
     {
       "id": "local-validation",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "The complete Debug, ReleaseSafe, package, consumer, builder, documentation, and audit gates pass for the candidate source."
       ],
-      "evidence": []
+      "evidence": [
+        "2026-09-28: Local version, admission, workflow, native integrity, preprocessor package, capability, and documentation checks passed; version tests 24/24, admission tests 20/20, workflow tests 72/72, and native integrity tests 13/13 passed. Build run 36428201955 completed the full Debug, ReleaseSafe, package, consumer, builder, documentation, and audit Test Suite successfully at 2026-09-28T14:32:04Z."
+      ]
     },
     {
       "id": "documentation-validation",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
       ],
-      "evidence": []
+      "evidence": [
+        "2026-09-28: Candidate site tests passed 248/248; production build, 11 SEO pages, 10 sitemap URLs, and all 33 served files passed, with 103.4 KiB gzip below the 160 KiB budget. Build run 36428201955 also passed Test documentation site, development container smoke, documentation links/examples, and stable-versus-current identity validation."
+      ]
     },
     {
       "id": "hosted-validation",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "A recorded same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for a pre-admission checkpoint, with its run ID and completion time stored without a commit hash.",
         "Recorded default-setup CodeQL analysis covers the Actions, JavaScript/TypeScript, and Ruby categories for the pre-admission checkpoint with no error or warning status and zero open CodeQL alerts; tag admission revalidates Build and CodeQL against the exact runtime candidate commit."
       ],
-      "evidence": []
+      "evidence": [
+        "Build run 36428201955 completed successfully at 2026-09-28T14:32:06Z for the pre-admission checkpoint on main: full Test Suite plus all five architecture-matched build jobs, five native provenance jobs, and native package evidence passed.",
+        "At 2026-09-28T14:34:11Z, CodeQL default setup on the same commit covered Actions, JavaScript/TypeScript, and Ruby with error=0, warning=0, open alerts=0 under security-events: read. The Release workflow revalidates Build and CodeQL against the exact runtime candidate commit."
+      ]
     },
     {
       "id": "origin-main-integration",
-      "state": "pending",
+      "state": "verified",
       "evidenceRequirements": [
         "Candidate-ready evidence stores no candidate commit hash; after that contract is committed, tag admission requires the peeled runtime candidate commit to equal a fresh exact origin/main readback.",
         "Repository ruleset 22261144 (`Protect release tags`) is re-read immediately before tag admission as active for the tag target including `refs/tags/v*`, with exact update and deletion rules, no bypass actors, and `current_user_can_bypass: never`.",
         "Before tag creation, the repository immutable-releases endpoint records enabled=true and enforced_by_owner=false through a live admin read; the create-release job then waits on the immutable-release environment until its required reviewer repeats that live read immediately before approval."
       ],
-      "evidence": []
+      "evidence": [
+        "2026-09-28T14:34:30Z: pre-admission HEAD equaled a fresh exact origin/main readback. Candidate-ready evidence intentionally stores no commit hash; tag admission repeats the peeled runtime candidate commit versus fresh exact origin/main readback.",
+        "2026-09-28T14:34:11Z before tag creation: ruleset 22261144 (Protect release tags) is active for target tag including refs/tags/v*, with update and deletion rules, bypass_actors=[], current_user_can_bypass=never. The immutable releases setting reads enabled=true, enforced_by_owner=false. The immutable-release environment has its sole required reviewer; required reviewer repeats both live control reads immediately before deployment approval."
+      ]
     },
     {
       "id": "tag-workflow-publication",

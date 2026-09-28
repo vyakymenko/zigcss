@@ -40,8 +40,8 @@ describe('search discovery contract', () => {
     ])
     expect(new Set(routeMetadata.map(route => route.canonicalPath)).size).toBe(routeMetadata.length)
     expect(nextRelease.candidateVersion).toBe('0.7.0-rc.3')
-    expect(nextRelease.state).toBe('planned')
-    expect(nextRelease.candidateReady).toBe(false)
+    expect(nextRelease.state).toBe('candidate-ready')
+    expect(nextRelease.candidateReady).toBe(true)
     expect(routeMetadata.find(route => route.canonicalPath === '/docs/guide/status/')).toEqual({
       canonicalPath: '/docs/guide/status/',
       title: 'ZigCSS 0.7.0-rc.3 release status',

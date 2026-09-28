@@ -180,7 +180,7 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
     [
       'NPM_PUBLISH.md',
       `Prerelease attempt \`zigcss@${activeVersion}\` failed and its exact identity is permanently closed. ${surfaceSummary} Select a new candidate version; never move, recreate, or reuse \`v${activeVersion}\`.`,
-      'It is currently `candidate-ready` with `candidateReady: true`; this selection does not authorize creating the tag or publishing either release surface.',
+      'It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published.',
     ],
     [
       'CHANGELOG.md',
@@ -569,8 +569,8 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'NPM_PUBLISH.md',
-    'It is currently `candidate-ready` with `candidateReady: true`',
-    `Prerelease \`zigcss@${activeVersion}\` is published on npm \`next\``,
+    'It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published.',
+    `Prerelease \`zigcss@${activeVersion}\` is published on npm \`next\`.`,
   )
   replace(
     sources,
@@ -811,7 +811,7 @@ function setPublicationFailedPhase(
     replace(
       sources,
       'NPM_PUBLISH.md',
-      `Prerelease \`zigcss@${activeVersion}\` is published on npm \`next\`; this selection does not authorize creating the tag or publishing either release surface.`,
+      `Prerelease \`zigcss@${activeVersion}\` is published on npm \`next\`.`,
       `Prerelease attempt \`zigcss@${activeVersion}\` failed and its exact identity is permanently closed. ${surfaceSummary} Select a new candidate version; never move, recreate, or reuse \`v${activeVersion}\`.`,
     )
     replace(
@@ -887,7 +887,7 @@ function setPublicationFailedPhase(
     replace(
       sources,
       'NPM_PUBLISH.md',
-      'It is currently `candidate-ready` with `candidateReady: true`; this selection does not authorize creating the tag or publishing either release surface.',
+      'It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published.',
       `Prerelease attempt \`zigcss@${activeVersion}\` failed and its exact identity is permanently closed. ${surfaceSummary} Select a new candidate version; never move, recreate, or reuse \`v${activeVersion}\`.`,
     )
     replace(

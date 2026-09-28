@@ -22,7 +22,7 @@ Every future tag-triggered publication must first prove, through the bounded Git
 
 ## Next candidate admission
 
-`release/next-release.json` selects candidate `0.7.0-rc.3`, tag `v0.7.0-rc.3`, npm channel `next`, and GitHub prerelease delivery under a new fail-closed contract. It is currently `planned` with `candidateReady: false`; this selection does not authorize creating the tag or publishing either release surface. Stable `zigcss@0.6.0` remains on `latest` and historical `0.6.0-rc.2` remains on `next`.
+`release/next-release.json` selects candidate `0.7.0-rc.3`, tag `v0.7.0-rc.3`, npm channel `next`, and GitHub prerelease delivery under a new fail-closed contract. It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published. Stable `zigcss@0.6.0` remains on `latest` and historical `0.6.0-rc.2` remains on `next`.
 
 [Release run 36415234756](https://github.com/vyakymenko/zigcss/actions/runs/36415234756) ended in failure on 2026-09-28. All five native archive integrity checks passed, but the Windows npm smoke rejected a packed `package.json` differing from its tested manifest. GitHub Release creation and npm publication were skipped; exact-version readbacks found both surfaces absent. This is a failed release attempt, not a published prerelease or authorization to rerun the tag.
 
