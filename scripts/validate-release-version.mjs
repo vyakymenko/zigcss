@@ -439,7 +439,7 @@ export function validateReleaseSources(sources) {
   }
   expectEqual(nextRelease.ownerPackage, 'REL-011', 'planned release owner package')
   expectEqual(nextRelease.releaseGapFamily, 'next-release-candidate', 'planned release family')
-  expectEqual(nextRelease.candidateVersion, '0.7.0-rc.2', 'planned release candidate version')
+  expectEqual(nextRelease.candidateVersion, '0.7.0-rc.3', 'planned release candidate version')
   expectEqual(nextRelease.candidateTag, `v${plannedCandidate.value}`, 'planned release candidate tag')
   if (plannedCandidate.prerelease === null || plannedCandidate.build !== null) {
     fail('planned release candidate must be a prerelease without build metadata')

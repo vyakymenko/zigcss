@@ -17,7 +17,7 @@ import { expectedPackedFiles } from './validate-preprocessor-package.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
-export const plannedCandidateVersion = '0.7.0-rc.2'
+export const plannedCandidateVersion = '0.7.0-rc.3'
 export const failedCandidateHistory = Object.freeze([
   Object.freeze({
     version: '0.7.0-rc.1',
@@ -29,6 +29,24 @@ export const failedCandidateHistory = Object.freeze([
     githubSurface: 'absent',
     npmSurface: 'absent',
     reason: 'x86_64-windows native archive SHA-256 mismatch',
+  }),
+  Object.freeze({
+    version: '0.7.0-rc.2',
+    tag: 'v0.7.0-rc.2',
+    tagCommit: 'd48a6b5cfdb6c68fffc05cd512c3582220b118e4',
+    finalBuildRunId: 36408822321,
+    finalBuildConclusion: 'success',
+    finalBuildCompletedAt: '2026-09-28T11:19:10Z',
+    releaseRunId: 36415234756,
+    releaseRunAttempt: 1,
+    releaseConclusion: 'failure',
+    releaseCompletedAt: '2026-09-28T11:26:46Z',
+    githubSurface: 'absent',
+    npmSurface: 'absent',
+    publicReadbackAt: '2026-09-28T11:27:24Z',
+    npmLatest: '0.6.0',
+    npmNext: '0.6.0-rc.2',
+    reason: 'x86_64-windows packed package.json differed from tested manifest',
   }),
 ])
 export const candidateReleaseSourcePaths = Object.freeze([
@@ -56,19 +74,19 @@ export const candidateGatePolicy = Object.freeze([
   Object.freeze({
     id: 'candidate-selection',
     evidenceRequirements: Object.freeze([
-      'The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.2 was selected; the failed v0.7.0-rc.1 identity remains permanently closed.',
+      'The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.3 was selected; the failed v0.7.0-rc.1 and v0.7.0-rc.2 identities remain permanently closed.',
     ]),
   }),
   Object.freeze({
     id: 'version-synchronization',
     evidenceRequirements: Object.freeze([
-      'Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.2.',
+      'Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.3.',
     ]),
   }),
   Object.freeze({
     id: 'native-integrity',
     evidenceRequirements: Object.freeze([
-      'All five architecture-matched release archives reproduce the committed 0.7.0-rc.2 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission.',
+      'All five architecture-matched release archives reproduce the committed 0.7.0-rc.3 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission.',
     ]),
   }),
   Object.freeze({
@@ -349,7 +367,7 @@ function validateClosedHistory(history, stableContract) {
 
 function validateFailedHistory(history) {
   if (!same(history, failedCandidateHistory)) {
-    fail('failedHistory must preserve the terminal 0.7.0-rc.1 identity and failure evidence')
+    fail('failedHistory must preserve the terminal 0.7.0-rc.1 and 0.7.0-rc.2 identities and failure evidence')
   }
   for (const entry of history) {
     parseReleaseVersion(entry.version, 'failedHistory.version')

@@ -69,14 +69,14 @@ function expectReleaseStatusCopy(contract: ReleaseStatusContract, guide: string)
 
 test('status readiness assertions accept only the exact planned, admitted, or terminal phase', () => {
   for (const [state, ready, verified, identity, interlock] of [
-    ...[1, 2, 3, 4, 5].map(verified => ['planned', false, verified, 'Active source candidate 0.7.0-rc.2 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass'] as const),
-    ['candidate-ready', true, 7, 'Active source candidate 0.7.0-rc.2 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed'],
-    ['closed', false, 8, 'ZigCSS 0.7.0-rc.2 is the published prerelease on npm `next`.', 'Its `candidateReady` interlock is `false` after immutable publication'],
+    ...[1, 2, 3, 4, 5].map(verified => ['planned', false, verified, 'Active source candidate 0.7.0-rc.3 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass'] as const),
+    ['candidate-ready', true, 7, 'Active source candidate 0.7.0-rc.3 is selected in `release/next-release.json` but is not published.', 'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed'],
+    ['closed', false, 8, 'ZigCSS 0.7.0-rc.3 is the published prerelease on npm `next`.', 'Its `candidateReady` interlock is `false` after immutable publication'],
     ...[5, 6, 7].map(verified => ['publication-failed', false, verified, 'ZigCSS 0.7.0-rc.1 release attempt failed and the exact identity is permanently closed.', 'Its `candidateReady` interlock is `false` after the failed publication attempt'] as const),
   ] as const) {
     const contract = {
       state,
-      candidateVersion: state === 'publication-failed' ? '0.7.0-rc.1' : '0.7.0-rc.2',
+      candidateVersion: state === 'publication-failed' ? '0.7.0-rc.1' : '0.7.0-rc.3',
       candidateReady: ready,
       gates: Array.from({ length: 8 }, (_, index) => ({ state: index < verified ? 'verified' : index === 7 && state === 'publication-failed' ? 'failed' : 'pending' })),
     }

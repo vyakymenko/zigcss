@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 1,
   "ownerPackage": "REL-011",
   "releaseGapFamily": "next-release-candidate",
-  "state": "publication-failed",
+  "state": "planned",
   "candidateReady": false,
-  "candidateVersion": "0.7.0-rc.2",
-  "candidateTag": "v0.7.0-rc.2",
+  "candidateVersion": "0.7.0-rc.3",
+  "candidateTag": "v0.7.0-rc.3",
   "npmDistTag": "next",
   "githubPrerelease": true,
   "closedHistory": [
@@ -41,6 +41,24 @@
       "githubSurface": "absent",
       "npmSurface": "absent",
       "reason": "x86_64-windows native archive SHA-256 mismatch"
+    },
+    {
+      "version": "0.7.0-rc.2",
+      "tag": "v0.7.0-rc.2",
+      "tagCommit": "d48a6b5cfdb6c68fffc05cd512c3582220b118e4",
+      "finalBuildRunId": 36408822321,
+      "finalBuildConclusion": "success",
+      "finalBuildCompletedAt": "2026-09-28T11:19:10Z",
+      "releaseRunId": 36415234756,
+      "releaseRunAttempt": 1,
+      "releaseConclusion": "failure",
+      "releaseCompletedAt": "2026-09-28T11:26:46Z",
+      "githubSurface": "absent",
+      "npmSurface": "absent",
+      "publicReadbackAt": "2026-09-28T11:27:24Z",
+      "npmLatest": "0.6.0",
+      "npmNext": "0.6.0-rc.2",
+      "reason": "x86_64-windows packed package.json differed from tested manifest"
     }
   ],
   "publicationApproval": {
@@ -75,129 +93,72 @@
       "id": "candidate-selection",
       "state": "verified",
       "evidenceRequirements": [
-        "The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.2 was selected; the failed v0.7.0-rc.1 identity remains permanently closed."
+        "The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.3 was selected; the failed v0.7.0-rc.1 and v0.7.0-rc.2 identities remain permanently closed."
       ],
       "evidence": [
-        "Verified 2026-09-28: GitHub tag and release v0.7.0-rc.2 and npm zigcss@0.7.0-rc.2 were absent; npm latest remained 0.6.0 and next remained 0.6.0-rc.2. The failed v0.7.0-rc.1 tag remains at 5fe379306743ca752ae851f32fa38e6ff9502f2c."
+        "Verified 2026-09-28T13:09:41Z: GitHub tag and release v0.7.0-rc.3 and npm zigcss@0.7.0-rc.3 were absent. Earlier 2026-09-28T11:27:24Z readback: npm latest=0.6.0 and next=0.6.0-rc.2. Failed v0.7.0-rc.1 and v0.7.0-rc.2 tags remain permanently closed."
       ]
     },
     {
       "id": "version-synchronization",
       "state": "verified",
       "evidenceRequirements": [
-        "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.2."
+        "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.3."
       ],
       "evidence": [
-        "Verified 2026-09-28: npm run test:version passed 24/24 and npm run check:version confirmed 46 synchronized package, CLI, Zig, Docker, editor, lockfile, and current-source documentation surfaces for 0.7.0-rc.2."
+        "2026-09-28: VERSION, npm package and lockfiles, Zig manifest and CLI, containers, editor, and current-source documentation identify 0.7.0-rc.3; check:version verified 46 synchronized surfaces and test:version passed 24/24."
       ]
     },
     {
       "id": "native-integrity",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
-        "All five architecture-matched release archives reproduce the committed 0.7.0-rc.2 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission."
+        "All five architecture-matched release archives reproduce the committed 0.7.0-rc.3 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission."
       ],
-      "evidence": [
-        "Verified 2026-09-28: all five 0.7.0-rc.2 ReleaseFast native binaries and normalized archives were rebuilt twice independently with Zig 0.15.2 and matched byte-for-byte; the five archive SHA-256 values are committed in native-integrity.json. npm run test:native-integrity passed 13/13, npm run check:native-integrity passed, and Build checks candidate-ready archives against the committed inventory before metadata, smoke, or upload."
-      ]
+      "evidence": []
     },
     {
       "id": "local-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "The complete Debug, ReleaseSafe, package, consumer, builder, documentation, and audit gates pass for the candidate source."
       ],
-      "evidence": [
-        "Verified 2026-09-28: same-repository main Build run 36401181444 attempt 1 completed success at 2026-09-28T10:11:18Z. Its Test Suite passed the complete Debug graph, package managers, consumers, all pinned builder hosts, Neovim, documentation, dependency audits, containers, and benchmark policy; all five architecture-matched jobs passed the complete ReleaseSafe native graph. Local Node/package/builder/documentation gates and two independent five-target release archive reproductions also passed."
-      ]
+      "evidence": []
     },
     {
       "id": "documentation-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
       ],
-      "evidence": [
-        "Verified 2026-09-28: exact-source Documentation push run 36401181476 completed success at 2026-09-28T09:05:21Z, including documentation tests, production build, served-bundle checks, and live container smoke. Local documentation tests passed 9/9, website tests passed 248/248, and the production /zigcss/ bundle served 33 files with exact bytes and content types; active 0.7.0-rc.2 remains visibly unpublished while stable 0.6.0 remains the published identity."
-      ]
+      "evidence": []
     },
     {
       "id": "hosted-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "A recorded same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for a pre-admission checkpoint, with its run ID and completion time stored without a commit hash.",
         "Recorded default-setup CodeQL analysis covers the Actions, JavaScript/TypeScript, and Ruby categories for the pre-admission checkpoint with no error or warning status and zero open CodeQL alerts; tag admission revalidates Build and CodeQL against the exact runtime candidate commit."
       ],
-      "evidence": [
-        "pre-admission checkpoint: same-repository main Build run 36401181444 completed success at 2026-09-28T10:11:18Z with Test Suite, five native jobs, five provenance jobs, and Native Package Evidence. CodeQL default setup Actions, JavaScript/TypeScript, and Ruby for the same commit observed at 2026-09-28T10:12:39Z with error=0, warning=0, open alerts=0 under security-events: read. Release workflow revalidates Build and CodeQL for the exact runtime candidate commit before publication.",
-        "Final Build run 36408822321 attempt 1 succeeded at 2026-09-28T11:19:10Z for exact candidate commit d48a6b5cfdb6c68fffc05cd512c3582220b118e4: Test Suite, five native, five provenance, and package evidence jobs passed. CodeQL default setup Actions, JavaScript/TypeScript, Ruby on same commit d48a6b5cfdb6c68fffc05cd512c3582220b118e4 had error=0, warning=0, open alerts=0."
-      ]
+      "evidence": []
     },
     {
       "id": "origin-main-integration",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "Candidate-ready evidence stores no candidate commit hash; after that contract is committed, tag admission requires the peeled runtime candidate commit to equal a fresh exact origin/main readback.",
         "Repository ruleset 22261144 (`Protect release tags`) is re-read immediately before tag admission as active for the tag target including `refs/tags/v*`, with exact update and deletion rules, no bypass actors, and `current_user_can_bypass: never`.",
         "Before tag creation, the repository immutable-releases endpoint records enabled=true and enforced_by_owner=false through a live admin read; the create-release job then waits on the immutable-release environment until its required reviewer repeats that live read immediately before approval."
       ],
-      "evidence": [
-        "Verified 2026-09-28T10:12:39Z before tag creation: exact origin/main readback matched the pre-admission Build source. Live ruleset 22261144 Protect release tags is active for target tag refs/tags/v* with update and deletion rules, bypass_actors=[], and current_user_can_bypass=never.",
-        "Live immutable releases setting enabled=true and enforced_by_owner=false. The immutable-release environment required reviewer repeats both live readbacks immediately before approval. Tag admission binds the exact runtime candidate commit to a fresh origin/main readback; static evidence stores no commit hash.",
-        "Fresh origin/main readback before protected tag creation equalled failed tag commit d48a6b5cfdb6c68fffc05cd512c3582220b118e4; live release controls were verified again at 2026-09-28T11:21:37Z."
-      ]
+      "evidence": []
     },
     {
       "id": "tag-workflow-publication",
-      "state": "failed",
+      "state": "pending",
       "evidenceRequirements": [
         "The protected tag workflow publishes the first repository GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next."
       ],
-      "evidence": [
-        "Release run 36415234756 attempt 1 at d48a6b5cfdb6c68fffc05cd512c3582220b118e4 concluded failure at 2026-09-28T11:26:46Z: Windows smoke rejected the packed package.json byte comparison after all five archive integrity checks passed. Create Release and Publish to npm were skipped. Public readback at 2026-09-28T11:27:24Z: GitHub surface absent; npm surface absent; latest=0.6.0; next=0.6.0-rc.2."
-      ]
+      "evidence": []
     }
-  ],
-  "publicationFailureEvidence": {
-    "tagCommit": "d48a6b5cfdb6c68fffc05cd512c3582220b118e4",
-    "finalBuildEvidence": {
-      "workflow": "Build",
-      "commit": "d48a6b5cfdb6c68fffc05cd512c3582220b118e4",
-      "runId": 36408822321,
-      "runAttempt": 1,
-      "conclusion": "success",
-      "completedAt": "2026-09-28T11:19:10Z"
-    },
-    "releaseWorkflowEvidence": {
-      "workflow": "Release",
-      "commit": "d48a6b5cfdb6c68fffc05cd512c3582220b118e4",
-      "runId": 36415234756,
-      "runAttempt": 1,
-      "conclusion": "failure",
-      "completedAt": "2026-09-28T11:26:46Z"
-    },
-    "githubSurface": {
-      "state": "absent",
-      "releaseId": null,
-      "releaseUrl": null,
-      "publishedAt": null,
-      "assetCount": 0,
-      "assetBytes": 0,
-      "assetInventorySha256": null,
-      "releaseAttestation": "absent"
-    },
-    "npmSurface": {
-      "state": "absent",
-      "version": "0.7.0-rc.2",
-      "distTag": "next",
-      "latest": "0.6.0",
-      "next": "0.6.0-rc.2",
-      "fileCount": 0,
-      "unpackedSize": 0,
-      "integrity": null,
-      "shasum": null,
-      "provenancePredicateType": null,
-      "anonymousInstall": "not-run"
-    }
-  }
+  ]
 }

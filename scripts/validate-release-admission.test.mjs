@@ -21,7 +21,7 @@ import { expectedPackedFiles } from './validate-preprocessor-package.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const script = path.join(repositoryRoot, 'scripts', 'validate-release-admission.mjs')
-const candidateVersion = '0.7.0-rc.2'
+const candidateVersion = '0.7.0-rc.3'
 const candidateTag = `v${candidateVersion}`
 const commit = 'a'.repeat(40)
 const finalBuildRunId = 39_999_999_999
@@ -429,9 +429,9 @@ test('admits only the ready exact candidate on the exact origin main commit', ()
       sources,
       historical,
       historicalSources,
-      { releaseTag: 'v0.7.0-rc.3', candidateCommit: commit, originMainCommit: commit },
+      { releaseTag: 'v0.7.0-rc.4', candidateCommit: commit, originMainCommit: commit },
     ),
-    /sole planned candidate v0\.7\.0-rc\.2/,
+    /sole planned candidate v0\.7\.0-rc\.3/,
   )
 })
 
@@ -805,7 +805,7 @@ test('closed publication evidence rejects shape, identity, channel, provenance, 
     contract => { contract.publicationEvidence.githubAssetInventorySha256 = 'B'.repeat(64) },
     contract => { contract.publicationEvidence.githubAssetInventorySha256 = '0'.repeat(64) },
     contract => { contract.publicationEvidence.assetsPerTarget = 4 },
-    contract => { contract.publicationEvidence.npmVersion = '0.7.0-rc.3' },
+    contract => { contract.publicationEvidence.npmVersion = '0.7.0-rc.4' },
     contract => { contract.publicationEvidence.npmDistTag = 'latest' },
     contract => { contract.publicationEvidence.npmLatest = candidateVersion },
     contract => { contract.publicationEvidence.npmNext = '0.6.0-rc.2' },
@@ -845,7 +845,7 @@ test('closed publication evidence rejects shape, identity, channel, provenance, 
 
 test('rejects published and failed historical tags before considering candidate readiness', () => {
   const contract = readyContract()
-  for (const releaseTag of ['v0.6.0-rc.2', 'v0.6.0', 'v0.7.0-rc.1', 'v0.5.9']) {
+  for (const releaseTag of ['v0.6.0-rc.2', 'v0.6.0', 'v0.7.0-rc.1', 'v0.7.0-rc.2', 'v0.5.9']) {
     assert.throws(
       () => validateReleaseAdmission(
         contract,
@@ -862,7 +862,7 @@ test('rejects published and failed historical tags before considering candidate 
 
 test('rejects candidate identity, closed history, approval policy, and gate-policy drift', () => {
   for (const mutate of [
-    contract => { contract.candidateVersion = '0.7.0-rc.3' },
+    contract => { contract.candidateVersion = '0.7.0-rc.4' },
     contract => { contract.candidateTag = 'v0.7.0' },
     contract => { contract.npmDistTag = 'latest' },
     contract => { contract.githubPrerelease = false },
@@ -871,6 +871,10 @@ test('rejects candidate identity, closed history, approval policy, and gate-poli
     contract => { contract.failedHistory[0].tagCommit = '0'.repeat(40) },
     contract => { contract.failedHistory[0].releaseRunId += 1 },
     contract => { contract.failedHistory[0].githubSurface = 'immutable-published' },
+    contract => { contract.failedHistory[1].tagCommit = '0'.repeat(40) },
+    contract => { contract.failedHistory[1].releaseRunId += 1 },
+    contract => { contract.failedHistory[1].npmNext = '0.7.0-rc.2' },
+    contract => { contract.failedHistory.pop() },
     contract => { contract.failedHistory = [] },
     contract => { contract.publicationApproval.environment = 'release' },
     contract => { contract.publicationApproval.environmentId += 1 },
@@ -1009,10 +1013,10 @@ test('rejects incomplete, divergent, or unbounded active source inputs', () => {
   assert.throws(
     () => validateNextReleaseContract(
       plannedContract(),
-      candidateSources('0.7.0-rc.3'),
+      candidateSources('0.7.0-rc.4'),
       readStableReleaseContract(),
     ),
-    /active source version must remain 0\.6\.0 or advance exactly to 0\.7\.0-rc\.2/,
+    /active source version must remain 0\.6\.0 or advance exactly to 0\.7\.0-rc\.3/,
   )
 })
 
@@ -1024,7 +1028,7 @@ test('publication-ready state requires synchronized candidate package and integr
       candidateSources('0.6.0'),
       readStableReleaseContract(),
     ),
-    /candidate-ready active version must be "0\.7\.0-rc\.2"/,
+    /candidate-ready active version must be "0\.7\.0-rc\.3"/,
   )
 
   assert.throws(
@@ -1033,7 +1037,7 @@ test('publication-ready state requires synchronized candidate package and integr
       candidateSources('0.6.0'),
       readStableReleaseContract(),
     ),
-    /closed active version must be "0\.7\.0-rc\.2"/,
+    /closed active version must be "0\.7\.0-rc\.3"/,
   )
 
   const mismatched = candidateSources(candidateVersion)
@@ -1042,7 +1046,7 @@ test('publication-ready state requires synchronized candidate package and integr
   mismatched.set('native-integrity.json', `${JSON.stringify(integrity, null, 2)}\n`)
   assert.throws(
     () => validateNextReleaseContract(contract, mismatched, readStableReleaseContract()),
-    /manifest version must be 0\.7\.0-rc\.2/,
+    /manifest version must be 0\.7\.0-rc\.3/,
   )
 })
 

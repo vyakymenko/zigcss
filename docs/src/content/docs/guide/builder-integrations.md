@@ -1,8 +1,8 @@
 # Build tools and framework integrations
 
-After the failed 0.7.0-rc.2 release attempt, the current unpublished source checkout has executable integration evidence for the direct
+The current unpublished 0.7.0-rc.3 source checkout has executable integration evidence for the direct
 JavaScript builders, selected framework hosts, four native build systems, and
-six package-manager installation modes. These are `Unreleased` source
+six package-manager installation modes. The failed 0.7.0-rc.2 identity remains closed. These are `Unreleased` source
 capabilities: the immutable published `zigcss@0.6.0` binary predates the
 `zigcss-node-v1` protocol and must not be presented as adapter delivery.
 

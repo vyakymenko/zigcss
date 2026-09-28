@@ -15,7 +15,7 @@ import {
   validateReleaseVersion,
 } from './validate-release-version.mjs'
 
-const activeVersion = '0.7.0-rc.2'
+const activeVersion = '0.7.0-rc.3'
 const activeBaseVersion = '0.7.0'
 const publishedStableVersion = '0.6.0'
 const synchronizedSurfaceCount = 46

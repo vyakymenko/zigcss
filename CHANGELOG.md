@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No later stable identity is selected.
 
-Prerelease attempt `0.7.0-rc.2` failed; exact identity is permanently closed. GitHub surface `absent`; npm surface `absent`. Select a new candidate version before another release attempt. Published stable identity remains immutable at `0.6.0`.
+Planned prerelease target `0.7.0-rc.3` is selected in `release/next-release.json` but remains unpublished with `candidateReady: false` until all seven pre-tag gates pass. Published stable identity remains immutable at `0.6.0`.
+
+Prerelease attempt `0.7.0-rc.2` failed; its exact identity is permanently closed. GitHub surface `absent`; npm surface `absent`. Published stable identity remains immutable at `0.6.0`.
 
 [Release run 36415234756](https://github.com/vyakymenko/zigcss/actions/runs/36415234756) failed on 2026-09-28 after all five native archive integrity checks passed: the Windows npm smoke rejected a packed `package.json` that differed from the tested manifest. GitHub Release creation and npm publication were skipped. The protected `v0.7.0-rc.2` tag remains unchanged as failure evidence; the changes below remain unreleased.
 
@@ -39,6 +41,7 @@ Release run [34116379683](https://github.com/vyakymenko/zigcss/actions/runs/3411
 
 ### Changed
 
+- Pin `package.json` to LF at checkout and reject carriage returns in native-package integrity checks so a Windows manifest-byte mismatch fails before a release tag is admitted.
 - Strengthen candidate publication with an exact-commit CodeQL gate, protected release tags, reviewer approval, draft asset reconciliation, immutable GitHub Release readback, and cryptographic release attestation verification. Verify npm provenance against the tag commit and require anonymous consumers to validate registry signatures and both npm publish and SLSA attestations before the public delivery check can pass.
 - Harden release smoke paths across canonical macOS temporary roots and Windows lifecycle execution; validate documentation HTML through a DOM parser and serve static content through bounded file reads with replacement-race checks.
 - Compare installed ESM source-map and dependency URLs against exact canonical filenames, including Windows short-path aliases and equivalent URL escaping. Explicitly provision all four native build-system tools in CI and fail early on unavailable versions, retaining the later real-compiler incremental rebuild gate.

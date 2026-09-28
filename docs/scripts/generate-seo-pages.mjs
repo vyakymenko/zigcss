@@ -79,9 +79,9 @@ function renderRoute(baseHtml, route, robots = 'index,follow,max-image-preview:l
       /<noscript>[\s\S]*?<\/noscript>/,
       `<noscript>
     <main>
-      <p>ZIGCSS · 0.7.0-RC.2 · FAILED RELEASE IDENTITY</p>
+      <p>ZIGCSS · 0.7.0-RC.3 · UNPUBLISHED SOURCE CANDIDATE</p>
       <h1>JavaScript is required for this documentation route.</h1>
-      <p>Release attempt 0.7.0-rc.2 failed; its GitHub Release and npm package are absent and the exact identity must not be reused. These capabilities remain source-only, not published stable 0.6.0 behavior. Build the repository source before using them. The failed 0.7.0-rc.1 identity also remains closed.</p>
+      <p>Candidate 0.7.0-rc.3 is selected but not published on GitHub or npm. These capabilities remain source-only, not published stable 0.6.0 behavior. Build the repository source before using them. Failed 0.7.0-rc.1 and 0.7.0-rc.2 identities remain closed.</p>
       <p>Stable 0.6.0 remains on npm latest; historical 0.6.0-rc.2 remains on next.</p>
       <p><a href="https://github.com/vyakymenko/zigcss">Open the ZigCSS source repository</a></p>
     </main>

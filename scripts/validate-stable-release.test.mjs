@@ -292,7 +292,7 @@ test('rejects missing, extra, malformed, and package-divergent release sources',
   assert.throws(
     () => validateStableReleaseContract(
       readStableReleaseContract(),
-      changedSources('package.json', source => source.replace('"version": "0.7.0-rc.2"', '"version": "0.7.0"')),
+      changedSources('package.json', source => source.replace('"version": "0.7.0-rc.3"', '"version": "0.7.0"')),
     ),
     /current package version/,
   )

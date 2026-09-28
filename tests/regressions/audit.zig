@@ -247,7 +247,7 @@ test "LSP transport accepts sequential frames and bodies above 8 KiB (LSP-001)" 
     defer deinitRun(&result);
     try expectSuccess(result);
     try std.testing.expectEqualStrings(
-        "Warning: ZigCSS 0.7.0-rc.2 is an experimental release candidate; do not use it for production CSS.\n" ++
+        "Warning: ZigCSS 0.7.0-rc.3 is an experimental release candidate; do not use it for production CSS.\n" ++
             "Warning: ZigCSS LSP is experimental; evaluate before production editor use.\n",
         result.stderr,
     );
@@ -1373,7 +1373,7 @@ test "CLI informational and failure modes have stable streams and exit codes (CL
     var version = try runInDir(tmp.dir, &.{"--version"});
     defer deinitRun(&version);
     try expectExitCode(version, 0);
-    try std.testing.expectEqualStrings("zigcss 0.7.0-rc.2\n", version.stdout);
+    try std.testing.expectEqualStrings("zigcss 0.7.0-rc.3\n", version.stdout);
     try std.testing.expectEqual(@as(usize, 0), version.stderr.len);
 
     var no_input = try runInDir(tmp.dir, &.{});
@@ -2193,7 +2193,7 @@ test "recovery CLI identifies the current compiler as a release candidate (SAFE-
     var help = try runInDir(tmp.dir, &.{"--help"});
     defer deinitRun(&help);
     try expectSuccess(help);
-    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "ZigCSS 0.7.0-rc.2 native stylesheet compiler — RELEASE CANDIDATE") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "ZigCSS 0.7.0-rc.3 native stylesheet compiler — RELEASE CANDIDATE") != null);
     try std.testing.expect(std.mem.indexOf(u8, help.stdout, "--optimize               Run the closed verified optimizer preset") != null);
     try std.testing.expectEqual(@as(usize, 0), help.stderr.len);
 
