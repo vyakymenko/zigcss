@@ -1,6 +1,6 @@
 # Current source CLI and recovery contract
 
-The current unpublished 0.7.0-rc.2 source checkout owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. The package is not published yet; run `zig-out/bin/zigcss --help` for the authoritative option list.
+The ZigCSS source checkout from the failed 0.7.0-rc.2 release attempt owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. Its exact package identity is permanently closed and was not published; run a freshly built `zig-out/bin/zigcss --help` for its authoritative option list. The failed tag must not be reused.
 
 CSS enters the stable native compile facade. SCSS, indented Sass, Less, and Stylus enter self-contained native Zig parser/evaluators, then their complete generated CSS passes through the same recovery-disabled core. The root JavaScript launcher only locates and invokes the binary; it hosts no language semantics.
 

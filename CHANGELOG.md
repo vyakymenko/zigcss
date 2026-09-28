@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No later stable identity is selected.
 
-Prerelease target `0.7.0-rc.2` is candidate-ready with `candidateReady: true` after all seven pre-tag gates passed. Published stable identity remains immutable at `0.6.0`.
+Prerelease attempt `0.7.0-rc.2` failed; exact identity is permanently closed. GitHub surface `absent`; npm surface `absent`. Select a new candidate version before another release attempt. Published stable identity remains immutable at `0.6.0`.
 
-The historical prerelease attempt `0.7.0-rc.1` failed; its exact identity is permanently closed. GitHub surface `absent`; npm surface `absent`. The new `0.7.0-rc.2` candidate has a separate release contract. Published stable identity remains immutable at `0.6.0`.
+[Release run 36415234756](https://github.com/vyakymenko/zigcss/actions/runs/36415234756) failed on 2026-09-28 after all five native archive integrity checks passed: the Windows npm smoke rejected a packed `package.json` that differed from the tested manifest. GitHub Release creation and npm publication were skipped. The protected `v0.7.0-rc.2` tag remains unchanged as failure evidence; the changes below remain unreleased.
+
+The historical prerelease attempt `0.7.0-rc.1` also failed; its exact identity is permanently closed. GitHub surface `absent`; npm surface `absent`. Published stable identity remains immutable at `0.6.0`.
 
 Release run [34116379683](https://github.com/vyakymenko/zigcss/actions/runs/34116379683) stopped on the Windows archive SHA-256 mismatch before GitHub release creation or npm publication. The tag is retained unchanged as failed-attempt evidence; the changes below remain unreleased.
 

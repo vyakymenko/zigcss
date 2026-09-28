@@ -173,6 +173,9 @@ export function validateNativeIntegritySources(sources) {
     fail('VERSION must contain one canonical version and a final newline')
   }
   const version = parseReleaseVersion(sources.version.trim(), 'native integrity VERSION').value
+  if (sources.packageManifest.includes('\r')) {
+    fail('package.json must use LF checkout bytes for cross-host npm package comparison')
+  }
   const packageManifest = parseJson(sources.packageManifest, 'package.json')
   if (packageManifest === null || typeof packageManifest !== 'object' || Array.isArray(packageManifest)) {
     fail('package.json must contain an object')

@@ -143,7 +143,7 @@ test('workflow display names remain exact and unique', () => {
   }
 })
 
-test('Windows checkout preserves the finite native conformance text-fixture surface as LF', () => {
+test('Windows checkout preserves release manifests and native conformance fixtures as LF', () => {
   const attributes = fs.readFileSync('.gitattributes', 'utf8')
   assert.deepEqual(validateNativeCorpusCheckoutAttributes(attributes), {
     patterns: 13,
@@ -160,6 +160,10 @@ test('Windows checkout preserves the finite native conformance text-fixture surf
   )
   assert.throws(
     () => validateNativeCorpusCheckoutAttributes(attributes.replace('native-integrity.json text eol=lf\n', '')),
+    /canonical release checkout attribute changed/,
+  )
+  assert.throws(
+    () => validateNativeCorpusCheckoutAttributes(attributes.replace('package.json text eol=lf\n', '')),
     /canonical release checkout attribute changed/,
   )
   assert.throws(

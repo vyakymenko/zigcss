@@ -1,6 +1,6 @@
 # Format compatibility
 
-The current unpublished 0.7.0-rc.2 source checkout compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths. CSS enters the verified core directly. Each preprocessor frontend evaluates to complete CSS, which is then parsed with recovery disabled before output can be returned or committed.
+The ZigCSS source checkout from the failed 0.7.0-rc.2 release attempt compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths; its exact package identity is permanently closed and was not published. CSS enters the verified core directly. Each preprocessor frontend evaluates to complete CSS, which is then parsed with recovery disabled before output can be returned or committed.
 
 Stable 0.6.0 contains the self-contained native five-language surface and is published on npm `latest` by the exact stable promotion workflow; historical `0.6.0-rc.2` remains available as an immutable npm version on `next`. Their GitHub releases predate Immutable Releases and read back `immutable: false`.
 

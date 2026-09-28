@@ -5,8 +5,9 @@ tests/preprocessors/sass/corpus/cases/** -whitespace
 install.js text eol=lf
 index.js text eol=lf
 
-# Native conformance preserves authored text-fixture bytes across every checkout host.
+# Release manifests and native conformance preserve exact bytes across checkout hosts.
 VERSION text eol=lf
+package.json text eol=lf
 native-integrity.json text eol=lf
 tests/preprocessors/sass/corpus/cases/**/*.css text eol=lf
 tests/preprocessors/sass/corpus/cases/**/*.sass text eol=lf

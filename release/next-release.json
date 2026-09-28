@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "ownerPackage": "REL-011",
   "releaseGapFamily": "next-release-candidate",
-  "state": "candidate-ready",
-  "candidateReady": true,
+  "state": "publication-failed",
+  "candidateReady": false,
   "candidateVersion": "0.7.0-rc.2",
   "candidateTag": "v0.7.0-rc.2",
   "npmDistTag": "next",
@@ -129,7 +129,8 @@
         "Recorded default-setup CodeQL analysis covers the Actions, JavaScript/TypeScript, and Ruby categories for the pre-admission checkpoint with no error or warning status and zero open CodeQL alerts; tag admission revalidates Build and CodeQL against the exact runtime candidate commit."
       ],
       "evidence": [
-        "pre-admission checkpoint: same-repository main Build run 36401181444 completed success at 2026-09-28T10:11:18Z with Test Suite, five native jobs, five provenance jobs, and Native Package Evidence. CodeQL default setup Actions, JavaScript/TypeScript, and Ruby for the same commit observed at 2026-09-28T10:12:39Z with error=0, warning=0, open alerts=0 under security-events: read. Release workflow revalidates Build and CodeQL for the exact runtime candidate commit before publication."
+        "pre-admission checkpoint: same-repository main Build run 36401181444 completed success at 2026-09-28T10:11:18Z with Test Suite, five native jobs, five provenance jobs, and Native Package Evidence. CodeQL default setup Actions, JavaScript/TypeScript, and Ruby for the same commit observed at 2026-09-28T10:12:39Z with error=0, warning=0, open alerts=0 under security-events: read. Release workflow revalidates Build and CodeQL for the exact runtime candidate commit before publication.",
+        "Final Build run 36408822321 attempt 1 succeeded at 2026-09-28T11:19:10Z for exact candidate commit d48a6b5cfdb6c68fffc05cd512c3582220b118e4: Test Suite, five native, five provenance, and package evidence jobs passed. CodeQL default setup Actions, JavaScript/TypeScript, Ruby on same commit d48a6b5cfdb6c68fffc05cd512c3582220b118e4 had error=0, warning=0, open alerts=0."
       ]
     },
     {
@@ -142,16 +143,61 @@
       ],
       "evidence": [
         "Verified 2026-09-28T10:12:39Z before tag creation: exact origin/main readback matched the pre-admission Build source. Live ruleset 22261144 Protect release tags is active for target tag refs/tags/v* with update and deletion rules, bypass_actors=[], and current_user_can_bypass=never.",
-        "Live immutable releases setting enabled=true and enforced_by_owner=false. The immutable-release environment required reviewer repeats both live readbacks immediately before approval. Tag admission binds the exact runtime candidate commit to a fresh origin/main readback; static evidence stores no commit hash."
+        "Live immutable releases setting enabled=true and enforced_by_owner=false. The immutable-release environment required reviewer repeats both live readbacks immediately before approval. Tag admission binds the exact runtime candidate commit to a fresh origin/main readback; static evidence stores no commit hash.",
+        "Fresh origin/main readback before protected tag creation equalled failed tag commit d48a6b5cfdb6c68fffc05cd512c3582220b118e4; live release controls were verified again at 2026-09-28T11:21:37Z."
       ]
     },
     {
       "id": "tag-workflow-publication",
-      "state": "pending",
+      "state": "failed",
       "evidenceRequirements": [
         "The protected tag workflow publishes the first repository GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next."
       ],
-      "evidence": []
+      "evidence": [
+        "Release run 36415234756 attempt 1 at d48a6b5cfdb6c68fffc05cd512c3582220b118e4 concluded failure at 2026-09-28T11:26:46Z: Windows smoke rejected the packed package.json byte comparison after all five archive integrity checks passed. Create Release and Publish to npm were skipped. Public readback at 2026-09-28T11:27:24Z: GitHub surface absent; npm surface absent; latest=0.6.0; next=0.6.0-rc.2."
+      ]
     }
-  ]
+  ],
+  "publicationFailureEvidence": {
+    "tagCommit": "d48a6b5cfdb6c68fffc05cd512c3582220b118e4",
+    "finalBuildEvidence": {
+      "workflow": "Build",
+      "commit": "d48a6b5cfdb6c68fffc05cd512c3582220b118e4",
+      "runId": 36408822321,
+      "runAttempt": 1,
+      "conclusion": "success",
+      "completedAt": "2026-09-28T11:19:10Z"
+    },
+    "releaseWorkflowEvidence": {
+      "workflow": "Release",
+      "commit": "d48a6b5cfdb6c68fffc05cd512c3582220b118e4",
+      "runId": 36415234756,
+      "runAttempt": 1,
+      "conclusion": "failure",
+      "completedAt": "2026-09-28T11:26:46Z"
+    },
+    "githubSurface": {
+      "state": "absent",
+      "releaseId": null,
+      "releaseUrl": null,
+      "publishedAt": null,
+      "assetCount": 0,
+      "assetBytes": 0,
+      "assetInventorySha256": null,
+      "releaseAttestation": "absent"
+    },
+    "npmSurface": {
+      "state": "absent",
+      "version": "0.7.0-rc.2",
+      "distTag": "next",
+      "latest": "0.6.0",
+      "next": "0.6.0-rc.2",
+      "fileCount": 0,
+      "unpackedSize": 0,
+      "integrity": null,
+      "shasum": null,
+      "provenancePredicateType": null,
+      "anonymousInstall": "not-run"
+    }
+  }
 }

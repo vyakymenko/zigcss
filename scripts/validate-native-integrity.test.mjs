@@ -205,6 +205,13 @@ test('exact schema, package identity, version, epoch, inventory, filenames, and 
   assert.throws(
     () => validateNativeIntegritySources({
       ...base.sources,
+      packageManifest: base.sources.packageManifest.replaceAll('\n', '\r\n'),
+    }),
+    /package\.json must use LF checkout bytes/,
+  )
+  assert.throws(
+    () => validateNativeIntegritySources({
+      ...base.sources,
       packageManifest: canonicalJson({ name: 'zigcss', version: historicalStableVersion }),
     }),
     /package\.json version must be 0\.7\.0-rc\.1/,

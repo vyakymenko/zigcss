@@ -463,7 +463,7 @@ export function validateZigTestSuiteRunner() {
 
 export function validateNativeCorpusCheckoutAttributes(source) {
   if (source.includes('\r')) fail('.gitattributes must use LF line endings')
-  for (const attribute of ['VERSION text eol=lf', 'native-integrity.json text eol=lf']) {
+  for (const attribute of ['VERSION text eol=lf', 'package.json text eol=lf', 'native-integrity.json text eol=lf']) {
     if (source.split(attribute).length !== 2) {
       fail(`canonical release checkout attribute changed: ${attribute}`)
     }
