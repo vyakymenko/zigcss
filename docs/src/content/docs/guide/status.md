@@ -8,7 +8,7 @@ GitHub candidate surface: `absent`; npm candidate surface: `absent`.
 
 Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass; published stable identity remains 0.6.0.
 
-1 of 8 admission gates now carry recorded evidence. Only the new candidate-selection gate is verified; version synchronization, reproducible native archives, local and site validation, hosted Build evidence, exact `origin/main` integration, and publication remain pending. This is a source-only candidate, not a published package.
+2 of 8 admission gates now carry recorded evidence. Candidate selection and version synchronization are verified; hosted reproduction of the native archives, local and site validation, Build evidence, exact `origin/main` integration, and publication remain pending. This is a source-only candidate, not a published package.
 
 The previous 0.7.0-rc.2 release attempt failed, and its exact identity is permanently closed. [Release run 36415234756](https://github.com/vyakymenko/zigcss/actions/runs/36415234756) failed on 2026-09-28 at the Windows npm smoke: packed `package.json` differed from the tested manifest. All five native archive integrity checks passed, but GitHub Release creation, npm publication, and anonymous public-delivery verification were skipped. Exact-version readbacks found neither release surface. Keep protected tag `v0.7.0-rc.2` unchanged; the new rc.3 candidate has a separate admission contract.
 
