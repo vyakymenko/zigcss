@@ -24,4 +24,4 @@ and dependency invalidation before removing the checkout.
 This is not a published `zigcss/parcel` export or a separately installable
 transformer. It makes no claim for Parcel versions other than 2.16.4, general
 Parcel compatibility, development watch mode, HMR, or stable ZigCSS 0.6.0
-delivery; Published `zigcss@0.7.0-rc.3` contains the root compiler protocol but no `zigcss/parcel` export, so this remains a local transformer proof.
+delivery; Published `zigcss@0.7.0-rc.3` contains the root compiler protocol but no `zigcss/parcel` export. The rc.3 Release workflow failed and its exact identity is closed, while the active 0.7.0-rc.4 candidate is unpublished; this remains a local source-checkout example rather than a published Parcel transformer.

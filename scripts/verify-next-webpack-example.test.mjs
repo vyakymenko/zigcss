@@ -25,7 +25,7 @@ const expectedFiles = Object.freeze([
   'package.json',
 ])
 const expectedHostVersions = Object.freeze({
-  next: '16.3.4',
+  next: '16.3.8',
   react: '19.2.4',
   'react-dom': '19.2.4',
   sass: '1.101.0',
@@ -441,7 +441,7 @@ function changedFiles(before, after) {
   return Object.keys(before).filter(filename => before[filename] !== after[filename]).sort()
 }
 
-test('Next 16.3.4 Webpack example is an exact global-SCSS reuse of zigcss/webpack', () => {
+test('Next 16.3.8 Webpack example is an exact global-SCSS reuse of zigcss/webpack', () => {
   assert.equal(validateExampleContract(loadExampleContract()), true)
 
   const isolated = installEnvironment('/tmp/zigcss-next-webpack', '/tmp/zigcss-next-webpack/npmrc', {

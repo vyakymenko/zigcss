@@ -1614,7 +1614,7 @@ test('binds the finite NATIVE-008 capability graduation terminal', () => {
     [
       'statusGuide',
       'docs/src/content/docs/guide/status.md',
-      'The current `Unreleased` source package additionally exposes a typed programmatic Node.js API',
+      'The published `zigcss@0.7.0-rc.3` prerelease package additionally exposes a typed programmatic Node.js API',
       'This source package has no programmatic API',
       /status guide is missing/,
     ],
@@ -1999,7 +1999,7 @@ test('binds website claims and the recorded lab to the native product path', () 
     ],
     [
       'docs/src/app/components/Features.tsx',
-      'The table mixes explicitly labeled published-stable rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; rows whose contract says current, source-checkout, or Unreleased remain Unreleased even after their gates pass.',
+      'The table mixes explicitly labeled published-stable and prerelease rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; current-source host proofs retain their narrower checkout boundary.',
       'The compatibility table describes an unbounded future product path.',
       /website published compatibility boundary is missing/,
     ],

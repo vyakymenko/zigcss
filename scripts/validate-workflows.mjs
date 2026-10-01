@@ -264,13 +264,13 @@ export const nixFlakeCiPolicy = Object.freeze({
 
 export const turbopackCiPolicy = Object.freeze({
   gate: 'npm run test:turbopack-example',
-  host: 'Next.js 16.3.4',
+  host: 'Next.js 16.3.8',
   nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
 })
 
 export const nextWebpackCiPolicy = Object.freeze({
   gate: 'npm run test:next-webpack-example',
-  host: 'Next.js 16.3.4 with Webpack 5.110.2',
+  host: 'Next.js 16.3.8 with Webpack 5.110.2',
   nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
   nodeVersion: '24.20.0',
 })

@@ -9,6 +9,7 @@ import {
 } from './validate-stable-release.mjs'
 
 const script = fileURLToPath(new URL('./validate-stable-release.mjs', import.meta.url))
+const currentSourceVersion = readStableReleaseSources().get('VERSION').trim()
 
 function clone(value) {
   return structuredClone(value)
@@ -292,7 +293,7 @@ test('rejects missing, extra, malformed, and package-divergent release sources',
   assert.throws(
     () => validateStableReleaseContract(
       readStableReleaseContract(),
-      changedSources('package.json', source => source.replace('"version": "0.7.0-rc.3"', '"version": "0.7.0"')),
+      changedSources('package.json', source => source.replace(`"version": "${currentSourceVersion}"`, '"version": "0.7.0"')),
     ),
     /current package version/,
   )

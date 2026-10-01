@@ -35,6 +35,12 @@ describe('GettingStarted', () => {
       )
       expect(document.body.textContent).not.toContain(`Its active identity is the unpublished ${nextRelease.candidateVersion} candidate.`)
       expect(document.body.textContent).not.toContain(`ZigCSS ${nextRelease.candidateVersion} is published on npm next`)
+    } else if (nextRelease.state === 'planned') {
+      expect(screen.getByText(/the source snapshot compiles css/i)).toHaveTextContent(
+        `Its active identity is the unpublished ${nextRelease.candidateVersion} candidate.`,
+      )
+      expect(document.body.textContent).toContain('Release attempt 0.7.0-rc.3 failed after the exact npm package was published')
+      expect(document.body.textContent).not.toContain(`ZigCSS ${nextRelease.candidateVersion} is published on npm next`)
     }
     expect(screen.getByText(/dart sass 1\.101\.0.*less 4\.9\.0.*stylus 0\.64\.0.*development-only reference oracles.*frozen 4\.6\.7 native baseline/i)).toBeInTheDocument()
     expect(screen.getByText(/does not enable arbitrary plugins/i)).toBeInTheDocument()

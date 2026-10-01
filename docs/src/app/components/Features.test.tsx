@@ -25,6 +25,12 @@ describe('Features', () => {
       )
       expect(document.body.textContent).not.toContain(`That evidence belongs to unpublished candidate ${nextRelease.candidateVersion}.`)
       expect(document.body.textContent).not.toContain(`That evidence ships in published prerelease ${nextRelease.candidateVersion} on npm next.`)
+    } else if (nextRelease.state === 'planned') {
+      expect(screen.getByText(/separates published stable 0\.6\.0 delivery/i)).toHaveTextContent(
+        `The active ${nextRelease.candidateVersion} candidate is unpublished and planned; only identity selection is verified.`,
+      )
+      expect(document.body.textContent).toContain('Release attempt 0.7.0-rc.3 failed; GitHub immutable-published; npm published-exact')
+      expect(document.body.textContent).not.toContain(`That evidence ships in published prerelease ${nextRelease.candidateVersion} on npm next.`)
     }
     expect(screen.getByText(/REL-010 promotes only the stable 0\.6\.0 rows/i)).toBeInTheDocument()
     expect(screen.getByText(/current-source host proofs retain their narrower checkout boundary/i)).toBeInTheDocument()

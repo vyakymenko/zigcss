@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 1,
   "ownerPackage": "REL-011",
   "releaseGapFamily": "next-release-candidate",
-  "state": "publication-failed",
+  "state": "planned",
   "candidateReady": false,
-  "candidateVersion": "0.7.0-rc.3",
-  "candidateTag": "v0.7.0-rc.3",
+  "candidateVersion": "0.7.0-rc.4",
+  "candidateTag": "v0.7.0-rc.4",
   "npmDistTag": "next",
   "githubPrerelease": true,
   "closedHistory": [
@@ -59,6 +59,43 @@
       "npmLatest": "0.6.0",
       "npmNext": "0.6.0-rc.2",
       "reason": "x86_64-windows packed package.json differed from tested manifest"
+    },
+    {
+      "version": "0.7.0-rc.3",
+      "tag": "v0.7.0-rc.3",
+      "tagCommit": "798396a054f32c31cfd804431dc40ad5c2373bb6",
+      "finalBuildRunId": 36437425300,
+      "finalBuildRunAttempt": 1,
+      "finalBuildConclusion": "success",
+      "finalBuildCompletedAt": "2026-09-28T15:34:36Z",
+      "releaseRunId": 36833868345,
+      "releaseRunAttempt": 1,
+      "releaseConclusion": "failure",
+      "releaseCompletedAt": "2026-10-01T08:10:16Z",
+      "githubSurface": {
+        "state": "immutable-published",
+        "releaseId": 400760185,
+        "releaseUrl": "https://github.com/vyakymenko/zigcss/releases/tag/v0.7.0-rc.3",
+        "publishedAt": "2026-10-01T08:08:51Z",
+        "assetCount": 25,
+        "assetBytes": 10518010,
+        "assetInventorySha256": "6580b84edd2f509744af9af8b09e20e625eb7f9f6dfd28cb9f1736d245262cf7",
+        "releaseAttestation": "verified"
+      },
+      "npmSurface": {
+        "state": "published-exact",
+        "version": "0.7.0-rc.3",
+        "distTag": "next",
+        "latest": "0.6.0",
+        "next": "0.7.0-rc.3",
+        "fileCount": 48,
+        "unpackedSize": 200428,
+        "integrity": "sha512-sr02GUnhLgW+tGcy6Nuu83KKeHz064yeUOp74QVzit9qfwhw47mc30yAXJlot9tg+7GbNupTXNsg6WZ+SjEodQ==",
+        "shasum": "4099bbff10460a2a290ecf33fd0f01e05a767370",
+        "provenancePredicateType": "https://slsa.dev/provenance/v1",
+        "anonymousInstall": "not-run"
+      },
+      "reason": "npm publication readback did not converge after 12 attempts; anonymous public delivery was skipped"
     }
   ],
   "publicationApproval": {
@@ -93,130 +130,70 @@
       "id": "candidate-selection",
       "state": "verified",
       "evidenceRequirements": [
-        "The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.3 was selected; the failed v0.7.0-rc.1 and v0.7.0-rc.2 identities remain permanently closed."
+        "The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.4 was selected; the failed v0.7.0-rc.1, v0.7.0-rc.2, and v0.7.0-rc.3 identities remain permanently closed."
       ],
       "evidence": [
-        "Verified 2026-09-28T13:09:41Z: GitHub tag and release v0.7.0-rc.3 and npm zigcss@0.7.0-rc.3 were absent. Earlier 2026-09-28T11:27:24Z readback: npm latest=0.6.0 and next=0.6.0-rc.2. Failed v0.7.0-rc.1 and v0.7.0-rc.2 tags remain permanently closed."
+        "Verified 2026-10-01T08:20:47Z: GitHub tag and release v0.7.0-rc.4 absent; npm zigcss@0.7.0-rc.4 E404; npm latest=0.6.0 and next=0.7.0-rc.3. Failed v0.7.0-rc.1, v0.7.0-rc.2, and v0.7.0-rc.3 identities remain permanently closed."
       ]
     },
     {
       "id": "version-synchronization",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
-        "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.3."
+        "Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.4."
       ],
-      "evidence": [
-        "2026-09-28: VERSION, npm package and lockfiles, Zig manifest and CLI, containers, editor, and current-source documentation identify 0.7.0-rc.3; check:version verified 46 synchronized surfaces and test:version passed 24/24."
-      ]
+      "evidence": []
     },
     {
       "id": "native-integrity",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
-        "All five architecture-matched release archives reproduce the committed 0.7.0-rc.3 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission."
+        "All five architecture-matched release archives reproduce the committed 0.7.0-rc.4 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission."
       ],
-      "evidence": [
-        "2026-09-28: Pinned Zig 0.15.2 independently reproduced all five 0.7.0-rc.3 architecture-matched archives twice from fresh caches; each SHA-256 matched the committed native integrity inventory. All five downloaded Build run 36428201955 archives also matched the inventory byte-for-byte. The candidate-ready Build will rerun exact archive integrity before tag admission."
-      ]
+      "evidence": []
     },
     {
       "id": "local-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "The complete Debug, ReleaseSafe, package, consumer, builder, documentation, and audit gates pass for the candidate source."
       ],
-      "evidence": [
-        "2026-09-28: Local version, admission, workflow, native integrity, preprocessor package, capability, and documentation checks passed; version tests 24/24, admission tests 20/20, workflow tests 72/72, and native integrity tests 13/13 passed. Build run 36428201955 completed the full Debug, ReleaseSafe, package, consumer, builder, documentation, and audit Test Suite successfully at 2026-09-28T14:32:04Z."
-      ]
+      "evidence": []
     },
     {
       "id": "documentation-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "The candidate documentation tests, production build, served bundle, container smoke, and stable-versus-current identity boundary pass."
       ],
-      "evidence": [
-        "2026-09-28: Candidate site tests passed 248/248; production build, 11 SEO pages, 10 sitemap URLs, and all 33 served files passed, with 103.4 KiB gzip below the 160 KiB budget. Build run 36428201955 also passed Test documentation site, development container smoke, documentation links/examples, and stable-versus-current identity validation."
-      ]
+      "evidence": []
     },
     {
       "id": "hosted-validation",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "A recorded same-repository main Build run passes the complete test job and every architecture-matched build and provenance job for a pre-admission checkpoint, with its run ID and completion time stored without a commit hash.",
         "Recorded default-setup CodeQL analysis covers the Actions, JavaScript/TypeScript, and Ruby categories for the pre-admission checkpoint with no error or warning status and zero open CodeQL alerts; tag admission revalidates Build and CodeQL against the exact runtime candidate commit."
       ],
-      "evidence": [
-        "Build run 36428201955 completed successfully at 2026-09-28T14:32:06Z for the pre-admission checkpoint on main: full Test Suite plus all five architecture-matched build jobs, five native provenance jobs, and native package evidence passed.",
-        "At 2026-09-28T14:34:11Z, CodeQL default setup on the same commit covered Actions, JavaScript/TypeScript, and Ruby with error=0, warning=0, open alerts=0 under security-events: read. The Release workflow revalidates Build and CodeQL against the exact runtime candidate commit.",
-        "Build run 36437425300 attempt 1 succeeded at 2026-09-28T15:34:36Z for exact tag commit 798396a054f32c31cfd804431dc40ad5c2373bb6; CodeQL default setup covered Actions, JavaScript/TypeScript, and Ruby on same commit 798396a054f32c31cfd804431dc40ad5c2373bb6 with error=0, warning=0, open alerts=0 under security-events: read."
-      ]
+      "evidence": []
     },
     {
       "id": "origin-main-integration",
-      "state": "verified",
+      "state": "pending",
       "evidenceRequirements": [
         "Candidate-ready evidence stores no candidate commit hash; after that contract is committed, tag admission requires the peeled runtime candidate commit to equal a fresh exact origin/main readback.",
         "Repository ruleset 22261144 (`Protect release tags`) is re-read immediately before tag admission as active for the tag target including `refs/tags/v*`, with exact update and deletion rules, no bypass actors, and `current_user_can_bypass: never`.",
         "Before tag creation, the repository immutable-releases endpoint records enabled=true and enforced_by_owner=false through a live admin read; the create-release job then waits on the immutable-release environment until its required reviewer repeats that live read immediately before approval."
       ],
-      "evidence": [
-        "2026-09-28T14:34:30Z: pre-admission HEAD equaled a fresh exact origin/main readback. Candidate-ready evidence intentionally stores no commit hash; tag admission repeats the peeled runtime candidate commit versus fresh exact origin/main readback.",
-        "2026-09-28T14:34:11Z before tag creation: ruleset 22261144 (Protect release tags) is active for target tag including refs/tags/v*, with update and deletion rules, bypass_actors=[], current_user_can_bypass=never. The immutable releases setting reads enabled=true, enforced_by_owner=false. The immutable-release environment has its sole required reviewer; required reviewer repeats both live control reads immediately before deployment approval.",
-        "Protected v0.7.0-rc.3 tag and origin/main integration resolved to exact commit 798396a054f32c31cfd804431dc40ad5c2373bb6 for the failed publication terminal."
-      ]
+      "evidence": []
     },
     {
       "id": "tag-workflow-publication",
-      "state": "failed",
+      "state": "pending",
       "evidenceRequirements": [
-        "The protected tag workflow publishes the first repository GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next."
+        "The protected tag workflow publishes a distinct GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next."
       ],
-      "evidence": [
-        "Release run 36833868345 attempt 1 failed with failure at 798396a054f32c31cfd804431dc40ad5c2373bb6 on 2026-10-01T08:10:16Z; GitHub surface immutable-published; npm surface published-exact; anonymous public delivery did not run."
-      ]
+      "evidence": []
     }
-  ],
-  "publicationFailureEvidence": {
-    "tagCommit": "798396a054f32c31cfd804431dc40ad5c2373bb6",
-    "finalBuildEvidence": {
-      "workflow": "Build",
-      "commit": "798396a054f32c31cfd804431dc40ad5c2373bb6",
-      "runId": 36437425300,
-      "runAttempt": 1,
-      "conclusion": "success",
-      "completedAt": "2026-09-28T15:34:36Z"
-    },
-    "releaseWorkflowEvidence": {
-      "workflow": "Release",
-      "commit": "798396a054f32c31cfd804431dc40ad5c2373bb6",
-      "runId": 36833868345,
-      "runAttempt": 1,
-      "conclusion": "failure",
-      "completedAt": "2026-10-01T08:10:16Z"
-    },
-    "githubSurface": {
-      "state": "immutable-published",
-      "releaseId": 400760185,
-      "releaseUrl": "https://github.com/vyakymenko/zigcss/releases/tag/v0.7.0-rc.3",
-      "publishedAt": "2026-10-01T08:08:51Z",
-      "assetCount": 25,
-      "assetBytes": 10518010,
-      "assetInventorySha256": "6580b84edd2f509744af9af8b09e20e625eb7f9f6dfd28cb9f1736d245262cf7",
-      "releaseAttestation": "verified"
-    },
-    "npmSurface": {
-      "state": "published-exact",
-      "version": "0.7.0-rc.3",
-      "distTag": "next",
-      "latest": "0.6.0",
-      "next": "0.7.0-rc.3",
-      "fileCount": 48,
-      "unpackedSize": 200428,
-      "integrity": "sha512-sr02GUnhLgW+tGcy6Nuu83KKeHz064yeUOp74QVzit9qfwhw47mc30yAXJlot9tg+7GbNupTXNsg6WZ+SjEodQ==",
-      "shasum": "4099bbff10460a2a290ecf33fd0f01e05a767370",
-      "provenancePredicateType": "https://slsa.dev/provenance/v1",
-      "anonymousInstall": "not-run"
-    }
-  }
+  ]
 }

@@ -451,7 +451,7 @@ function confinedNextWorker(filename) {
   try {
     const manifestFile = path.join(nextRoot, 'package.json')
     const manifest = readBoundedJson(manifestFile, 'Next manifest')
-    return manifest.name === 'next' && manifest.version === '16.3.4'
+    return manifest.name === 'next' && manifest.version === '16.3.8'
   } catch {
     return false
   }

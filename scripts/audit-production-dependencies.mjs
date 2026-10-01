@@ -137,11 +137,11 @@ function normalizedRecord(value) {
 }
 
 export const reviewedDevelopmentOracleOverrides = Object.freeze({
-  'brace-expansion': '5.0.9',
+  'brace-expansion': '5.0.12',
 })
 
 export const reviewedExtensionProductionPatches = Object.freeze({
-  'brace-expansion': '5.0.9',
+  'brace-expansion': '5.0.12',
 })
 export const reviewedBuildGraphSecurityPatches = Object.freeze({
   browserslist: '4.28.8',

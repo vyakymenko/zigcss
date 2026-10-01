@@ -1684,7 +1684,7 @@ function validateWebsiteGraduation(websiteSources, formatExamples, siteExamplesT
   requireText(showcase, '{selected.frontend}', 'website native lab frontend label')
   requireText(
     features,
-    'The table mixes explicitly labeled published-stable rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; rows whose contract says current, source-checkout, or Unreleased remain Unreleased even after their gates pass.',
+    'The table mixes explicitly labeled published-stable and prerelease rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; current-source host proofs retain their narrower checkout boundary.',
     'website published compatibility boundary',
   )
   requireText(playground, 'Playground unavailable', 'website public compile service boundary')
@@ -2141,7 +2141,7 @@ function validateCapabilityGraduation(
     'After the native Debug suite builds `zig-out/bin/zigcss`',
     'real Vite, Rollup, esbuild, pinned Bun 1.4.0, Webpack 5.110.2, and Rspack 2.2.2 builds all compile SCSS through that exact current-checkout binary',
     'Bun deliberately makes no native-import watch claim',
-    'pinned Next.js 16.3.4 Turbopack build reuses only `zigcss/webpack`',
+    'pinned Next.js 16.3.8 Turbopack build reuses only `zigcss/webpack`',
     'Next.js 16.2+ module types are required',
     'does not claim CSS Modules, indented Sass, Less, Stylus, arbitrary SCSS globs',
     'a `zigcss/turbopack` export, a general Turbopack plugin, or wider framework support',
@@ -2164,7 +2164,7 @@ function validateCapabilityGraduation(
     fail('capability metadata Next.js Webpack host status drifted')
   }
   for (const needle of [
-    'Next.js 16.3.4 current-source Webpack gate',
+    'Next.js 16.3.8 current-source Webpack gate',
     '`zigcss/webpack`',
     "exact-project-file `enforce: 'pre'` rule",
     'exact Sass 1.101.0 remains only the downstream parser',
@@ -2267,10 +2267,10 @@ function validateCapabilityGraduation(
         'The four preprocessor rows are `native-graduated` on the published stable release',
         'These exact providers are development-only reference oracles.',
         'they do not run during compilation',
-        'The current `Unreleased` package-root Node.js API exposes the same closed five-syntax set',
+        'The published 0.7.0-rc.3 prerelease package-root Node.js API exposes the same closed five-syntax set',
         'Explicit experimental adapters now expose the current-checkout compiler through `zigcss/vite`, `zigcss/rollup`, `zigcss/esbuild`, `zigcss/bun`, `zigcss/webpack`, and `zigcss/rspack`',
         'These integrations do not add new source languages or imply a published Parcel transformer, framework-specific adapter, Nx executor, Bazel rule, Angular integration, or general framework compatibility.',
-        'A pinned Next.js 16.3.4 Turbopack example reuses only `zigcss/webpack`',
+        'A pinned Next.js 16.3.8 Turbopack example reuses only `zigcss/webpack`',
         'Next.js 16.2+ loader output module types are required',
         'The same exact host now has a separate Webpack proof with Sass 1.101.0 only as the downstream parser',
         'cached-offline `next build --webpack` production builds while blocking public Node network entry points',
@@ -2294,7 +2294,7 @@ function validateCapabilityGraduation(
       [
         'SCSS, indented Sass, Less, and Stylus route through self-contained native Zig parser/evaluators',
         'The JavaScript command launcher only locates and invokes that binary.',
-        'The current `Unreleased` source package additionally exposes a typed programmatic Node.js API',
+        'The published `zigcss@0.7.0-rc.3` prerelease package additionally exposes a typed programmatic Node.js API',
         '## Programmatic Node.js API boundary',
         'The closed export set is `compile`, `compileSync`, `compileFile`, `compileFileSync`, `detectSyntax`, and `ZigCssCompileError`.',
         'A string `sourcePath` may name a virtual file, but its parent must exist and is realpath-canonicalized.',
@@ -2312,7 +2312,7 @@ function validateCapabilityGraduation(
         'Both remain current-source-checkout proofs rather than stable 0.6.0 delivery.',
         'No PostCSS adapter is shipped',
         'A separately published Parcel transformer or framework-specific adapter, Bazel rule, Nx executor, and Angular integration remain unclaimed',
-        'A separate pinned Next.js 16.3.4 Webpack gate uses one exact-project-file `enforce: \'pre\'` rule',
+        'A separate pinned Next.js 16.3.8 Webpack gate uses one exact-project-file `enforce: \'pre\'` rule',
         'blocks public Node network entry points during `next build --webpack`',
         'unchanged cache hit with zero native invocations',
         'dependency-only warm rebuild',
@@ -2322,7 +2322,7 @@ function validateCapabilityGraduation(
         'it must stay dependency-free and script-free',
         "The ordinary build workflow's Test job uses exact Node 24.20.0 LTS",
         'The explicit `zigcss.experimental_native` namespace admits exactly SCSS, indented Sass, Less, and Stylus.',
-        '`NATIVE-009` published candidate `0.6.0-rc.2` is verified on the GitHub prerelease and npm `next` channels',
+        'The `NATIVE-009` historical candidate `0.6.0-rc.2` remains verified by its historically mutable GitHub prerelease and immutable npm version.',
       ],
     ],
     [

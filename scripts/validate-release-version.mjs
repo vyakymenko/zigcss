@@ -439,7 +439,7 @@ export function validateReleaseSources(sources) {
   }
   expectEqual(nextRelease.ownerPackage, 'REL-011', 'planned release owner package')
   expectEqual(nextRelease.releaseGapFamily, 'next-release-candidate', 'planned release family')
-  expectEqual(nextRelease.candidateVersion, '0.7.0-rc.3', 'planned release candidate version')
+  expectEqual(nextRelease.candidateVersion, '0.7.0-rc.4', 'planned release candidate version')
   expectEqual(nextRelease.candidateTag, `v${plannedCandidate.value}`, 'planned release candidate tag')
   if (plannedCandidate.prerelease === null || plannedCandidate.build !== null) {
     fail('planned release candidate must be a prerelease without build metadata')
@@ -579,7 +579,7 @@ export function validateReleaseSources(sources) {
   ]) {
     expectContains(releaseArtifactBehavior, fragment, 'release-artifact immutable approval capability')
   }
-  const plannedImmutableIdentity = `\`${nextRelease.candidateTag}\` must be the first true immutable GitHub Release.`
+  const plannedImmutableIdentity = `\`${nextRelease.candidateTag}\` must publish its own immutable GitHub Release.`
   const failedImmutableIdentity = `The failed tag \`${nextRelease.candidateTag}\` is permanently closed; any new publication requires a newly authorized candidate version.`
   if (nextReleasePhase.state === 'publication-failed') {
     expectContains(releaseArtifactBehavior, failedImmutableIdentity, 'release-artifact failed immutable identity boundary')
@@ -810,7 +810,11 @@ export function validateReleaseSources(sources) {
       `ZigCSS ${version} release attempt failed and the exact identity is permanently closed.`,
       'status failed publication identity',
     )
-    expectContains(status, surfaceSummary, 'status failed publication surfaces')
+    expectContains(
+      status,
+      `ZigCSS ${version} release attempt failed and the exact identity is permanently closed.\n\n${surfaceSummary}`,
+      'status failed publication surfaces',
+    )
     expectContains(
       status,
       '`candidateReady` interlock is `false` after the failed publication attempt',

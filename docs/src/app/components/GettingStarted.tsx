@@ -9,7 +9,7 @@ export function GettingStarted() {
           <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#b7f34a]">Get started</p>
           <h1 className="display-type mt-5 max-w-3xl text-5xl tracking-[-0.05em] sm:text-6xl">Start with any of five stylesheet languages.</h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-[#cbd4cc]">
-            The source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig frontends and one strict output boundary. Release attempt 0.7.0-rc.3 failed after the exact npm package was published; npm next still serves it and stable latest remains 0.6.0. Failed 0.7.0-rc.1, 0.7.0-rc.2, and 0.7.0-rc.3 identities remain closed. Maintained host proofs still use a source checkout.
+            The source snapshot compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig frontends and one strict output boundary. Its active identity is the unpublished 0.7.0-rc.4 candidate. Release attempt 0.7.0-rc.3 failed after the exact npm package was published; npm next still serves it and stable latest remains 0.6.0. Failed 0.7.0-rc.1, 0.7.0-rc.2, and 0.7.0-rc.3 identities remain closed. Maintained host proofs still use a source checkout.
           </p>
         </div>
       </section>

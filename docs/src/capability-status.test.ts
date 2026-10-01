@@ -147,9 +147,10 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('release-artifacts')?.behavior).toContain('25 exact assets')
     expect(byId.get('release-artifacts')?.behavior).toContain('reads back `immutable: false`')
     const retiredPublication = `The failed tag \`${nextRelease.candidateTag}\` is permanently closed; any new publication requires a newly authorized candidate version.`
-    const firstImmutablePublication = `\`${nextRelease.candidateTag}\` must be the first true immutable GitHub Release.`
-    expect(byId.get('release-artifacts')?.behavior).toContain(nextRelease.state === 'publication-failed' ? retiredPublication : firstImmutablePublication)
-    expect(byId.get('release-artifacts')?.behavior).not.toContain(nextRelease.state === 'publication-failed' ? firstImmutablePublication : retiredPublication)
+    const ownImmutablePublication = `\`${nextRelease.candidateTag}\` must publish its own immutable GitHub Release.`
+    expect(byId.get('release-artifacts')?.behavior).toContain(nextRelease.state === 'publication-failed' ? retiredPublication : ownImmutablePublication)
+    expect(byId.get('release-artifacts')?.behavior).not.toContain(nextRelease.state === 'publication-failed' ? ownImmutablePublication : retiredPublication)
+    expect(byId.get('release-artifacts')?.behavior).toContain('Its GitHub prerelease was the first to read back `immutable: true`')
     expect(byId.get('benchmark-report')?.statusKind).toBe('unavailable')
     expect(byId.get('benchmark-report')?.behavior).toContain('machine-attested Linux x64 bare metal')
     expect(byId.get('benchmark-report')?.behavior).toContain('no archive is selected')
@@ -199,7 +200,7 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('alternate-ecosystem-formats')?.evidence).toContain('turbopack-example')
     expect(byId.get('alternate-ecosystem-formats')?.evidence).toContain('sveltekit-example')
     expect(byId.get('alternate-ecosystem-formats')?.evidence).toContain('parcel-example')
-    expect(byId.get('alternate-ecosystem-formats')?.behavior).toContain('pinned Next.js 16.3.4 Turbopack build reuses only `zigcss/webpack`')
+    expect(byId.get('alternate-ecosystem-formats')?.behavior).toContain('pinned Next.js 16.3.8 Turbopack build reuses only `zigcss/webpack`')
     expect(byId.get('alternate-ecosystem-formats')?.behavior).toContain('Next.js 16.2+ module types are required')
     expect(byId.get('alternate-ecosystem-formats')?.behavior).toContain('does not claim CSS Modules, indented Sass, Less, Stylus, arbitrary SCSS globs')
     expect(byId.get('alternate-ecosystem-formats')?.behavior).toContain('a `zigcss/turbopack` export, a general Turbopack plugin, or wider framework support')
@@ -209,7 +210,7 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('alternate-ecosystem-formats')?.behavior).toContain('Exact Next.js Webpack, Astro, and Nuxt host proofs are tracked as separate current-source capability rows')
     expect(byId.get('next-webpack-host-example')?.statusKind).toBe('experimental')
     expect(byId.get('next-webpack-host-example')?.status).toContain('pinned host-tested')
-    expect(byId.get('next-webpack-host-example')?.behavior).toContain('Next.js 16.3.4 current-source Webpack gate')
+    expect(byId.get('next-webpack-host-example')?.behavior).toContain('Next.js 16.3.8 current-source Webpack gate')
     expect(byId.get('next-webpack-host-example')?.behavior).toContain('blocking public Node network entry points')
     expect(byId.get('next-webpack-host-example')?.behavior).toContain('unchanged persistent-cache hit with zero native invocations')
     expect(byId.get('next-webpack-host-example')?.behavior).toContain('dependency-only warm rebuild')

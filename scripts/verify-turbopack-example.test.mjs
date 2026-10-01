@@ -24,7 +24,7 @@ const expectedFiles = Object.freeze([
   'package.json',
 ])
 const expectedHostVersions = Object.freeze({
-  next: '16.3.4',
+  next: '16.3.8',
   react: '19.2.4',
   'react-dom': '19.2.4',
   sass: '1.101.0',
@@ -121,8 +121,10 @@ export function validateExampleContract(contract) {
   assert.equal(contract.dependency, initialDependency)
   assert.match(contract.readme, /source-checkout example reuses the existing `zigcss\/webpack` raw loader/)
   assert.match(contract.readme, /Next\.js added configurable loader output\s+module types in 16\.2/)
-  assert.match(contract.readme, /pinned to Next\.js 16\.3\.4 with\s+React and ReactDOM 19\.2\.4/)
-  assert.match(contract.readme, /published `zigcss@0\.6\.0` binary predates the current `zigcss-node-v1` protocol/)
+  assert.match(contract.readme, /pinned to Next\.js 16\.3\.8 with\s+React and ReactDOM 19\.2\.4/)
+  assert.match(contract.readme, /Published `zigcss@0\.7\.0-rc\.3` contains the `zigcss\/webpack` loader and `zigcss-node-v1` protocol, but its Release workflow failed and its exact identity is closed/)
+  assert.match(contract.readme, /The active 0\.7\.0-rc\.4 source candidate is unpublished/)
+  assert.match(contract.readme, /published `zigcss@0\.6\.0` binary predates the protocol and is not a consumer path/)
   assert.match(contract.readme, /exact root lock with Node 24\.20\.0 LTS/)
   assert.match(contract.readme, /zig build -Doptimize=ReleaseFast/)
   assert.match(contract.readme, /npm ci --ignore-scripts/)
@@ -344,7 +346,7 @@ function parseTrace(filename) {
   return fs.readFileSync(filename, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
 }
 
-test('Next 16.3.4 Turbopack example is a global-SCSS-only reuse of zigcss/webpack', () => {
+test('Next 16.3.8 Turbopack example is a global-SCSS-only reuse of zigcss/webpack', () => {
   assert.equal(validateExampleContract(loadExampleContract()), true)
 })
 
@@ -430,7 +432,7 @@ test('Turbopack host proof warms its exact lock in a private cache before a guar
 
 test('Turbopack example contract rejects aliases modules syntaxes PostCSS and mutable host versions', () => {
   const mutations = [
-    contract => { contract.manifest.devDependencies.next = '^16.3.4' },
+    contract => { contract.manifest.devDependencies.next = '^16.3.8' },
     contract => { contract.rootManifest.devDependencies.react = '19.2.3' },
     contract => { contract.config.turbopack.rules['*.scss'].loaders[0].loader = 'zigcss/turbopack' },
     contract => { delete contract.config.turbopack.rules['*.scss'].condition },
@@ -650,7 +652,7 @@ test('Turbopack preload denies and traces worker process and alternate network e
   assert.equal(records.some(record => record.event === 'native-spawn'), false)
 })
 
-test('current native ZigCSS completes offline Next 16.3.4 Turbopack maps cache invalidation and diagnostics', t => {
+test('current native ZigCSS completes offline Next 16.3.8 Turbopack maps cache invalidation and diagnostics', t => {
   const binaryInput = process.env.ZIGCSS_TURBOPACK_NATIVE_BINARY
   if (binaryInput === undefined) {
     t.skip('set exact absolute ZIGCSS_TURBOPACK_NATIVE_BINARY after building the current checkout')

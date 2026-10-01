@@ -118,7 +118,7 @@ describe('published version-pinned format matrix', () => {
     ]) expect(guide).toContain(subpath)
 
     expect(guide).toMatch(/do not add new source languages or imply a published Parcel transformer, framework-specific adapter, Nx executor, Bazel rule, Angular integration, or general framework compatibility/i)
-    expect(guide).toMatch(/pinned Next\.js 16\.3\.4 Turbopack example reuses only `zigcss\/webpack`/i)
+    expect(guide).toMatch(/pinned Next\.js 16\.3\.8 Turbopack example reuses only `zigcss\/webpack`/i)
     expect(guide).toMatch(/Next\.js 16\.2\+ loader output module types are required/i)
     expect(guide).toMatch(/separate Webpack proof with Sass 1\.101\.0 only as the downstream parser/i)
     expect(guide).toMatch(/cached-offline `next build --webpack` production builds while blocking public Node network entry points/i)

@@ -333,7 +333,7 @@ test('Next.js Turbopack CI owns one post-Debug current-native host gate', () => 
   const sources = cloneSources()
   assert.deepEqual(validateTurbopackWorkflowContract(sources.get('build.yml')), {
     gate: 'npm run test:turbopack-example',
-    host: 'Next.js 16.3.4',
+    host: 'Next.js 16.3.8',
     nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
   })
 
@@ -375,7 +375,7 @@ test('Next.js Webpack CI owns one exact post-Turbopack pre-SvelteKit current-nat
   const sources = cloneSources()
   assert.deepEqual(validateNextWebpackWorkflowContract(sources.get('build.yml')), {
     gate: 'npm run test:next-webpack-example',
-    host: 'Next.js 16.3.4 with Webpack 5.110.2',
+    host: 'Next.js 16.3.8 with Webpack 5.110.2',
     nativeBinary: '${{ github.workspace }}/zig-out/bin/zigcss',
     nodeVersion: '24.20.0',
   })

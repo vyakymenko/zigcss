@@ -1,6 +1,6 @@
 {
   "name": "zigcss",
-  "version": "0.7.0-rc.3",
+  "version": "0.7.0-rc.4",
   "description": "Self-contained native CSS, SCSS, Sass, Less, and Stylus compiler written in Zig",
   "main": "api.cjs",
   "types": "api.d.ts",
@@ -343,7 +343,7 @@
   "preferUnplugged": true,
   "dependencies": {},
   "overrides": {
-    "brace-expansion": "5.0.9"
+    "brace-expansion": "5.0.12"
   },
   "devDependencies": {
     "@mdn/browser-compat-data": "8.0.0",
@@ -355,7 +355,7 @@
     "less": "4.9.0",
     "lightningcss": "1.30.1",
     "lightningcss-cli": "1.30.1",
-    "next": "16.3.4",
+    "next": "16.3.8",
     "parcel": "2.16.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",

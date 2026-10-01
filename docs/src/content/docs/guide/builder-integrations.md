@@ -1,8 +1,8 @@
 # Build tools and framework integrations
 
-After the failed 0.7.0-rc.3 release attempt, the published prerelease and current source checkout have executable integration evidence for the direct
+The current unpublished 0.7.0-rc.4 source checkout has executable integration evidence for the direct
 JavaScript builders, selected framework hosts, four native build systems, and
-six package-manager installation modes. The failed 0.7.0-rc.2 and 0.7.0-rc.3 identities remain closed. These capabilities ship in the published `zigcss@0.7.0-rc.3` prerelease; the maintained checkout proofs remain stricter than registry installation. The immutable published `zigcss@0.6.0` binary predates the
+six package-manager installation modes. The published `zigcss@0.7.0-rc.3` prerelease contains the direct adapter and compiler protocol surfaces, but its Release workflow failed and anonymous public-delivery verification did not run. The failed 0.7.0-rc.2 and 0.7.0-rc.3 identities remain closed. The maintained checkout proofs remain stricter than registry installation. The immutable published `zigcss@0.6.0` binary predates the
 `zigcss-node-v1` protocol and must not be presented as adapter delivery.
 
 ## Prepare one verified checkout
@@ -61,7 +61,7 @@ ZIGCSS_ASTRO_NATIVE_BINARY="$PWD/zig-out/bin/zigcss" npm run test:astro-example
 ZIGCSS_NUXT_NATIVE_BINARY="$PWD/zig-out/bin/zigcss" npm run test:nuxt-example
 ```
 
-- [Next.js 16.3.4 Turbopack and Webpack](https://github.com/vyakymenko/zigcss/tree/main/examples/next-turbopack) prove one confined global SCSS entry, native diagnostics, and dependency-only persistent-cache invalidation. The Webpack route additionally proves an unchanged zero-invocation cache hit.
+- [Next.js 16.3.8 Turbopack and Webpack](https://github.com/vyakymenko/zigcss/tree/main/examples/next-turbopack) prove one confined global SCSS entry, native diagnostics, and dependency-only persistent-cache invalidation. The Webpack route additionally proves an unchanged zero-invocation cache hit.
 - [SvelteKit 2.70.3](https://github.com/vyakymenko/zigcss/tree/main/examples/sveltekit) reuses `zigcss/vite` for one external SCSS CSS Module through client, SSR, and static prerender output.
 - [Astro 7.2.10](https://github.com/vyakymenko/zigcss/tree/main/examples/astro) reuses `zigcss/vite` for one external module through a cached-offline static build, with a native partial, rebased asset, and composed map.
 - [Nuxt 4.5.2](https://github.com/vyakymenko/zigcss/tree/main/examples/nuxt) proves one external module in client, Nitro, and prerender output plus a native partial and rebased asset. The native CSS map chain is claimed only in `.nuxt` intermediate output.
@@ -106,7 +106,7 @@ availability before the native test suite. It then runs the real compiler
 through Make, Ninja, CMake, and Meson; an unavailable local tool is reported as
 an explicit skip. These distribution packages are not content-addressed pins.
 This build-system primitive is implemented
-in the published 0.7.0-rc.3 prerelease and current checkout—no Bazel rule, Nx executor, Angular
+in the published 0.7.0-rc.3 prerelease and current 0.7.0-rc.4 checkout—no Bazel rule, Nx executor, Angular
 integration, or stable 0.6.0 delivery is claimed.
 
 ## Package-manager installation matrix

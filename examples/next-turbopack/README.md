@@ -3,10 +3,10 @@
 This source-checkout example reuses the existing `zigcss/webpack` raw loader in
 Next.js Turbopack. It is intentionally bounded to the one global
 `app/styles.scss` entry shown here. Next.js added configurable loader output
-module types in 16.2; the executable gate is pinned to Next.js 16.3.4 with
+module types in 16.2; the executable gate is pinned to Next.js 16.3.8 with
 React and ReactDOM 19.2.4.
 
-Published `zigcss@0.7.0-rc.3` contains the `zigcss/webpack` loader and `zigcss-node-v1` protocol. Build the current checkout's native binary for this maintained host proof; published `zigcss@0.6.0` predates the protocol and is not a consumer path.
+Published `zigcss@0.7.0-rc.3` contains the `zigcss/webpack` loader and `zigcss-node-v1` protocol, but its Release workflow failed and its exact identity is closed. The active 0.7.0-rc.4 source candidate is unpublished. Build the current checkout's native binary for this maintained source-checkout example; published `zigcss@0.6.0` binary predates the protocol and is not a consumer path.
 
 From the repository root, the supported checkout proof builds ZigCSS with Zig
 0.15.2, installs the exact root lock with Node 24.20.0 LTS, and runs both isolated real-host

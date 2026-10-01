@@ -478,7 +478,7 @@ test('development oracle override is exact and locks the reviewed minimatch secu
   vulnerable.packages['node_modules/brace-expansion'].version = '2.1.2'
   assert.throws(
     () => validateReviewedDevelopmentOracleOverrides(manifest, vulnerable),
-    /must lock brace-expansion 5\.0\.9/,
+    /must lock brace-expansion 5\.0\.12/,
   )
 
   const detached = structuredClone(lock)
@@ -497,7 +497,7 @@ test('VS Code production graph locks the reviewed brace-expansion security patch
   vulnerable.packages['node_modules/brace-expansion'].version = '5.0.8'
   assert.throws(
     () => validateExtensionProductionSecurityPatches(vulnerable),
-    /must lock brace-expansion 5\.0\.9/,
+    /must lock brace-expansion 5\.0\.12/,
   )
 
   const detached = structuredClone(lock)

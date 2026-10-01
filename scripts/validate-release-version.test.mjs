@@ -16,11 +16,12 @@ import {
   validateReleaseVersion,
 } from './validate-release-version.mjs'
 
-const activeVersion = '0.7.0-rc.3'
+const activeVersion = '0.7.0-rc.4'
 const activeBaseVersion = '0.7.0'
 const publishedStableVersion = '0.6.0'
 const synchronizedSurfaceCount = 46
-const plannedImmutableIdentity = `\`v${activeVersion}\` must be the first true immutable GitHub Release.`
+const plannedChangelogLead = `Planned prerelease target \`${activeVersion}\` is selected after the failed \`0.7.0-rc.3\` workflow terminal. The current source package carries the same bounded feature set under a new, unused identity; it is not a published rc.4 package. The admission contract keeps \`candidateReady: false\` until all seven pre-tag gates pass. No rc.4 tag, GitHub Release, or npm version is authorized yet. npm \`next\` still serves the published exact rc.3 package, whose workflow failed; stable \`latest\` remains \`0.6.0\`.`
+const plannedImmutableIdentity = `\`v${activeVersion}\` must publish its own immutable GitHub Release.`
 const failedImmutableIdentity = `The failed tag \`v${activeVersion}\` is permanently closed; any new publication requires a newly authorized candidate version.`
 const closedPublicReleasePaths = Object.freeze([
   'NPM_PUBLISH.md',
@@ -125,7 +126,7 @@ function cloneSources(currentSources = readReleaseSources()) {
       sources,
       'CHANGELOG.md',
       `Prerelease target \`${activeVersion}\` is candidate-ready with \`candidateReady: true\` after all seven pre-tag gates passed. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
-      `Planned prerelease target \`${activeVersion}\` is selected in \`release/next-release.json\` but remains unpublished with \`candidateReady: false\` until all seven pre-tag gates pass. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
+      plannedChangelogLead,
     )
   }
   return sources
@@ -242,18 +243,18 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
   const verifiedPreTagGates = contract.gates.slice(0, -1).filter(gate => gate.state === 'verified').length
   const surfaceSummary = `GitHub surface: \`${githubState}\`; npm surface: \`absent\`.`
   const failedCapability = `Release attempt ${activeVersion} is publication-failed: GitHub ${githubState}; npm absent; exact identity permanently closed. The npm package surface is absent; source-checkout use remains available. Stable delivery remains 0.6.0.`
-  const plannedCapability = 'This active source candidate is unpublished; stable delivery remains 0.6.0.'
+  const plannedCapability = 'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.'
 
   for (const [filename, current, replacement] of [
     [
       'docs/src/content/docs/guide/status.md',
       `ZigCSS ${activeVersion} release attempt failed and the exact identity is permanently closed.\n\n${surfaceSummary}`,
-      `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published.`,
+      `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a planned source checkout, not a GitHub Release or npm package.`,
     ],
     [
       'docs/src/content/docs/guide/status.md',
       'Its `candidateReady` interlock is `false` after the failed publication attempt',
-      'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed',
+      'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; no rc.4 tag or publication is authorized.',
     ],
     [
       'docs/src/content/docs/guide/status.md',
@@ -288,13 +289,13 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
     [
       'docs/src/app/components/Features.tsx',
       `Release attempt ${activeVersion} failed; GitHub ${githubState}; npm absent; exact identity permanently closed. The source evidence remains checkout-only.`,
-      `That evidence belongs to unpublished candidate ${activeVersion}.`,
+      `The active ${activeVersion} candidate is unpublished and planned; only identity selection is verified.`,
     ],
     ['docs/src/content/docs/guide/status.md', failedCapability, plannedCapability],
     [
       'NPM_PUBLISH.md',
       `Prerelease attempt \`zigcss@${activeVersion}\` failed and its exact identity is permanently closed. ${surfaceSummary} Select a new candidate version; never move, recreate, or reuse \`v${activeVersion}\`.`,
-      'It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published.',
+      `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`candidate-ready\` with \`candidateReady: true\`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact \`origin/main\` integration evidence have passed. The release workflow terminal is pending, not a success claim.`,
     ],
     [
       'CHANGELOG.md',
@@ -352,14 +353,13 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
 
 function replace(sources, filename, current, replacement) {
   const source = sources.get(filename)
-  const updated = source.replace(current, replacement)
-  assert.notEqual(updated, source, `fixture replacement was not found in ${filename}`)
-  sources.set(filename, updated)
+  assert.ok(source.includes(current), `fixture replacement was not found in ${filename}: ${JSON.stringify(current)}`)
+  sources.set(filename, source.replace(current, replacement))
 }
 
 function replaceEvery(sources, filename, current, replacement) {
   const source = sources.get(filename)
-  assert.ok(source.includes(current), `fixture replacement was not found in ${filename}`)
+  assert.ok(source.includes(current), `fixture replacement was not found in ${filename}: ${JSON.stringify(current)}`)
   sources.set(filename, source.replaceAll(current, replacement))
 }
 
@@ -502,7 +502,7 @@ function setCandidateReadyPhase(sources) {
   replace(
     sources,
     'CHANGELOG.md',
-    `Planned prerelease target \`${activeVersion}\` is selected in \`release/next-release.json\` but remains unpublished with \`candidateReady: false\` until all seven pre-tag gates pass. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
+    plannedChangelogLead,
     `Prerelease target \`${activeVersion}\` is candidate-ready with \`candidateReady: true\` after all seven pre-tag gates passed. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
   )
 }
@@ -515,7 +515,7 @@ function setClosedPhase(sources) {
     contract.candidateReady = false
     contract.gates.at(-1).state = 'verified'
     contract.gates.at(-1).evidence = ['publication evidence']
-    contract.publicationEvidence = { githubPublishedAt: '2026-09-04T12:34:00Z' }
+    contract.publicationEvidence = { githubPublishedAt: '2026-10-02T12:34:00Z' }
   })
 
   // Immutable README bytes stay neutral; only live publication surfaces change.
@@ -524,13 +524,13 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/status.md',
-    `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published.`,
+    `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a planned source checkout, not a GitHub Release or npm package.`,
     `ZigCSS ${activeVersion} is the published prerelease on npm \`next\`.`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/status.md',
-    'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed',
+    'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; no rc.4 tag or publication is authorized.',
     'Its `candidateReady` interlock is `false` after immutable publication',
   )
   replace(
@@ -539,17 +539,13 @@ function setClosedPhase(sources) {
     '7 of 8 admission gates now carry recorded evidence',
     '8 of 8 admission gates now carry recorded evidence',
   )
-  replace(
-    sources,
-    'docs/src/content/docs/guide/status.md',
-    'immutable npm `latest` version with SLSA provenance, preserved `next`, and anonymous five-syntax install',
-    'immutable npm `latest` version with SLSA provenance and anonymous five-syntax install',
-  )
+  // Earlier releases remain historical evidence; the rc.1 readback uses an
+  // exact-version description so it cannot masquerade as today's npm next tag.
   replace(
     sources,
     'docs/src/content/docs/guide/status.md',
     'npm `latest` remained `0.6.0` and `next` remained `0.6.0-rc.2`.',
-    'npm latest was 0.6.0; the historical prerelease was 0.6.0-rc.2.',
+    'npm `latest` remained `0.6.0`; the historical `0.6.0-rc.2` package remained available by exact version.',
   )
   replace(
     sources,
@@ -573,20 +569,20 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/app/components/GettingStarted.tsx',
-    'current Unreleased Node API',
-    `published ${activeVersion} prerelease Node API`,
+    'only the Zig API and published 0.7.0-rc.3 prerelease Node API accept explicit additional roots.',
+    `only the Zig API and published 0.7.0-rc.3 or published ${activeVersion} prerelease Node API accept explicit additional roots.`,
   )
   replace(
     sources,
     'docs/src/app/components/Features.tsx',
-    `That evidence belongs to unpublished candidate ${activeVersion}.`,
+    `The active ${activeVersion} candidate is unpublished and planned; only identity selection is verified.`,
     `That evidence ships in published prerelease ${activeVersion} on npm next.`,
   )
   replace(
     sources,
     'docs/src/app/components/Features.tsx',
-    'rows whose contract says current, source-checkout, or Unreleased remain Unreleased even after their gates pass.',
-    'rows labeled current or source-checkout can describe maintained repository proofs alongside the published prerelease.',
+    'The exact npm package remains public on next, but anonymous public-delivery verification did not run.',
+    'The exact rc.3 npm package remains public by immutable version, but its anonymous public-delivery verification did not run.',
   )
   replace(
     sources,
@@ -597,14 +593,8 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/builder-integrations.md',
-    'These are `Unreleased` source\ncapabilities:',
-    `These capabilities ship in the published \`zigcss@${activeVersion}\` prerelease; the maintained checkout proofs remain stricter than registry installation:`,
-  )
-  replace(
-    sources,
-    'docs/src/content/docs/guide/builder-integrations.md',
-    'only in the current `Unreleased` checkout',
-    `in the published ${activeVersion} prerelease and current checkout`,
+    'The maintained checkout proofs remain stricter than registry installation.',
+    `These capabilities ship in the published \`zigcss@${activeVersion}\` prerelease; the maintained checkout proofs remain stricter than registry installation.`,
   )
 
   // The machine capability inventory and generated status table must advance
@@ -621,76 +611,48 @@ function setClosedPhase(sources) {
     for (const capability of [nodeApi, zigPackage, outputPlanning, optimizer, targetPrefix, sourceMaps, browserTargets]) {
       assert.ok(capability)
     }
-    nodeApi.behavior = nodeApi.behavior.replace(
-      'The Unreleased source package root exposes',
-      `The published \`zigcss@${activeVersion}\` prerelease package root exposes`,
-    )
-    zigPackage.behavior = zigPackage.behavior.replace(
-      'This active source candidate is unpublished; stable delivery remains 0.6.0.',
-      'This prerelease is published on npm `next`; stable delivery remains 0.6.0.',
-    )
-    outputPlanning.status = 'Published prerelease, safety boundary verified'
-    outputPlanning.behavior = outputPlanning.behavior.replace(
-      'The current Unreleased CLI',
-      `The published ${activeVersion} prerelease CLI`,
-    )
-    optimizer.status = 'Experimental, published prerelease and acceptance-gated'
-    optimizer.behavior = optimizer.behavior.replace(
-      'In the current Unreleased CLI',
-      `In the published ${activeVersion} prerelease CLI`,
-    )
+    const replaceBehavior = (capability, current, replacement) => {
+      assert.ok(capability.behavior.includes(current), `${capability.id} closed fixture copy is missing`)
+      capability.behavior = capability.behavior.replace(current, replacement)
+    }
+    replaceBehavior(nodeApi, 'The published `zigcss@0.7.0-rc.3` prerelease package root exposes', `The published \`zigcss@${activeVersion}\` prerelease package root exposes`)
+    replaceBehavior(zigPackage, 'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.', 'This prerelease is published on npm `next`; stable delivery remains 0.6.0.')
+    replaceBehavior(outputPlanning, 'The published 0.7.0-rc.3 prerelease CLI', `The published ${activeVersion} prerelease CLI`)
+    replaceBehavior(optimizer, 'In the published 0.7.0-rc.3 prerelease CLI', `In the published ${activeVersion} prerelease CLI`)
     for (const capability of [targetPrefix, sourceMaps, browserTargets]) {
-      capability.status = 'Experimental, published prerelease all-syntax CLI/API verified'
-      capability.behavior = capability.behavior
-        .replace('In the current Unreleased source', `In the published ${activeVersion} prerelease`)
-        .replace('The current Unreleased CLI', `The published ${activeVersion} prerelease CLI`)
+      replaceBehavior(capability, 'published 0.7.0-rc.3 prerelease', `published ${activeVersion} prerelease`)
     }
   })
-
+  sources.set(
+    'docs/src/content/docs/guide/status.md',
+    replaceGeneratedTable(
+      sources.get('docs/src/content/docs/guide/status.md'),
+      renderTable(JSON.parse(sources.get('docs/src/data/capabilities.json'))),
+    ),
+  )
   for (const [current, replacement] of [
-    ['The Unreleased source package root exposes', `The published \`zigcss@${activeVersion}\` prerelease package root exposes`],
-    ['This active source candidate is unpublished; stable delivery remains 0.6.0.', 'This prerelease is published on npm `next`; stable delivery remains 0.6.0.'],
-    ['Unreleased, safety boundary verified', 'Published prerelease, safety boundary verified'],
-    ['The current Unreleased CLI', `The published ${activeVersion} prerelease CLI`],
-    ['Experimental, Unreleased and acceptance-gated', 'Experimental, published prerelease and acceptance-gated'],
-    ['In the current Unreleased CLI', `In the published ${activeVersion} prerelease CLI`],
-    ['Experimental, Unreleased all-syntax CLI/API verified', 'Experimental, published prerelease all-syntax CLI/API verified'],
-    ['In the current Unreleased source', `In the published ${activeVersion} prerelease`],
-  ]) {
-    replaceEvery(sources, 'docs/src/content/docs/guide/status.md', current, replacement)
-  }
-  for (const [current, replacement] of [
-    ['The current `Unreleased` source package additionally exposes', `The published \`zigcss@${activeVersion}\` prerelease package additionally exposes`],
-    ['The current `Unreleased` package root maps', `The published \`zigcss@${activeVersion}\` prerelease package root maps`],
-    ['this Unreleased API', 'this published prerelease API'],
-    ['The current `Unreleased` source additionally owns', `The published ${activeVersion} prerelease additionally owns`],
-    ['## Unreleased package installation recovery boundary', `## Published ${activeVersion} package installation recovery boundary`],
-    ['No published npm version currently exposes the new recovery command.', `Published \`zigcss@${activeVersion}\` exposes the recovery command on npm \`next\`.`],
-    ['Rows labeled current, source-checkout, or Unreleased describe this repository snapshot rather than the npm release; an experimental label alone does not imply that a capability is unpublished.', `Rows labeled current or source-checkout describe maintained repository proofs; the ${activeVersion} package capabilities above ship in the npm prerelease.`],
-    ['The current `Unreleased` source adds typed experimental adapters', `Published ${activeVersion} remains the immutable prerelease CLI-launcher package and adds typed experimental adapters`],
-    ['This Unreleased compiler enables', `This published ${activeVersion} prerelease compiler enables`],
+    ['## Published 0.7.0-rc.3 package installation recovery boundary', `## Published ${activeVersion} package installation recovery boundary`],
+    ['Published `zigcss@0.7.0-rc.3` exposes the recovery command on npm `next`.', `Published \`zigcss@${activeVersion}\` exposes the recovery command on npm \`next\`.`],
+    ['the 0.7.0-rc.3 package capabilities above ship in the npm prerelease.', `the ${activeVersion} package capabilities above ship in the npm prerelease.`],
+    ['Published 0.7.0-rc.3 remains the immutable prerelease CLI-launcher package', `Published ${activeVersion} remains the immutable prerelease CLI-launcher package`],
+    [`The current ${activeVersion} source recovery program replaces`, `This published ${activeVersion} prerelease compiler enables the recovery program that replaces`],
+    ['the current candidate remains unpublished.', 'the current prerelease is published on npm next.'],
   ]) {
     replace(sources, 'docs/src/content/docs/guide/status.md', current, replacement)
   }
-  replace(
-    sources,
-    'docs/src/content/docs/guide/status.md',
-    'The `NATIVE-009` published candidate `0.6.0-rc.2` is verified on the GitHub prerelease and npm `next` channels.',
-    'The `NATIVE-009` historical candidate `0.6.0-rc.2` remains verified by its historically mutable GitHub prerelease and immutable npm version.',
-  )
 
   // Publishing guide and user-facing install boundary.
   replace(
     sources,
     'NPM_PUBLISH.md',
-    'It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published.',
-    `Prerelease \`zigcss@${activeVersion}\` is published on npm \`next\`.`,
+    `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`candidate-ready\` with \`candidateReady: true\`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact \`origin/main\` integration evidence have passed. The release workflow terminal is pending, not a success claim.`,
+    `\`release/next-release.json\` records the closed \`v${activeVersion}\` publication. Prerelease \`zigcss@${activeVersion}\` is published on npm \`next\`.`,
   )
   replace(
     sources,
     'NPM_PUBLISH.md',
-    'Stable `zigcss@0.6.0` remains on `latest` and historical `0.6.0-rc.2` remains on `next`.',
-    `Stable \`zigcss@${publishedStableVersion}\` remains on \`latest\`.\n\nHistorical \`0.6.0-rc.2\` remains available by its exact immutable version.`,
+    'npm `next` still serves that rc.3 package; npm `latest` still serves stable `zigcss@0.6.0`. Do not move either dist-tag or historical tag as a substitute for completing the new candidate gate.',
+    'At the failed rc.3 workflow terminal, npm `next` served that exact package; npm `latest` served stable `zigcss@0.6.0`. The historical tag and package identity remain immutable.',
   )
   replace(
     sources,
@@ -701,33 +663,21 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'NPM_PUBLISH.md',
-    'The existing npm `next` tag remains bound to `0.6.0-rc.2`. Stable publication does not delete, overwrite, or republish that package, and it does not publish Homebrew, editor-extension, container, service, or other npm channels.',
-    `Stable publication did not delete, overwrite, or republish the immutable \`0.6.0-rc.2\` package, and it did not publish Homebrew, editor-extension, container, service, or other npm channels.\n\nnpm \`next\` serves \`zigcss@${activeVersion}\`; npm \`latest\` remains \`zigcss@${publishedStableVersion}\`.`,
+    'npm `next` now serves `zigcss@0.7.0-rc.3`; npm `latest` remains `zigcss@0.6.0`.',
+    `\n\nnpm \`next\` serves \`zigcss@${activeVersion}\`; npm \`latest\` remains \`zigcss@${publishedStableVersion}\`.`,
   )
-  replace(sources, 'NPM_PUBLISH.md', '## Next candidate admission', `## Published ${activeVersion} prerelease`)
+  replace(sources, 'NPM_PUBLISH.md', `## Planned ${activeVersion} recovery candidate`, `## Published ${activeVersion} prerelease`)
   replace(
     sources,
     'NPM_PUBLISH.md',
-    'today `latest` is stable `0.6.0` while `next` still preserves the RC.',
+    'today `latest` is stable `0.6.0` while `next` serves `0.7.0-rc.3`.',
     'today `latest` is stable `0.6.0`; the historical RC remains available only by its immutable exact version.',
   )
   replace(
     sources,
     'NPM_PUBLISH.md',
-    'published immutable npm version `zigcss@0.6.0-rc.2` with provenance on `next`.',
-    'published immutable npm version `zigcss@0.6.0-rc.2` with provenance. At publication time, this was the prerelease channel selection.',
-  )
-  replace(
-    sources,
-    'NPM_PUBLISH.md',
-    'The seven-file npm package contains',
-    'The 48-file npm package contains',
-  )
-  replace(
-    sources,
-    'NPM_PUBLISH.md',
-    'The historical RC remains an immutable npm version installable with `zigcss@next` for comparison; the stable workflow never moves that tag.',
-    `Install the published prerelease with \`zigcss@next\`.\n\nInstall the historical RC only by its immutable exact version \`zigcss@0.6.0-rc.2\`.`,
+    'The historical RC remains an immutable npm version installable by exact version `zigcss@0.6.0-rc.2` for comparison. npm `next` resolves to `0.7.0-rc.3`.',
+    `Install the published prerelease with \`zigcss@next\`.\n\nThe historical RC remains available only by its immutable exact version \`zigcss@0.6.0-rc.2\`.`,
   )
 
   // Guides and maintained examples distinguish published package delivery
@@ -735,84 +685,91 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/build-from-source.md',
-    'Source builds are the verified alternative to the published five-language native-graduated package.',
-    `Source builds are the verified alternative to published stable \`zigcss@${publishedStableVersion}\` and the published \`zigcss@${activeVersion}\` prerelease.`,
+    `The unpublished \`${activeVersion}\` source candidate can be built locally; this is separate from published stable \`zigcss@0.6.0\` and the published \`zigcss@0.7.0-rc.3\` prerelease whose Release workflow failed.`,
+    `Source builds are the verified alternative to published stable \`zigcss@${publishedStableVersion}\` and the published \`zigcss@${activeVersion}\` prerelease. The historical \`zigcss@0.7.0-rc.3\` prerelease remains immutable despite its failed Release workflow.`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/css-compatibility.md',
-    `current unpublished \`${activeVersion}\` recovery compiler`,
+    `current unpublished \`${activeVersion}\` source checkout and the published \`0.7.0-rc.3\` prerelease recovery compiler`,
     `published \`${activeVersion}\` prerelease recovery compiler`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/format-compatibility.md',
-    `The current unpublished ${activeVersion} source checkout compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
+    `The current ${activeVersion} source checkout is an unpublished planned candidate and compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
     `ZigCSS ${activeVersion} prerelease is published on npm \`next\` and compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/format-compatibility.md',
-    'Stable 0.6.0 contains the self-contained native five-language surface and is published on npm `latest` by the exact stable promotion workflow; historical `0.6.0-rc.2` remains available as an immutable npm version on `next`. Their GitHub releases predate Immutable Releases and read back `immutable: false`.',
-    `Stable 0.6.0 contains the self-contained native five-language surface and remains on npm \`latest\` under the exact stable promotion workflow. Historical \`0.6.0-rc.2\` remains an immutable npm version available by exact version; both historical GitHub releases read back \`immutable: false\`.\n\nnpm \`next\` serves ZigCSS ${activeVersion}.`,
-  )
-  replaceEvery(
-    sources,
-    'docs/src/content/docs/guide/format-compatibility.md',
-    'current `Unreleased`',
-    `published ${activeVersion} prerelease`,
+    'npm `next` serves ZigCSS 0.7.0-rc.3.',
+    `\n\nnpm \`next\` serves ZigCSS ${activeVersion}.`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/recovery-cli.md',
-    `The current unpublished ${activeVersion} source checkout owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. The package is not published yet;`,
-    `ZigCSS ${activeVersion} prerelease is published on npm \`next\` and owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus;`,
+    `The current ZigCSS ${activeVersion} source candidate is unpublished and planned; its freshly built \`zig-out/bin/zigcss --help\` is authoritative for the current CLI.`,
+    `ZigCSS ${activeVersion} prerelease is published on npm \`next\`; its freshly built \`zig-out/bin/zigcss --help\` remains authoritative for the current checkout CLI.`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/recovery-cli.md',
-    'This page documents the current `Unreleased` checkout.',
-    `This page documents the published ${activeVersion} prerelease and current checkout.`,
+    `This page documents the unpublished ${activeVersion} source checkout and the historical published 0.7.0-rc.3 prerelease.`,
+    `This page documents the published ${activeVersion} prerelease and current checkout, alongside the historical published 0.7.0-rc.3 prerelease.`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/recovery-cli.md',
-    '## Unreleased package-manager lifecycle recovery',
+    '## Published 0.7.0-rc.3 package-manager lifecycle recovery',
     `## Published ${activeVersion} package-manager lifecycle recovery`,
   )
   replace(
     sources,
     'examples/build-systems/README.md',
-    'These integrations are for the current `Unreleased` checkout only. Published stable ZigCSS 0.6.0 has no `--depfile` option.',
-    `Published prerelease ZigCSS ${activeVersion} contains the verified \`--depfile\` contract; these maintained integration proofs still run against the exact current checkout. Published stable ZigCSS 0.6.0 has no \`--depfile\` option.`,
+    'Published prerelease ZigCSS 0.7.0-rc.3 contains the verified `--depfile` contract, although its Release workflow failed and its exact identity is closed. The maintained integration is a current `Unreleased` checkout only: build the unpublished 0.7.0-rc.4 source',
+    `Published prerelease ZigCSS ${activeVersion} contains the verified \`--depfile\` contract; these maintained integration proofs still run against the exact current checkout. The historical rc.3 package also contains that contract, although its Release workflow failed: build the ${activeVersion} source`,
   )
   replace(
     sources,
     'examples/next-turbopack/README.md',
-    'Build the current checkout\'s native binary before using this example. The\npublished `zigcss@0.6.0` binary predates the current `zigcss-node-v1` protocol,\nso this example is not a stable-release consumer yet.',
-    `Published \`zigcss@${activeVersion}\` contains the \`zigcss/webpack\` loader and \`zigcss-node-v1\` protocol. Build the current checkout's native binary for this maintained host proof; published \`zigcss@0.6.0\` predates the protocol and is not a consumer path.`,
+    `The active ${activeVersion} source candidate is unpublished.`,
+    `Published \`zigcss@${activeVersion}\` contains the \`zigcss/webpack\` loader and \`zigcss-node-v1\` protocol.`,
+  )
+  replace(
+    sources,
+    'examples/next-turbopack/README.md',
+    'published `zigcss@0.6.0` binary predates',
+    'published `zigcss@0.6.0` predates',
   )
   for (const [filename, current, replacement] of [
     [
       'examples/sveltekit/README.md',
-      'Published ZigCSS 0.6.0 also predates the current `zigcss-node-v1` adapter protocol, so this example is a current-source-checkout proof only.',
-      `Published \`zigcss@${activeVersion}\` contains the \`zigcss/vite\` adapter and current protocol; this maintained SvelteKit integration remains a current-source-checkout proof. Stable ZigCSS 0.6.0 predates that protocol.`,
+      `The active ${activeVersion} candidate is unpublished;`,
+      `Published \`zigcss@${activeVersion}\` contains the \`zigcss/vite\` adapter and current protocol;`,
     ],
     [
       'examples/astro/README.md',
-      'This is current-source-checkout proof only: the published `zigcss@0.6.0` binary predates the current `zigcss-node-v1` protocol.',
-      `Published \`zigcss@${activeVersion}\` contains the \`zigcss/vite\` adapter and current protocol; this maintained Astro integration remains a current-source-checkout proof. Stable \`zigcss@0.6.0\` predates that protocol.`,
+      `The active ${activeVersion} candidate is unpublished;`,
+      `Published \`zigcss@${activeVersion}\` contains the \`zigcss/vite\` adapter and current protocol;`,
     ],
     [
       'examples/nuxt/README.md',
-      'Published ZigCSS 0.6.0 also predates the current `zigcss-node-v1` adapter protocol, so this example is a current-source-checkout proof only.',
-      `Published \`zigcss@${activeVersion}\` contains the \`zigcss/vite\` adapter and current protocol; this maintained Nuxt integration remains a current-source-checkout proof. Stable ZigCSS 0.6.0 predates that protocol.`,
+      `The active ${activeVersion} candidate is unpublished;`,
+      `Published \`zigcss@${activeVersion}\` contains the \`zigcss/vite\` adapter and current protocol;`,
     ],
     [
       'examples/parcel/README.md',
-      'Parcel compatibility, development watch mode, HMR, or stable ZigCSS 0.6.0\ndelivery; the published binary predates the protocol used by this source proof.',
-      `Parcel compatibility, development watch mode, HMR, or stable ZigCSS 0.6.0 delivery. Published \`zigcss@${activeVersion}\` contains the root compiler protocol but no \`zigcss/parcel\` export, so this remains a local transformer proof.`,
+      `the active ${activeVersion} candidate is unpublished;`,
+      `Published \`zigcss@${activeVersion}\` contains the root compiler protocol but no \`zigcss/parcel\` export;`,
     ],
+  ]) {
+    replace(sources, filename, current, replacement)
+  }
+  for (const [filename, current, replacement] of [
+    ['examples/sveltekit/README.md', 'Published ZigCSS 0.6.0 also predates', 'Stable ZigCSS 0.6.0 predates'],
+    ['examples/astro/README.md', 'published `zigcss@0.6.0` binary predates', 'Stable `zigcss@0.6.0` predates'],
+    ['examples/nuxt/README.md', 'Published ZigCSS 0.6.0 also predates', 'Stable ZigCSS 0.6.0 predates'],
   ]) {
     replace(sources, filename, current, replacement)
   }
@@ -820,8 +777,8 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'CHANGELOG.md',
-    `## [Unreleased]\n\nNo later stable identity is selected.\n\nPrerelease target \`${activeVersion}\` is candidate-ready with \`candidateReady: true\` after all seven pre-tag gates passed. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
-    `## [Unreleased]\n\nNo later stable identity is selected.\n\n## [${activeVersion}] - 2026-09-04\n\nReleased from protected tag \`v${activeVersion}\` as the first immutable GitHub Release and immutable \`zigcss@${activeVersion}\` on npm \`next\`.`,
+    `## [Unreleased]\n\nPrerelease target \`${activeVersion}\` is candidate-ready with \`candidateReady: true\` after all seven pre-tag gates passed. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
+    `## [Unreleased]\n\n## [${activeVersion}] - 2026-10-02\n\nReleased from protected tag \`v${activeVersion}\` as the first immutable GitHub Release and immutable \`zigcss@${activeVersion}\` on npm \`next\`.`,
   )
 }
 
@@ -853,7 +810,7 @@ function setPublicationFailedPhase(
     contract.publicationFailureEvidence = {
       githubSurface: {
         state: githubState,
-        publishedAt: githubState === 'immutable-published' ? '2026-09-04T12:34:00Z' : null,
+        publishedAt: githubState === 'immutable-published' ? '2026-10-02T12:34:00Z' : null,
       },
       npmSurface: { state: npmState },
     }
@@ -938,13 +895,13 @@ function setPublicationFailedPhase(
     replace(
       sources,
       'docs/src/content/docs/guide/status.md',
-      `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published.`,
+      `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a planned source checkout, not a GitHub Release or npm package.`,
       `ZigCSS ${activeVersion} release attempt failed and the exact identity is permanently closed.\n\n${surfaceSummary}`,
     )
     replace(
       sources,
       'docs/src/content/docs/guide/status.md',
-      'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed',
+      'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; no rc.4 tag or publication is authorized.',
       'Its `candidateReady` interlock is `false` after the failed publication attempt',
     )
     replace(
@@ -981,27 +938,27 @@ function setPublicationFailedPhase(
     replace(
       sources,
       'docs/src/app/components/Features.tsx',
-      `That evidence belongs to unpublished candidate ${activeVersion}.`,
+      `The active ${activeVersion} candidate is unpublished and planned; only identity selection is verified.`,
       `Release attempt ${activeVersion} failed; GitHub ${githubState}; npm ${npmState}; exact identity permanently closed. The source evidence remains checkout-only.`,
     )
     mutateJson(sources, 'docs/src/data/capabilities.json', metadata => {
       const zigPackage = metadata.capabilities.find(capability => capability.id === 'zig-package')
       assert.ok(zigPackage)
       zigPackage.behavior = zigPackage.behavior.replace(
-        'This active source candidate is unpublished; stable delivery remains 0.6.0.',
+        'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.',
         `Release attempt ${activeVersion} is publication-failed: GitHub ${githubState}; npm ${npmState}; exact identity permanently closed. The npm package surface is absent; source-checkout use remains available. Stable delivery remains 0.6.0.`,
       )
     })
     replace(
       sources,
       'docs/src/content/docs/guide/status.md',
-      'This active source candidate is unpublished; stable delivery remains 0.6.0.',
+      'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.',
       `Release attempt ${activeVersion} is publication-failed: GitHub ${githubState}; npm ${npmState}; exact identity permanently closed. The npm package surface is absent; source-checkout use remains available. Stable delivery remains 0.6.0.`,
     )
     replace(
       sources,
       'NPM_PUBLISH.md',
-      'It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published.',
+      `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`candidate-ready\` with \`candidateReady: true\`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact \`origin/main\` integration evidence have passed. The release workflow terminal is pending, not a success claim.`,
       `Prerelease attempt \`zigcss@${activeVersion}\` failed and its exact identity is permanently closed. ${surfaceSummary} Select a new candidate version; never move, recreate, or reuse \`v${activeVersion}\`.`,
     )
     replace(
@@ -1234,8 +1191,8 @@ test('publication-failed public copy rejects success claims and requires a new c
     replace(
       staleSurfaces,
       'docs/src/content/docs/guide/status.md',
-      `GitHub surface: \`${surfaces.githubState}\`; npm surface: \`${surfaces.npmState}\`.`,
-      'GitHub surface: `absent`; npm surface: `published-exact`.',
+      `ZigCSS ${activeVersion} release attempt failed and the exact identity is permanently closed.\n\nGitHub surface: \`${surfaces.githubState}\`; npm surface: \`${surfaces.npmState}\`.`,
+      `ZigCSS ${activeVersion} release attempt failed and the exact identity is permanently closed.\n\nGitHub surface: \`absent\`; npm surface: \`published-exact\`.`,
     )
     assert.throws(() => validateReleaseSources(staleSurfaces), /status failed publication surfaces/)
 
@@ -1430,7 +1387,7 @@ test('closed release rejects stale candidate, Unreleased, and historical next co
 test('closed changelog date is the UTC GitHub publication date and package inventory stays exact', () => {
   const wrongDate = cloneSources()
   setClosedPhase(wrongDate)
-  replace(wrongDate, 'CHANGELOG.md', `## [${activeVersion}] - 2026-09-04`, `## [${activeVersion}] - 2026-09-05`)
+  replace(wrongDate, 'CHANGELOG.md', `## [${activeVersion}] - 2026-10-02`, `## [${activeVersion}] - 2026-10-03`)
   assert.throws(
     () => validateReleaseSources(wrongDate),
     /published prerelease changelog target and UTC publication date/,

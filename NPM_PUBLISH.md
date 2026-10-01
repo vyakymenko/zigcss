@@ -20,9 +20,15 @@ Release run `32130950531` completed successfully on attempt 1. Exact `0.6.0`, `d
 
 Every future tag-triggered publication must first prove, through the bounded GitHub Actions API preflight, that the exact tagged commit has a successful same-repository `main` push run of the exact `Build` workflow at `.github/workflows/build.yml`. The same preflight requires default-setup CodeQL results for that exact commit in all three repository categories—Actions, JavaScript/TypeScript, and Ruby—with no error or warning status and zero open CodeQL alerts; it uses only `security-events: read`. Those proofs run before npm identity, registry-version, package, artifact, attestation, or publication authority is admitted.
 
+## Planned 0.7.0-rc.4 recovery candidate
+
+`release/next-release.json` selects `0.7.0-rc.4` and `v0.7.0-rc.4` as the new source candidate and npm `next` target. It is currently `planned` with `candidateReady: false`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact `origin/main` integration evidence have passed. The release workflow terminal is pending, not a success claim.
+
+The rc.4 identity is distinct from the permanently closed `v0.7.0-rc.3` tag and immutable `zigcss@0.7.0-rc.3` package. The rc.3 GitHub prerelease and npm version stay public, but their Release workflow failed and anonymous public-delivery verification did not run. npm `next` still serves that rc.3 package; npm `latest` still serves stable `zigcss@0.6.0`. Do not move either dist-tag or historical tag as a substitute for completing the new candidate gate.
+
 ## Failed 0.7.0-rc.3 publication
 
-`release/next-release.json` records candidate `0.7.0-rc.3`, tag `v0.7.0-rc.3`, npm channel `next`, and a failed workflow terminal under the fail-closed contract. Prerelease attempt `zigcss@0.7.0-rc.3` failed and its exact identity is permanently closed. GitHub surface: `immutable-published`; npm surface: `published-exact`. Select a new candidate version; never move, recreate, or reuse `v0.7.0-rc.3`. Stable `zigcss@0.6.0` remains on `latest`; the historical `0.6.0-rc.2` package remains available by exact version.
+The historical `v0.7.0-rc.3` tag targeted npm channel `next` and reached a failed workflow terminal under the fail-closed contract. Prerelease attempt `zigcss@0.7.0-rc.3` failed and its exact identity is permanently closed. GitHub surface: `immutable-published`; npm surface: `published-exact`. A new candidate version is selected; never move, recreate, or reuse `v0.7.0-rc.3`. Stable `zigcss@0.6.0` remains on `latest`; the historical `0.6.0-rc.2` package remains available by exact version.
 
 [Release run 36833868345](https://github.com/vyakymenko/zigcss/actions/runs/36833868345) ended in failure on 2026-10-01 after the first immutable GitHub prerelease and exact npm package were published. The anonymous public-delivery terminal was skipped, so the public five-syntax install and signature audit remain unverified for this attempt. The package and release are public artifacts; the failed workflow cannot be marked successful or retried under the same tag.
 

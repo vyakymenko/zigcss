@@ -78,11 +78,11 @@ export function Features() {
         <div className="mb-12 max-w-4xl">
           <div className="mb-5 inline-flex items-center gap-2 border border-[#d0a43f] bg-[#fff2bf] px-3 py-1.5 font-mono text-xs uppercase tracking-[0.16em] text-[#5e470f]">
             <AlertTriangle className="size-4" />
-            Stable 0.6.0 + 0.7.0-rc.3 source · bounded capabilities
+            Stable 0.6.0 + 0.7.0-rc.4 source · bounded capabilities
           </div>
           <h1 className="display-type text-5xl tracking-[-0.05em] sm:text-6xl">Current capability status</h1>
           <p className="mt-6 max-w-3xl text-xl leading-8 text-[#5f675f]">
-            This site separates published stable 0.6.0 delivery from bounded prerelease and current-source evidence. Release attempt 0.7.0-rc.3 failed; GitHub immutable-published; npm published-exact; exact identity permanently closed. The exact npm package remains public on next. Anonymous public-delivery verification did not run. The failed 0.7.0-rc.1 and 0.7.0-rc.2 identities remain permanently closed. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version.
+            This site separates published stable 0.6.0 delivery from bounded prerelease and current-source evidence. The active 0.7.0-rc.4 candidate is unpublished and planned; only identity selection is verified. Release attempt 0.7.0-rc.3 failed; GitHub immutable-published; npm published-exact; exact identity permanently closed. The exact npm package remains public on next, but anonymous public-delivery verification did not run. The failed 0.7.0-rc.1 and 0.7.0-rc.2 identities remain permanently closed. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version.
           </p>
           <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#677067]">
             The table mixes explicitly labeled published-stable and prerelease rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; current-source host proofs retain their narrower checkout boundary.

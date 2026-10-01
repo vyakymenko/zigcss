@@ -21,8 +21,9 @@ import { assertArtifactMatchesTarget } from './verify-artifact-target.mjs'
 const scriptPath = fileURLToPath(new URL('./validate-native-integrity.mjs', import.meta.url))
 const version = '0.7.0-rc.1'
 const sourceDateEpoch = 1_788_438_195
-const currentVersion = '0.7.0-rc.3'
-const currentSourceDateEpoch = 1_790_601_192
+const committedManifest = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../native-integrity.json', import.meta.url)), 'utf8'))
+const currentVersion = committedManifest.version
+const currentSourceDateEpoch = committedManifest.sourceDateEpoch
 const historicalStableVersion = '0.6.0'
 
 function sha256(bytes) {
@@ -140,7 +141,7 @@ test('CLI is closed and prints only the manifest-owned epoch for the exact versi
     { encoding: 'utf8' },
   )
   assert.notEqual(wrongVersion.status, 0)
-  assert.match(wrongVersion.stderr, /requested version must be 0\.7\.0-rc\.3/)
+  assert.ok(wrongVersion.stderr.includes(`requested version must be ${currentVersion}`))
 })
 
 test('new canonical Windows archive with matching target and version cannot bypass the committed digest', t => {

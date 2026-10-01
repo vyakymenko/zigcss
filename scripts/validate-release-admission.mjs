@@ -17,7 +17,7 @@ import { expectedPackedFiles } from './validate-preprocessor-package.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
-export const plannedCandidateVersion = '0.7.0-rc.3'
+export const plannedCandidateVersion = '0.7.0-rc.4'
 export const failedCandidateHistory = Object.freeze([
   Object.freeze({
     version: '0.7.0-rc.1',
@@ -48,6 +48,43 @@ export const failedCandidateHistory = Object.freeze([
     npmNext: '0.6.0-rc.2',
     reason: 'x86_64-windows packed package.json differed from tested manifest',
   }),
+  Object.freeze({
+    version: '0.7.0-rc.3',
+    tag: 'v0.7.0-rc.3',
+    tagCommit: '798396a054f32c31cfd804431dc40ad5c2373bb6',
+    finalBuildRunId: 36437425300,
+    finalBuildRunAttempt: 1,
+    finalBuildConclusion: 'success',
+    finalBuildCompletedAt: '2026-09-28T15:34:36Z',
+    releaseRunId: 36833868345,
+    releaseRunAttempt: 1,
+    releaseConclusion: 'failure',
+    releaseCompletedAt: '2026-10-01T08:10:16Z',
+    githubSurface: Object.freeze({
+      state: 'immutable-published',
+      releaseId: 400760185,
+      releaseUrl: 'https://github.com/vyakymenko/zigcss/releases/tag/v0.7.0-rc.3',
+      publishedAt: '2026-10-01T08:08:51Z',
+      assetCount: 25,
+      assetBytes: 10518010,
+      assetInventorySha256: '6580b84edd2f509744af9af8b09e20e625eb7f9f6dfd28cb9f1736d245262cf7',
+      releaseAttestation: 'verified',
+    }),
+    npmSurface: Object.freeze({
+      state: 'published-exact',
+      version: '0.7.0-rc.3',
+      distTag: 'next',
+      latest: '0.6.0',
+      next: '0.7.0-rc.3',
+      fileCount: 48,
+      unpackedSize: 200428,
+      integrity: 'sha512-sr02GUnhLgW+tGcy6Nuu83KKeHz064yeUOp74QVzit9qfwhw47mc30yAXJlot9tg+7GbNupTXNsg6WZ+SjEodQ==',
+      shasum: '4099bbff10460a2a290ecf33fd0f01e05a767370',
+      provenancePredicateType: 'https://slsa.dev/provenance/v1',
+      anonymousInstall: 'not-run',
+    }),
+    reason: 'npm publication readback did not converge after 12 attempts; anonymous public delivery was skipped',
+  }),
 ])
 export const candidateReleaseSourcePaths = Object.freeze([
   'VERSION',
@@ -74,19 +111,19 @@ export const candidateGatePolicy = Object.freeze([
   Object.freeze({
     id: 'candidate-selection',
     evidenceRequirements: Object.freeze([
-      'The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.3 was selected; the failed v0.7.0-rc.1 and v0.7.0-rc.2 identities remain permanently closed.',
+      'The exact GitHub tag, GitHub release, and npm version were absent when 0.7.0-rc.4 was selected; the failed v0.7.0-rc.1, v0.7.0-rc.2, and v0.7.0-rc.3 identities remain permanently closed.',
     ]),
   }),
   Object.freeze({
     id: 'version-synchronization',
     evidenceRequirements: Object.freeze([
-      'Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.3.',
+      'Every active package, CLI, Zig, container, editor, lockfile, and current-source documentation version surface agrees on 0.7.0-rc.4.',
     ]),
   }),
   Object.freeze({
     id: 'native-integrity',
     evidenceRequirements: Object.freeze([
-      'All five architecture-matched release archives reproduce the committed 0.7.0-rc.3 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission.',
+      'All five architecture-matched release archives reproduce the committed 0.7.0-rc.4 SHA-256 inventory, and candidate-ready Build checks each archive before tag admission.',
     ]),
   }),
   Object.freeze({
@@ -119,7 +156,7 @@ export const candidateGatePolicy = Object.freeze([
   Object.freeze({
     id: 'tag-workflow-publication',
     evidenceRequirements: Object.freeze([
-      'The protected tag workflow publishes the first repository GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next.',
+      'The protected tag workflow publishes a distinct GitHub Release required to read back immutable=true, with the verified five-target assets, release attestation, and exact immutable npm package on next.',
     ]),
   }),
 ])
@@ -367,7 +404,7 @@ function validateClosedHistory(history, stableContract) {
 
 function validateFailedHistory(history) {
   if (!same(history, failedCandidateHistory)) {
-    fail('failedHistory must preserve the terminal 0.7.0-rc.1 and 0.7.0-rc.2 identities and failure evidence')
+    fail('failedHistory must preserve the terminal 0.7.0-rc.1, 0.7.0-rc.2, and 0.7.0-rc.3 identities and failure evidence')
   }
   for (const entry of history) {
     parseReleaseVersion(entry.version, 'failedHistory.version')
@@ -403,8 +440,9 @@ function validateActiveSources(sources, candidateVersion, publishedStableVersion
     fail('VERSION must contain one canonical version and a final newline')
   }
   const activeVersion = parseReleaseVersion(versionSource.trim(), 'active source version').value
-  if (![publishedStableVersion, candidateVersion].includes(activeVersion)) {
-    fail(`active source version must remain ${publishedStableVersion} or advance exactly to ${candidateVersion}`)
+  const allowedActiveVersions = [publishedStableVersion, failedCandidateHistory.at(-1).version, candidateVersion]
+  if (!allowedActiveVersions.includes(activeVersion)) {
+    fail(`active source version must be ${allowedActiveVersions.slice(0, -1).join(', ')}, or ${candidateVersion}`)
   }
 
   let nativeIntegrity

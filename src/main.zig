@@ -8,7 +8,7 @@ const lsp_transport = @import("lsp_transport.zig");
 
 const native_api = zigcss.experimental_native;
 
-const version = "0.7.0-rc.3";
+const version = "0.7.0-rc.4";
 const prerelease_notice = std.fmt.comptimePrint(
     "Warning: ZigCSS {s} is an experimental release candidate; do not use it for production CSS.\n",
     .{version},

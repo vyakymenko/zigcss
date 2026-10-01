@@ -22,7 +22,7 @@ RUN npm run build
 # ── Stage 2: static-only production runtime ──────────────────────────────────
 FROM node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS runtime
 
-ARG ZIGCSS_VERSION=0.7.0-rc.3
+ARG ZIGCSS_VERSION=0.7.0-rc.4
 LABEL org.opencontainers.image.title="ZigCSS Documentation" \
       org.opencontainers.image.version="${ZIGCSS_VERSION}" \
       org.opencontainers.image.source="https://github.com/vyakymenko/zigcss"

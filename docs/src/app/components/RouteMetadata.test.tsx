@@ -22,7 +22,7 @@ describe('RouteMetadata', () => {
     rerender(<RouteMetadata pathname="/docs/guide/status" />)
     await waitFor(() => {
       expect(head('meta', 'name="robots"')).toHaveAttribute('content', 'index,follow,max-image-preview:large')
-      expect(document.title).toBe('ZigCSS 0.7.0-rc.3 release status')
+      expect(document.title).toBe('ZigCSS 0.7.0-rc.4 candidate status')
       expect(document.head.querySelector('#zigcss-software-metadata')).toBeNull()
     })
   })
