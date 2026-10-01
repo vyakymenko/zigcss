@@ -74,7 +74,7 @@ test('build-system examples expose four bounded depfile integrations', () => {
   assert.match(guide, /same scenario also runs through that exact compiler for GNU Make, Ninja, CMake, and Meson/)
   assert.match(guide, /current `Unreleased` checkout only/)
   assert.match(guide, /Published stable ZigCSS 0\.6\.0 has no `--depfile` option/)
-  assert.match(guide, /Build the current source with Zig 0\.15\.2/)
+  assert.match(guide, /build the unpublished 0\.7\.0-rc\.4 source with Zig 0\.15\.2 and pass the freshly built `zig-out\/bin\/zigcss`/)
   for (const publicSurface of [publicReadme, changelog]) {
     assert.match(publicSurface, /mandatory real-ZigCSS incremental rebuilds for GNU Make, Ninja, CMake, and Meson/)
   }
