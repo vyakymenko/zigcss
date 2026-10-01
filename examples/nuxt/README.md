@@ -22,6 +22,6 @@ Install the exact development-only lock and build the current ZigCSS binary befo
 
 The native SCSS map chain is retained in Nuxt's intermediate Vite SSR output under `.nuxt`. Nitro's public `.output` copy retains client JavaScript maps, including `app.vue`, but does not publish that CSS map chain; this example therefore does not claim a public production CSS map from Nuxt.
 
-This is not a separately published Nuxt adapter. It does not claim support for embedded `<style lang="scss">` blocks, Nuxt modules, framework-specific HMR or watch invalidation, other Nuxt builders, deployment presets, or general compatibility outside the exact pinned host gate. Published ZigCSS 0.6.0 also predates the current `zigcss-node-v1` adapter protocol, so this example is a current-source-checkout proof only.
+This is not a separately published Nuxt adapter. It does not claim support for embedded `<style lang="scss">` blocks, Nuxt modules, framework-specific HMR or watch invalidation, other Nuxt builders, deployment presets, or general compatibility outside the exact pinned host gate. Published `zigcss@0.7.0-rc.3` contains the `zigcss/vite` adapter and current protocol; this maintained Nuxt integration remains a current-source-checkout proof only. Stable ZigCSS 0.6.0 predates that protocol.
 
 Nuxt uses Vite by default and exposes Vite configuration through `nuxt.config`: <https://nuxt.com/docs/4.x/getting-started/styling> and <https://nuxt.com/docs/4.x/api/nuxt-config>.

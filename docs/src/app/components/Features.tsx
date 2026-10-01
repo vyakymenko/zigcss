@@ -82,10 +82,10 @@ export function Features() {
           </div>
           <h1 className="display-type text-5xl tracking-[-0.05em] sm:text-6xl">Current capability status</h1>
           <p className="mt-6 max-w-3xl text-xl leading-8 text-[#5f675f]">
-            This site separates published stable 0.6.0 delivery from bounded current-source evidence. That evidence belongs to unpublished candidate 0.7.0-rc.3. The failed 0.7.0-rc.1 and 0.7.0-rc.2 identities remain permanently closed. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version.
+            This site separates published stable 0.6.0 delivery from bounded prerelease and current-source evidence. Release attempt 0.7.0-rc.3 failed; GitHub immutable-published; npm published-exact; exact identity permanently closed. The exact npm package remains public on next. Anonymous public-delivery verification did not run. The failed 0.7.0-rc.1 and 0.7.0-rc.2 identities remain permanently closed. It is an evidence-linked boundary report, not a compatibility promise for every plugin, framework, or future oracle version.
           </p>
           <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#677067]">
-            The table mixes explicitly labeled published-stable rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; rows whose contract says current, source-checkout, or Unreleased remain Unreleased even after their gates pass.
+            The table mixes explicitly labeled published-stable and prerelease rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; current-source host proofs retain their narrower checkout boundary.
           </p>
         </div>
 

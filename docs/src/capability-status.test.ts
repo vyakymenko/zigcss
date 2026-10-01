@@ -173,8 +173,8 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('browser-targets')?.behavior).toContain('strict explicit-minimum grammar')
     expect(byId.get('browser-targets')?.behavior).toContain('no defaults')
     for (const id of ['output-planning', 'optimizer', 'target-prefix', 'source-maps', 'browser-targets']) {
-      expect(byId.get(id)?.status).toMatch(/Unreleased/i)
-      expect(byId.get(id)?.behavior).toMatch(/current Unreleased/i)
+      expect(byId.get(id)?.status).toMatch(/published prerelease/i)
+      expect(byId.get(id)?.behavior).toContain('published 0.7.0-rc.3 prerelease')
       expect(byId.get(id)?.behavior).toMatch(/Published stable 0\.6\.0/i)
     }
     expect(byId.get('scss')?.behavior).toContain('Dart Sass 1.101.0 development oracle')

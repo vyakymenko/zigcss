@@ -40,13 +40,13 @@ export const routeMetadata = Object.freeze([
   {
     canonicalPath: '/docs/guide/status/',
     title: 'ZigCSS 0.7.0-rc.3 release status',
-    description: 'ZigCSS 0.7.0-rc.3 is a selected unpublished candidate. Stable 0.6.0 remains published; failed rc.1 and rc.2 are closed.',
+    description: 'ZigCSS 0.7.0-rc.3 workflow failed after immutable GitHub and npm next publication. Its identity is closed; stable 0.6.0 remains on latest.',
     sourceOnly: true,
   },
   {
     canonicalPath: '/docs/guide/css-compatibility/',
-    title: 'ZigCSS source-only CSS compatibility',
-    description: 'Source-only CSS compatibility for unpublished ZigCSS 0.7.0-rc.3. Stable 0.6.0 has a separate contract.',
+    title: 'ZigCSS CSS compatibility',
+    description: 'CSS compatibility for published ZigCSS 0.7.0-rc.3; its release workflow failed, and maintained proofs use a source checkout.',
     sourceOnly: true,
   },
   {
@@ -66,14 +66,14 @@ export const routeMetadata = Object.freeze([
   },
   {
     canonicalPath: '/docs/guide/builder-integrations/',
-    title: 'ZigCSS source-only builder and framework proofs',
-    description: 'Current-source ZigCSS builder and package-manager proofs for unpublished 0.7.0-rc.3; stable 0.6.0 is separate.',
+    title: 'ZigCSS builder and framework proofs',
+    description: 'Published ZigCSS 0.7.0-rc.3 adapters and maintained source-checkout builder proofs; release workflow failed after publication.',
     sourceOnly: true,
   },
   {
     canonicalPath: '/docs/guide/recovery-cli/',
-    title: 'ZigCSS source-only CLI and recovery contract',
-    description: 'Source-only ZigCSS CLI and recovery contract for unpublished 0.7.0-rc.3. Stable 0.6.0 remains available.',
+    title: 'ZigCSS CLI and recovery contract',
+    description: 'Published ZigCSS 0.7.0-rc.3 CLI and recovery contract; release workflow failed after publication. Stable 0.6.0 remains available.',
     sourceOnly: true,
   },
 ])

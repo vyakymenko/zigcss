@@ -20,14 +20,15 @@ const downloadTimeoutMs = 30_000
 const registryOrigin = 'https://registry.npmjs.org'
 const provenancePredicateType = 'https://slsa.dev/provenance/v1'
 const publishPredicateType = 'https://github.com/npm/attestation/tree/main/specs/publish/v0.1'
-const sigstoreBundleMediaType = 'application/vnd.dev.sigstore.bundle+json;version=0.2'
+const sigstoreBundleMediaTypeV02 = 'application/vnd.dev.sigstore.bundle+json;version=0.2'
+const sigstoreBundleMediaTypeV03 = 'application/vnd.dev.sigstore.bundle.v0.3+json'
 const inTotoPayloadType = 'application/vnd.in-toto+json'
 const githubActionsBuildType = 'https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1'
 const workflowRepository = 'https://github.com/vyakymenko/zigcss'
 const workflowPath = '.github/workflows/release.yml'
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true })
 export const npmPublicationReadbackPolicy = Object.freeze({
-  attempts: 12,
+  attempts: 60,
   delayMs: 5_000,
 })
 
@@ -269,9 +270,13 @@ function validateDsseSignature(signature, label, expectedKeyKind) {
   }
 }
 
-function validateVerificationMaterial(value, label, expectedKeyKind, signatureKeyId) {
+function validateVerificationMaterial(value, label, expectedKeyKind, signatureKeyId, mediaType) {
   const expectedKeys = expectedKeyKind === 'certificate'
-    ? ['timestampVerificationData', 'tlogEntries', 'x509CertificateChain']
+    ? [
+        mediaType === sigstoreBundleMediaTypeV03 ? 'certificate' : 'x509CertificateChain',
+        'timestampVerificationData',
+        'tlogEntries',
+      ]
     : ['publicKey', 'timestampVerificationData', 'tlogEntries']
   if (!hasExactKeys(value, expectedKeys)) fail(`${label} Sigstore verification material is malformed`)
   if (!Array.isArray(value.tlogEntries) || value.tlogEntries.length !== 1 || !isPlainObject(value.tlogEntries[0])) {
@@ -285,16 +290,23 @@ function validateVerificationMaterial(value, label, expectedKeyKind, signatureKe
     fail(`${label} Sigstore timestamp material is malformed`)
   }
   if (expectedKeyKind === 'certificate') {
-    const chain = value.x509CertificateChain
-    if (
-      !hasExactKeys(chain, ['certificates'])
-      || !Array.isArray(chain.certificates)
-      || chain.certificates.length !== 1
-      || !hasExactKeys(chain.certificates[0], ['rawBytes'])
-    ) {
-      fail(`${label} Sigstore certificate chain is malformed`)
+    if (mediaType === sigstoreBundleMediaTypeV03) {
+      if (!hasExactKeys(value.certificate, ['rawBytes'])) {
+        fail(`${label} Sigstore certificate is malformed`)
+      }
+      decodeBase64(value.certificate.rawBytes, `${label} Sigstore certificate`, 32 * 1024)
+    } else {
+      const chain = value.x509CertificateChain
+      if (
+        !hasExactKeys(chain, ['certificates'])
+        || !Array.isArray(chain.certificates)
+        || chain.certificates.length !== 1
+        || !hasExactKeys(chain.certificates[0], ['rawBytes'])
+      ) {
+        fail(`${label} Sigstore certificate chain is malformed`)
+      }
+      decodeBase64(chain.certificates[0].rawBytes, `${label} Sigstore certificate`, 32 * 1024)
     }
-    decodeBase64(chain.certificates[0].rawBytes, `${label} Sigstore certificate`, 32 * 1024)
   } else if (
     !hasExactKeys(value.publicKey, ['hint'])
     || value.publicKey.hint !== signatureKeyId
@@ -314,7 +326,10 @@ function parseSigstoreStatement(attestation, label, expectedKeyKind) {
   if (!hasExactKeys(bundle, ['dsseEnvelope', 'mediaType', 'verificationMaterial'])) {
     fail(`${label} Sigstore bundle is malformed`)
   }
-  if (bundle.mediaType !== sigstoreBundleMediaType) {
+  if (
+    bundle.mediaType !== sigstoreBundleMediaTypeV02
+    && !(expectedKeyKind === 'certificate' && bundle.mediaType === sigstoreBundleMediaTypeV03)
+  ) {
     fail(`${label} Sigstore bundle has an unexpected media type`)
   }
   const envelope = bundle.dsseEnvelope
@@ -333,6 +348,7 @@ function parseSigstoreStatement(attestation, label, expectedKeyKind) {
     label,
     expectedKeyKind,
     envelope.signatures[0].keyid,
+    bundle.mediaType,
   )
   const payload = decodeBase64(envelope.payload, `${label} DSSE payload`, maximumDssePayloadBytes)
   return parseJson(payload, `${label} DSSE payload`, maximumDssePayloadBytes)
@@ -473,6 +489,14 @@ export function validateNpmAttestationReadback(version, source, expectedPackage,
   return { predicateType: provenancePredicateType }
 }
 
+export function summarizeNpmViewStderr(stderr) {
+  if (typeof stderr !== 'string') return null
+  const match = stderr.match(
+    /(?:^|\r?\n)npm (?:error|ERR!) code (E404|E401|E403|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|E500|E502|E503|E504)(?:\r?\n|$)/u,
+  )
+  return match === null ? null : `npm error code ${match[1]}`
+}
+
 function runNpmView(args, label) {
   const executable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
   const result = spawnSync(executable, [...args, '--json', `--registry=${registry}`], {
@@ -484,7 +508,10 @@ function runNpmView(args, label) {
     throw new Error(`${label} failed to start: ${result.error.message}`)
   }
   if (result.signal !== null || result.status !== 0) {
-    throw new Error(`${label} failed with ${result.signal ?? `exit ${result.status}`}`)
+    const diagnostic = summarizeNpmViewStderr(result.stderr)
+    throw new Error(
+      `${label} failed with ${result.signal ?? `exit ${result.status}`}${diagnostic === null ? '' : `; ${diagnostic}`}`,
+    )
   }
   return result.stdout
 }

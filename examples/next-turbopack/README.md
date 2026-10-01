@@ -6,9 +6,7 @@ Next.js Turbopack. It is intentionally bounded to the one global
 module types in 16.2; the executable gate is pinned to Next.js 16.3.4 with
 React and ReactDOM 19.2.4.
 
-Build the current checkout's native binary before using this example. The
-published `zigcss@0.6.0` binary predates the current `zigcss-node-v1` protocol,
-so this example is not a stable-release consumer yet.
+Published `zigcss@0.7.0-rc.3` contains the `zigcss/webpack` loader and `zigcss-node-v1` protocol. Build the current checkout's native binary for this maintained host proof; published `zigcss@0.6.0` predates the protocol and is not a consumer path.
 
 From the repository root, the supported checkout proof builds ZigCSS with Zig
 0.15.2, installs the exact root lock with Node 24.20.0 LTS, and runs both isolated real-host

@@ -1,9 +1,8 @@
 # Build tools and framework integrations
 
-The current unpublished 0.7.0-rc.3 source checkout has executable integration evidence for the direct
+After the failed 0.7.0-rc.3 release attempt, the published prerelease and current source checkout have executable integration evidence for the direct
 JavaScript builders, selected framework hosts, four native build systems, and
-six package-manager installation modes. The failed 0.7.0-rc.2 identity remains closed. These are `Unreleased` source
-capabilities: the immutable published `zigcss@0.6.0` binary predates the
+six package-manager installation modes. The failed 0.7.0-rc.2 and 0.7.0-rc.3 identities remain closed. These capabilities ship in the published `zigcss@0.7.0-rc.3` prerelease; the maintained checkout proofs remain stricter than registry installation. The immutable published `zigcss@0.6.0` binary predates the
 `zigcss-node-v1` protocol and must not be presented as adapter delivery.
 
 ## Prepare one verified checkout
@@ -107,7 +106,7 @@ availability before the native test suite. It then runs the real compiler
 through Make, Ninja, CMake, and Meson; an unavailable local tool is reported as
 an explicit skip. These distribution packages are not content-addressed pins.
 This build-system primitive is implemented
-only in the current `Unreleased` checkout—no Bazel rule, Nx executor, Angular
+in the published 0.7.0-rc.3 prerelease and current checkout—no Bazel rule, Nx executor, Angular
 integration, or stable 0.6.0 delivery is claimed.
 
 ## Package-manager installation matrix

@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No later stable identity is selected.
 
-Prerelease target `0.7.0-rc.3` is candidate-ready with `candidateReady: true` after all seven pre-tag gates passed. Published stable identity remains immutable at `0.6.0`.
+## [0.7.0-rc.3] - 2026-10-01
+
+An immutable GitHub Release and exact npm surfaces exist for `0.7.0-rc.3`, but the Release workflow failed; this identity is permanently closed.
+
+The protected `v0.7.0-rc.3` tag remains unchanged. npm `next` serves the exact published package; stable `latest` remains `0.6.0`. The anonymous public-delivery terminal did not run, so its five-syntax install and signature audit are not verified. Select a new candidate identity for further publication.
 
 Prerelease attempt `0.7.0-rc.2` failed; its exact identity is permanently closed. GitHub surface `absent`; npm surface `absent`. Published stable identity remains immutable at `0.6.0`.
 

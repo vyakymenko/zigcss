@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { renderTable, replaceGeneratedTable } from './generate-capability-status.mjs'
 import {
   compareReleaseVersionPrecedence,
   parseReleaseVersion,
@@ -70,15 +71,24 @@ function cloneSources(currentSources = readReleaseSources()) {
   const plannedVerifiedGates = onDiskContract.state === 'planned'
     ? onDiskContract.gates.filter(gate => gate.state === 'verified').length
     : 5
-  // Mutation fixtures start from planned source copy even after the real
-  // checkout is admitted or a publication attempt fails before npm delivery.
+  // Mutation fixtures start from planned source copy after any real phase.
   // Validate the real phase before rewinding it; the separate on-disk test
   // also validates the unchanged checkout directly, without normalization.
   if (['candidate-ready', 'publication-failed'].includes(contract.state)) {
     validateReleaseSources(currentSources)
   }
   if (contract.state === 'publication-failed') {
-    normalizeUnpublishedFailureCopy(sources, contract)
+    if (contract.publicationFailureEvidence.npmSurface.state === 'published-exact') {
+      const onDisk = readReleaseSources()
+      assert.ok(
+        currentSources.size === onDisk.size
+          && [...currentSources].every(([filename, value]) => onDisk.get(filename) === value),
+        'only the exact on-disk published failure may normalize to unpublished source fixtures',
+      )
+      normalizePublishedFailureCopy(sources, contract)
+    } else {
+      normalizeUnpublishedFailureCopy(sources, contract)
+    }
     contract.schemaVersion = 1
     contract.state = 'candidate-ready'
     delete contract.publicationFailureEvidence
@@ -119,6 +129,110 @@ function cloneSources(currentSources = readReleaseSources()) {
     )
   }
   return sources
+}
+
+function normalizePublishedFailureCopy(sources, contract) {
+  assert.equal(contract.publicationFailureEvidence.githubSurface.state, 'immutable-published')
+  const version = contract.candidateVersion
+  const failure = `Release attempt ${version} is publication-failed: GitHub immutable-published; npm published-exact; exact identity permanently closed. The exact npm prerelease is published despite the failed workflow terminal. Stable delivery remains 0.6.0.`
+  const unpublished = 'This active source candidate is unpublished; stable delivery remains 0.6.0.'
+
+  mutateJson(sources, 'docs/src/data/capabilities.json', metadata => {
+    const byId = new Map(metadata.capabilities.map(capability => [capability.id, capability]))
+    const update = (id, before, after) => {
+      const capability = byId.get(id)
+      assert.ok(capability, `missing ${id} capability`)
+      assert.ok(capability.behavior.includes(before), `${id} published fixture copy is missing`)
+      capability.behavior = capability.behavior.replace(before, after)
+    }
+    update('node-api', `The published \`zigcss@${version}\` prerelease package root exposes`, 'The Unreleased source package root exposes')
+    update('zig-package', failure, unpublished)
+    for (const id of ['output-planning', 'optimizer', 'target-prefix', 'source-maps', 'browser-targets']) {
+      const capability = byId.get(id)
+      assert.ok(capability, `missing ${id} capability`)
+      capability.status = capability.status.replace('Published prerelease', 'Unreleased').replace('published prerelease', 'Unreleased')
+      capability.behavior = capability.behavior
+        .replace(`The published ${version} prerelease CLI`, 'The current Unreleased CLI')
+        .replace(`In the published ${version} prerelease CLI`, 'In the current Unreleased CLI')
+        .replace(`In the published ${version} prerelease`, 'In the current Unreleased source')
+    }
+    update('release-artifacts', failedImmutableIdentity, plannedImmutableIdentity)
+  })
+  const status = sources.get('docs/src/content/docs/guide/status.md')
+  sources.set(
+    'docs/src/content/docs/guide/status.md',
+    replaceGeneratedTable(status, renderTable(JSON.parse(sources.get('docs/src/data/capabilities.json')))),
+  )
+
+  for (const [filename, published, ready] of [
+    ['docs/src/content/docs/guide/status.md', `ZigCSS ${version} release attempt failed and the exact identity is permanently closed.`, `Active source candidate ${version} is selected in \`release/next-release.json\` but is not published.`],
+    ['docs/src/content/docs/guide/status.md', 'GitHub surface: `immutable-published`; npm surface: `published-exact`. The immutable GitHub prerelease and exact npm package on `next` remain public; npm `latest` remains `0.6.0`. The anonymous public-delivery terminal was skipped, so its public install and signature audit are unverified.', 'GitHub candidate surface: `absent`; npm candidate surface: `absent`.'],
+    ['docs/src/content/docs/guide/status.md', 'Its `candidateReady` interlock is `false` after the failed publication attempt', 'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed'],
+    ['docs/src/content/docs/guide/status.md', '7 of 8 admission gates are verified; the publication terminal is failed and carries recorded failure evidence. Candidate selection, version synchronization, native integrity, local and site validation, hosted Build and CodeQL evidence, and origin/main integration remain verified. The protected tag is permanently closed; further publication needs a new candidate identity.', '7 of 8 admission gates now carry recorded evidence. Candidate selection, version synchronization, native integrity, local and site validation, hosted Build and CodeQL evidence, and origin/main integration are verified; protected-tag publication remains pending. This is a source-only candidate, not a published package.'],
+    ['docs/src/app/components/Home.tsx', `${version} · failed release identity · do not reuse`, `${version} · unpublished source proofs`],
+    ['docs/src/app/components/Home.tsx', '7/8 admission gates verified · publication failed', '7/8 admission gates verified'],
+    ['docs/src/app/components/Home.tsx', 'candidateReady=false after failed publication', 'candidateReady=true after seven pre-tag gates passed'],
+    ['docs/src/app/components/GettingStarted.tsx', `Release attempt ${version} failed after the exact npm package was published; npm next still serves it and stable latest remains 0.6.0.`, `Its active identity is the unpublished ${version} candidate.`],
+    ['docs/src/content/docs/guide/builder-integrations.md', `After the failed ${version} release attempt, the published prerelease and current source checkout have`, `The current unpublished ${version} source checkout has`],
+    ['docs/src/app/components/Features.tsx', `Release attempt ${version} failed; GitHub immutable-published; npm published-exact; exact identity permanently closed. The exact npm package remains public on next.`, `That evidence belongs to unpublished candidate ${version}.`],
+    ['NPM_PUBLISH.md', `Prerelease attempt \`zigcss@${version}\` failed and its exact identity is permanently closed. GitHub surface: \`immutable-published\`; npm surface: \`published-exact\`. Select a new candidate version; never move, recreate, or reuse \`v${version}\`.`, 'It is currently `candidate-ready` with `candidateReady: true`; the protected-tag workflow must still pass before either release surface is published.'],
+  ]) {
+    replace(sources, filename, published, ready)
+  }
+  for (const [filename, published, ready] of [
+    ['docs/src/content/docs/guide/status.md', 'immutable npm `latest` version with SLSA provenance, and anonymous five-syntax install', 'immutable npm `latest` version with SLSA provenance, preserved `next`, and anonymous five-syntax install'],
+    ['docs/src/content/docs/guide/status.md', 'The `NATIVE-009` historical candidate `0.6.0-rc.2` remains verified by its historically mutable GitHub prerelease and immutable npm version.', 'The `NATIVE-009` published candidate `0.6.0-rc.2` is verified on the GitHub prerelease and npm `next` channels.'],
+    ['docs/src/content/docs/guide/status.md', `The published \`zigcss@${version}\` prerelease package additionally exposes`, 'The current `Unreleased` source package additionally exposes'],
+    ['docs/src/content/docs/guide/status.md', `The published \`zigcss@${version}\` prerelease package root maps`, 'The current `Unreleased` package root maps'],
+    ['docs/src/content/docs/guide/status.md', 'this published prerelease API', 'this Unreleased API'],
+    ['docs/src/content/docs/guide/status.md', `The published ${version} prerelease additionally owns`, 'The current `Unreleased` source additionally owns'],
+    ['docs/src/content/docs/guide/status.md', 'These prerelease integrity additions', 'These future-release integrity additions'],
+    ['docs/src/content/docs/guide/status.md', `## Published ${version} package installation recovery boundary`, '## Unreleased package installation recovery boundary'],
+    ['docs/src/content/docs/guide/status.md', 'In the published prerelease package', 'In the current source package'],
+    ['docs/src/content/docs/guide/status.md', 'included `zigcss-install` recovery binary', 'planned `zigcss-install` recovery binary'],
+    ['docs/src/content/docs/guide/status.md', `Published \`zigcss@${version}\` exposes the recovery command on npm \`next\`.`, 'No published npm version currently exposes the new recovery command.'],
+    ['docs/src/content/docs/guide/status.md', 'included in the published prerelease package', 'intended for a future npm package'],
+    ['docs/src/content/docs/guide/status.md', 'published prerelease recovery binary', 'future production recovery binary'],
+    ['docs/src/content/docs/guide/status.md', `Rows labeled current or source-checkout describe maintained repository proofs; the ${version} package capabilities above ship in the npm prerelease.`, 'Rows labeled current, source-checkout, or Unreleased describe this repository snapshot rather than the npm release; an experimental label alone does not imply that a capability is unpublished.'],
+    ['docs/src/content/docs/guide/status.md', `Published ${version} remains the immutable prerelease CLI-launcher package and adds`, 'The current `Unreleased` source adds'],
+    ['docs/src/content/docs/guide/status.md', `This published ${version} prerelease compiler enables`, 'This Unreleased compiler enables'],
+    ['docs/src/app/components/GettingStarted.tsx', `published ${version} prerelease Node API`, 'current Unreleased Node API'],
+    ['docs/src/app/components/Features.tsx', 'bounded prerelease and current-source evidence', 'bounded current-source evidence'],
+    ['docs/src/app/components/Features.tsx', 'The table mixes explicitly labeled published-stable and prerelease rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; current-source host proofs retain their narrower checkout boundary.', 'The table mixes explicitly labeled published-stable rows with current-source evidence. REL-010 promotes only the stable 0.6.0 rows; rows whose contract says current, source-checkout, or Unreleased remain Unreleased even after their gates pass.'],
+    ['docs/src/content/docs/guide/builder-integrations.md', `These capabilities ship in the published \`zigcss@${version}\` prerelease; the maintained checkout proofs remain stricter than registry installation.`, 'These are `Unreleased` source\ncapabilities:'],
+    ['docs/src/content/docs/guide/builder-integrations.md', `in the published ${version} prerelease and current checkout`, 'only in the current `Unreleased` checkout'],
+    ['docs/src/content/docs/guide/build-from-source.md', `Source builds are the verified alternative to published stable \`zigcss@0.6.0\` and the published \`zigcss@${version}\` prerelease.`, 'Source builds are the verified alternative to the published five-language native-graduated package.'],
+    ['docs/src/content/docs/guide/css-compatibility.md', `published \`${version}\` prerelease recovery compiler`, `current unpublished \`${version}\` recovery compiler`],
+    ['docs/src/content/docs/guide/format-compatibility.md', `ZigCSS ${version} is published on npm \`next\` and compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`, `The current unpublished ${version} source checkout compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`],
+    ['docs/src/content/docs/guide/format-compatibility.md', 'Stable 0.6.0 contains the self-contained native five-language surface and remains on npm `latest` under the exact stable promotion workflow. Historical `0.6.0-rc.2` remains an immutable npm version available by exact version; both historical GitHub releases read back `immutable: false`. npm `next` serves ZigCSS 0.7.0-rc.3.', 'Stable 0.6.0 contains the self-contained native five-language surface and is published on npm `latest` by the exact stable promotion workflow; historical `0.6.0-rc.2` remains available as an immutable npm version on `next`. Their GitHub releases predate Immutable Releases and read back `immutable: false`.'],
+    ['docs/src/content/docs/guide/format-compatibility.md', `published ${version} prerelease`, 'current `Unreleased`'],
+    ['docs/src/content/docs/guide/recovery-cli.md', `ZigCSS ${version} prerelease is published on npm \`next\` and owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus;`, `The current unpublished ${version} source checkout owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. The package is not published yet;`],
+    ['docs/src/content/docs/guide/recovery-cli.md', `This page documents the published ${version} prerelease and current checkout.`, 'This page documents the current `Unreleased` checkout.'],
+    ['docs/src/content/docs/guide/recovery-cli.md', `## Published ${version} package-manager lifecycle recovery`, '## Unreleased package-manager lifecycle recovery'],
+    ['docs/src/content/docs/guide/recovery-cli.md', 'included in the published prerelease package', 'intended to ship in a future npm package'],
+    ['docs/src/content/docs/guide/recovery-cli.md', `Published \`zigcss@${version}\` exposes \`zigcss-install\` and this independent inventory on npm \`next\`.`, 'No published npm version currently exposes `zigcss-install` or this independent inventory.'],
+    ['NPM_PUBLISH.md', 'Stable publication did not delete, overwrite, or republish the immutable `0.6.0-rc.2` package, and it did not publish Homebrew, editor-extension, container, service, or other npm channels. npm `next` now serves `zigcss@0.7.0-rc.3`; npm `latest` remains `zigcss@0.6.0`.', 'The existing npm `next` tag remains bound to `0.6.0-rc.2`. Stable publication does not delete, overwrite, or republish that package, and it does not publish Homebrew, editor-extension, container, service, or other npm channels.'],
+    ['NPM_PUBLISH.md', `## Failed ${version} publication`, '## Next candidate admission'],
+    ['NPM_PUBLISH.md', 'Stable `zigcss@0.6.0` remains on `latest`; the historical `0.6.0-rc.2` package remains available by exact version.', 'Stable `zigcss@0.6.0` remains on `latest` and historical `0.6.0-rc.2` remains on `next`.'],
+    ['NPM_PUBLISH.md', 'The 48-file npm package contains', 'The seven-file npm package contains'],
+    ['NPM_PUBLISH.md', 'published immutable npm version `zigcss@0.6.0-rc.2` with provenance. At that publication, it was the prerelease channel selection.', 'published immutable npm version `zigcss@0.6.0-rc.2` with provenance on `next`.'],
+    ['NPM_PUBLISH.md', 'today `latest` is stable `0.6.0` while `next` serves `0.7.0-rc.3`.', 'today `latest` is stable `0.6.0` while `next` still preserves the RC.'],
+    ['NPM_PUBLISH.md', 'The historical RC remains an immutable npm version installable by exact version `zigcss@0.6.0-rc.2` for comparison. npm `next` resolves to `0.7.0-rc.3`.', 'The historical RC remains an immutable npm version installable with `zigcss@next` for comparison; the stable workflow never moves that tag.'],
+    ['examples/build-systems/README.md', `Published prerelease ZigCSS ${version} contains the verified \`--depfile\` contract; these maintained integration proofs still run against the exact current checkout.`, 'These integrations are for the current `Unreleased` checkout only.'],
+    ['examples/next-turbopack/README.md', `Published \`zigcss@${version}\` contains the \`zigcss/webpack\` loader and \`zigcss-node-v1\` protocol. Build the current checkout's native binary for this maintained host proof; published \`zigcss@0.6.0\` predates the protocol and is not a consumer path.`, "Build the current checkout's native binary before using this example. The\npublished `zigcss@0.6.0` binary predates the current `zigcss-node-v1` protocol,\nso this example is not a stable-release consumer yet."],
+    ['examples/sveltekit/README.md', `Published \`zigcss@${version}\` contains the \`zigcss/vite\` adapter and current protocol; this maintained SvelteKit integration remains a current-source-checkout proof only. Stable ZigCSS 0.6.0 predates that protocol.`, 'Published ZigCSS 0.6.0 also predates the current `zigcss-node-v1` adapter protocol, so this example is a current-source-checkout proof only.'],
+    ['examples/astro/README.md', `Published \`zigcss@${version}\` contains the \`zigcss/vite\` adapter and current protocol; this maintained Astro integration remains a current-source-checkout proof only. Stable \`zigcss@0.6.0\` predates that protocol.`, 'This is current-source-checkout proof only: the published `zigcss@0.6.0` binary predates the current `zigcss-node-v1` protocol.'],
+    ['examples/nuxt/README.md', `Published \`zigcss@${version}\` contains the \`zigcss/vite\` adapter and current protocol; this maintained Nuxt integration remains a current-source-checkout proof only. Stable ZigCSS 0.6.0 predates that protocol.`, 'Published ZigCSS 0.6.0 also predates the current `zigcss-node-v1` adapter protocol, so this example is a current-source-checkout proof only.'],
+    ['examples/parcel/README.md', `Published \`zigcss@${version}\` contains the root compiler protocol but no \`zigcss/parcel\` export, so this remains a local transformer proof.`, 'the published binary predates the protocol used by this source proof.'],
+  ]) {
+    replace(sources, filename, published, ready)
+  }
+  replace(
+    sources,
+    'CHANGELOG.md',
+    `## [${version}] - 2026-10-01\n\nAn immutable GitHub Release and exact npm surfaces exist for \`${version}\`, but the Release workflow failed; this identity is permanently closed.\n\nThe protected \`v${version}\` tag remains unchanged. npm \`next\` serves the exact published package; stable \`latest\` remains \`0.6.0\`. The anonymous public-delivery terminal did not run, so its five-syntax install and signature audit are not verified. Select a new candidate identity for further publication.`,
+    `Prerelease target \`${version}\` is candidate-ready with \`candidateReady: true\` after all seven pre-tag gates passed. Published stable identity remains immutable at \`${publishedStableVersion}\`.`,
+  )
 }
 
 function normalizeUnpublishedFailureCopy(sources, contract) {
@@ -975,7 +1089,7 @@ test('failure fixture normalization rejects contradictory copy and cannot erase 
   const published = cloneSources()
   setPublicationFailedPhase(published, { githubState: 'immutable-published', npmState: 'published-exact' })
   const publishedSnapshot = new Map(published)
-  assert.throws(() => cloneSources(published), /only an npm-absent checkout can normalize to unpublished source fixtures/)
+  assert.throws(() => cloneSources(published), /only the exact on-disk published failure may normalize to unpublished source fixtures/)
   assert.deepEqual(published, publishedSnapshot)
   assert.equal(JSON.parse(published.get('release/next-release.json')).publicationFailureEvidence.npmSurface.state, 'published-exact')
 })

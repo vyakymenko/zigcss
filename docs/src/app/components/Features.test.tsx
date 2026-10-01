@@ -14,7 +14,7 @@ describe('Features', () => {
     renderFeatures()
     expect(screen.getByRole('heading', { name: /current capability status/i })).toBeInTheDocument()
     expect(screen.getByText(/not a compatibility promise/i)).toBeInTheDocument()
-    expect(screen.getByText(/separates published stable 0\.6\.0 delivery from bounded current-source evidence/i)).toBeInTheDocument()
+    expect(screen.getByText(/separates published stable 0\.6\.0 delivery from bounded prerelease and current-source evidence/i)).toBeInTheDocument()
     if (nextRelease.state === 'publication-failed') {
       const failure = nextRelease.publicationFailureEvidence
       const sourceBoundary = failure.npmSurface.state === 'published-exact'
@@ -27,7 +27,7 @@ describe('Features', () => {
       expect(document.body.textContent).not.toContain(`That evidence ships in published prerelease ${nextRelease.candidateVersion} on npm next.`)
     }
     expect(screen.getByText(/REL-010 promotes only the stable 0\.6\.0 rows/i)).toBeInTheDocument()
-    expect(screen.getByText(/rows whose contract says current, source-checkout, or Unreleased remain Unreleased/i)).toBeInTheDocument()
+    expect(screen.getByText(/current-source host proofs retain their narrower checkout boundary/i)).toBeInTheDocument()
   })
 
   it('marks the core compiler and format adapters experimental', () => {
@@ -108,7 +108,7 @@ describe('Features', () => {
 
   it('keeps small capability copy on WCAG AA contrast colors', () => {
     const { container } = renderFeatures()
-    const intro = screen.getByText(/table mixes explicitly labeled published-stable rows/i)
+    const intro = screen.getByText(/table mixes explicitly labeled published-stable and prerelease rows/i)
     const mobileLabels = Array.from(container.querySelectorAll<HTMLElement>('[data-mobile-column-label]'))
 
     expect(intro).toHaveClass('text-[#677067]')

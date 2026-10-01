@@ -40,30 +40,30 @@ describe('search discovery contract', () => {
     ])
     expect(new Set(routeMetadata.map(route => route.canonicalPath)).size).toBe(routeMetadata.length)
     expect(nextRelease.candidateVersion).toBe('0.7.0-rc.3')
-    expect(nextRelease.state).toBe('candidate-ready')
-    expect(nextRelease.candidateReady).toBe(true)
+    expect(nextRelease.state).toBe('publication-failed')
+    expect(nextRelease.candidateReady).toBe(false)
     expect(routeMetadata.find(route => route.canonicalPath === '/docs/guide/status/')).toEqual({
       canonicalPath: '/docs/guide/status/',
       title: 'ZigCSS 0.7.0-rc.3 release status',
-      description: 'ZigCSS 0.7.0-rc.3 is a selected unpublished candidate. Stable 0.6.0 remains published; failed rc.1 and rc.2 are closed.',
+      description: 'ZigCSS 0.7.0-rc.3 workflow failed after immutable GitHub and npm next publication. Its identity is closed; stable 0.6.0 remains on latest.',
       sourceOnly: true,
     })
     expect(routeMetadata.find(route => route.canonicalPath === '/docs/guide/builder-integrations/')).toEqual({
       canonicalPath: '/docs/guide/builder-integrations/',
-      title: 'ZigCSS source-only builder and framework proofs',
-      description: 'Current-source ZigCSS builder and package-manager proofs for unpublished 0.7.0-rc.3; stable 0.6.0 is separate.',
+      title: 'ZigCSS builder and framework proofs',
+      description: 'Published ZigCSS 0.7.0-rc.3 adapters and maintained source-checkout builder proofs; release workflow failed after publication.',
       sourceOnly: true,
     })
     expect(routeMetadata.find(route => route.canonicalPath === '/docs/guide/css-compatibility/')).toEqual({
       canonicalPath: '/docs/guide/css-compatibility/',
-      title: 'ZigCSS source-only CSS compatibility',
-      description: 'Source-only CSS compatibility for unpublished ZigCSS 0.7.0-rc.3. Stable 0.6.0 has a separate contract.',
+      title: 'ZigCSS CSS compatibility',
+      description: 'CSS compatibility for published ZigCSS 0.7.0-rc.3; its release workflow failed, and maintained proofs use a source checkout.',
       sourceOnly: true,
     })
     expect(routeMetadata.find(route => route.canonicalPath === '/docs/guide/recovery-cli/')).toEqual({
       canonicalPath: '/docs/guide/recovery-cli/',
-      title: 'ZigCSS source-only CLI and recovery contract',
-      description: 'Source-only ZigCSS CLI and recovery contract for unpublished 0.7.0-rc.3. Stable 0.6.0 remains available.',
+      title: 'ZigCSS CLI and recovery contract',
+      description: 'Published ZigCSS 0.7.0-rc.3 CLI and recovery contract; release workflow failed after publication. Stable 0.6.0 remains available.',
       sourceOnly: true,
     })
     for (const route of routeMetadata) expect(route.description.length).toBeLessThanOrEqual(160)
@@ -106,10 +106,10 @@ describe('search discovery contract', () => {
       expect(html).toContain(route.description)
       if (route.sourceOnly === true) {
         const noScript = html.match(/<noscript>([\s\S]*?)<\/noscript>/)?.[1] ?? ''
-        expect(noScript).toContain('ZIGCSS · 0.7.0-RC.3 · UNPUBLISHED SOURCE CANDIDATE')
-        expect(noScript).toContain('Candidate 0.7.0-rc.3 is selected but not published on GitHub or npm.')
+        expect(noScript).toContain('ZIGCSS · 0.7.0-RC.3 · FAILED RELEASE IDENTITY')
+        expect(noScript).toContain('The Release workflow failed after an immutable GitHub prerelease and exact npm next package were published.')
         expect(noScript).toContain('Failed 0.7.0-rc.1 and 0.7.0-rc.2 identities remain closed.')
-        expect(noScript).toContain('Stable 0.6.0 remains on npm latest; historical 0.6.0-rc.2 remains on next.')
+        expect(noScript).toContain('Stable 0.6.0 remains on npm latest; npm next serves 0.7.0-rc.3.')
         expect(noScript).not.toContain('candidateReady=true')
         expect(noScript).not.toContain('ZIGCSS · 0.7.0-RC.1 · FAILED RELEASE IDENTITY')
         expect(noScript).not.toContain('ZIGCSS 0.6.0 · STABLE RELEASE')
@@ -130,7 +130,7 @@ describe('search discovery contract', () => {
       path.join(root, 'dist', 'docs', 'guide', 'builder-integrations', 'index.html'),
       'utf8',
     )
-    expect(builderPage).toContain('Current-source ZigCSS builder and package-manager proofs for unpublished 0.7.0-rc.3')
+    expect(builderPage).toContain('Published ZigCSS 0.7.0-rc.3 adapters and maintained source-checkout builder proofs')
     expect(builderPage).not.toContain('SoftwareSourceCode')
     expect(builderPage).not.toContain('"version": "0.6.0"')
 
@@ -138,7 +138,7 @@ describe('search discovery contract', () => {
       path.join(root, 'dist', 'docs', 'guide', 'recovery-cli', 'index.html'),
       'utf8',
     )
-    expect(recoveryPage).toContain('Source-only ZigCSS CLI and recovery contract for unpublished 0.7.0-rc.3')
+    expect(recoveryPage).toContain('Published ZigCSS 0.7.0-rc.3 CLI and recovery contract')
     expect(recoveryPage).not.toContain('SoftwareSourceCode')
     expect(recoveryPage).not.toContain('"version": "0.6.0"')
 
@@ -146,7 +146,7 @@ describe('search discovery contract', () => {
       path.join(root, 'dist', 'docs', 'guide', 'css-compatibility', 'index.html'),
       'utf8',
     )
-    expect(cssCompatibilityPage).toContain('Source-only CSS compatibility for unpublished ZigCSS 0.7.0-rc.3')
+    expect(cssCompatibilityPage).toContain('CSS compatibility for published ZigCSS 0.7.0-rc.3')
     expect(cssCompatibilityPage).not.toContain('SoftwareSourceCode')
     expect(cssCompatibilityPage).not.toContain('"version": "0.6.0"')
 
@@ -154,7 +154,7 @@ describe('search discovery contract', () => {
     expect(docsAlias).toContain('<title>ZigCSS documentation</title>')
     expect(docsAlias).toContain('<link rel="canonical" href="https://vyakymenko.github.io/zigcss/docs/guide/status/" />')
     expect(docsAlias).toContain('<meta name="robots" content="noindex,follow" />')
-    expect(docsAlias).toContain('UNPUBLISHED SOURCE CANDIDATE')
+    expect(docsAlias).toContain('FAILED RELEASE IDENTITY')
     expect(docsAlias).not.toContain('SoftwareSourceCode')
     expect(docsAlias).not.toContain('"version": "0.6.0"')
     expect(sitemap).not.toContain('<loc>https://vyakymenko.github.io/zigcss/docs/</loc>')

@@ -9,6 +9,7 @@ import {
   downloadRegistryAttestations,
   npmPublicationReadbackPolicy,
   sanitizeLogMessage,
+  summarizeNpmViewStderr,
   validateDownloadedNpmPackage,
   validateNpmAttestationReadback,
   validateNpmPublicationReadback,
@@ -63,25 +64,33 @@ function subjectFixture(releaseVersion, packageIdentity) {
   }]
 }
 
-function sigstoreBundle(statement, keyKind) {
+function sigstoreBundle(statement, keyKind, mediaVersion = '0.2') {
   const keyid = keyKind === 'certificate'
     ? ''
     : `SHA256:${Buffer.from('npm-public-key').toString('base64')}`
   return {
-    mediaType: 'application/vnd.dev.sigstore.bundle+json;version=0.2',
+    mediaType: mediaVersion === '0.3'
+      ? 'application/vnd.dev.sigstore.bundle.v0.3+json'
+      : 'application/vnd.dev.sigstore.bundle+json;version=0.2',
     dsseEnvelope: {
       payload: Buffer.from(JSON.stringify(statement)).toString('base64'),
       payloadType: 'application/vnd.in-toto+json',
       signatures: [{ keyid, sig: Buffer.from('signature').toString('base64') }],
     },
     verificationMaterial: keyKind === 'certificate'
-      ? {
-          x509CertificateChain: {
-            certificates: [{ rawBytes: Buffer.from('certificate').toString('base64') }],
-          },
-          tlogEntries: [{}],
-          timestampVerificationData: { rfc3161Timestamps: [] },
-        }
+      ? mediaVersion === '0.3'
+        ? {
+            certificate: { rawBytes: Buffer.from('certificate').toString('base64') },
+            tlogEntries: [{}],
+            timestampVerificationData: { rfc3161Timestamps: [] },
+          }
+        : {
+            x509CertificateChain: {
+              certificates: [{ rawBytes: Buffer.from('certificate').toString('base64') }],
+            },
+            tlogEntries: [{}],
+            timestampVerificationData: { rfc3161Timestamps: [] },
+          }
       : {
           publicKey: { hint: keyid },
           tlogEntries: [{}],
@@ -134,7 +143,7 @@ function publishStatement(releaseVersion, packageIdentity) {
   }
 }
 
-function attestationFixture(releaseVersion, packageIdentity, includePublish = true) {
+function attestationFixture(releaseVersion, packageIdentity, includePublish = true, provenanceMediaVersion = '0.3') {
   const attestations = []
   if (includePublish) {
     attestations.push({
@@ -146,7 +155,7 @@ function attestationFixture(releaseVersion, packageIdentity, includePublish = tr
   attestations.push({
     predicateType: provenancePredicateType,
     signedAccessSignatureUrl: '',
-    bundle: sigstoreBundle(provenanceStatement(releaseVersion, packageIdentity), 'certificate'),
+    bundle: sigstoreBundle(provenanceStatement(releaseVersion, packageIdentity), 'certificate', provenanceMediaVersion),
   })
   return { attestations }
 }
@@ -176,8 +185,16 @@ test('log sanitizer removes forged lines, terminal controls, and bounds diagnost
   assert.equal(sanitizeLogMessage('x'.repeat(4_096)).length, 2_048)
 })
 
+test('npm lookup diagnostics expose only recognized error codes', () => {
+  assert.equal(summarizeNpmViewStderr('npm error code E404\nnpm error 404 Not Found'), 'npm error code E404')
+  assert.equal(summarizeNpmViewStderr('npm ERR! code ETIMEDOUT\r\n'), 'npm error code ETIMEDOUT')
+  assert.equal(summarizeNpmViewStderr('npm error code ESECRET-TOKEN\n'), null)
+  assert.equal(summarizeNpmViewStderr('npm error 404 token=secret-value\n'), null)
+  assert.equal(summarizeNpmViewStderr(null), null)
+})
+
 test('readback accepts exact version, tags, integrity, shasum, and canonical tarball URL', () => {
-  assert.deepEqual(npmPublicationReadbackPolicy, { attempts: 12, delayMs: 5_000 })
+  assert.deepEqual(npmPublicationReadbackPolicy, { attempts: 60, delayMs: 5_000 })
   assert.deepEqual(
     validateNpmPublicationReadback(version, visibleVersion, visibleTags, visibleDist, expected),
     {
@@ -372,7 +389,11 @@ test('readback requires the exact canonical npm provenance advertisement', () =>
 })
 
 test('attestation readback accepts one exact SLSA provenance and preserves the npm publish attestation', () => {
-  for (const response of [visibleAttestations, attestationFixture(version, expected, false)]) {
+  for (const response of [
+    visibleAttestations,
+    attestationFixture(version, expected, false),
+    attestationFixture(version, expected, true, '0.2'),
+  ]) {
     assert.deepEqual(
       validateNpmAttestationReadback(version, JSON.stringify(response), expected, commit),
       { predicateType: provenancePredicateType },
@@ -474,8 +495,9 @@ test('attestation readback rejects malformed Sigstore bundles and DSSE payloads'
     attestation => { attestation.bundle.dsseEnvelope.payload = 'not base64!' },
     attestation => { attestation.bundle.dsseEnvelope.signatures = [] },
     attestation => { attestation.bundle.dsseEnvelope.signatures[0].keyid = 'unexpected' },
-    attestation => { attestation.bundle.verificationMaterial.x509CertificateChain.certificates = [] },
+    attestation => { attestation.bundle.verificationMaterial.certificate.rawBytes = 'not base64!' },
     attestation => { attestation.bundle.verificationMaterial.tlogEntries = [] },
+    attestation => { attestation.bundle.verificationMaterial.x509CertificateChain = { certificates: [] } },
   ]) {
     const response = structuredClone(visibleAttestations)
     mutate(response.attestations[1])
@@ -490,6 +512,12 @@ test('attestation readback rejects malformed Sigstore bundles and DSSE payloads'
       /Sigstore|DSSE|statement/,
     )
   }
+  const wrongPublishMediaType = structuredClone(visibleAttestations)
+  wrongPublishMediaType.attestations[0].bundle.mediaType = 'application/vnd.dev.sigstore.bundle.v0.3+json'
+  assert.throws(
+    () => validateNpmAttestationReadback(version, JSON.stringify(wrongPublishMediaType), expected, commit),
+    /unexpected media type/,
+  )
 })
 
 test('attestation parser rejects oversized, invalid UTF-8, and unbound commit inputs', () => {
@@ -772,6 +800,33 @@ test('verification requires provenance convergence inside every bounded readback
   assert.deepEqual(waits, [4, 4])
 })
 
+test('publication readback can succeed after npm takes longer than the former retry window', async () => {
+  let reads = 0
+  let waits = 0
+  const result = await verifyNpmPublication(version, {
+    localPackage: expected,
+    commit,
+    delayMs: 0,
+    read: async () => {
+      reads += 1
+      if (reads <= 12) throw new Error('published version lookup failed with exit 1; npm error code E404')
+      return {
+        versionSource: visibleVersion,
+        tagsSource: visibleTags,
+        distSource: visibleDist,
+      }
+    },
+    wait: async () => { waits += 1 },
+    downloadAttestations: async () => Buffer.from(JSON.stringify(visibleAttestations)),
+    download: async () => Buffer.from('registry tarball'),
+    inspectDownloaded: () => expected,
+  })
+  assert.equal(result.attempts, 13)
+  assert.equal(reads, 13)
+  assert.equal(waits, 12)
+  assert.equal(result.provenancePredicateType, provenancePredicateType)
+})
+
 test('verification fails before registry access when GITHUB_SHA is unset or invalid', async () => {
   let reads = 0
   const read = async () => {
@@ -814,7 +869,11 @@ test('verification fails closed after the exact bounded retry budget', async () 
   )
   assert.equal(reads, 3)
   await assert.rejects(
-    verifyNpmPublication(version, { localPackage: expected, commit, attempts: 13 }),
+    verifyNpmPublication(version, {
+      localPackage: expected,
+      commit,
+      attempts: npmPublicationReadbackPolicy.attempts + 1,
+    }),
     /attempt count/,
   )
 

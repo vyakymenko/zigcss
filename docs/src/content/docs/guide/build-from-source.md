@@ -1,6 +1,6 @@
 # Build from source
 
-Source builds are the verified alternative to the published five-language native-graduated package. Local Zig package dependencies and the thin npm delivery wrapper are consumer-tested below.
+Source builds are the verified alternative to published stable `zigcss@0.6.0` and the published `zigcss@0.7.0-rc.3` prerelease. Local Zig package dependencies and the thin npm delivery wrapper are consumer-tested below.
 
 ## Requirements
 
@@ -189,7 +189,7 @@ Arbitrary Sass plugins, custom functions/importers, Less JavaScript/plugins, Sty
 
 ## Local Zig package dependency
 
-The root `build.zig.zon` declares the active source package `zigcss` 0.7.0-rc.3, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, supported `build_helpers.zig`, `src`, `README.md`, and `LICENSE`. Tests, docs, package-manager wrappers, and editor files are not part of the Zig package. This source identity is distinct from the published stable 0.6.0 release; check the maintained release status before assuming availability of a prerelease package.
+The root `build.zig.zon` declares the active source package `zigcss` 0.7.0-rc.3, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, supported `build_helpers.zig`, `src`, `README.md`, and `LICENSE`. Tests, docs, package-manager wrappers, and editor files are not part of the Zig package. This source identity is distinct from the published stable 0.6.0 release; the exact 0.7.0-rc.3 prerelease package is available on npm `next` despite its failed workflow terminal.
 
 `tests/package-consumer` declares the repository as a path dependency, requests `zigcss.module("zigcss")`, and compiles the owned API from outside the package. Run its exact consumer gate with:
 

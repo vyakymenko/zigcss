@@ -2,7 +2,7 @@
 
 These four minimal projects compile the single `styles.scss` entry to `styles.css` and let ZigCSS discover `_tokens.scss` through the native import resolver. The generated `styles.css.d` file is the only source of that transitive dependency; none of the build files hard-codes it.
 
-These integrations are for the current `Unreleased` checkout only. Published stable ZigCSS 0.6.0 has no `--depfile` option. Build the current source with Zig 0.15.2 and pass the freshly built `zig-out/bin/zigcss`; do not rely on an unrelated `zigcss` already on `PATH`.
+Published prerelease ZigCSS 0.7.0-rc.3 contains the verified `--depfile` contract; these maintained integration proofs still run against the exact current checkout. Published stable ZigCSS 0.6.0 has no `--depfile` option. Build the current source with Zig 0.15.2 and pass the freshly built `zig-out/bin/zigcss`; do not rely on an unrelated `zigcss` already on `PATH`.
 
 Configure that current binary by absolute path (the Ninja example may instead use a deliberately controlled `PATH`):
 
