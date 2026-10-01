@@ -1,6 +1,6 @@
 # Current source CLI and recovery contract
 
-The current ZigCSS 0.7.0-rc.4 source candidate is unpublished and planned; its freshly built `zig-out/bin/zigcss --help` is authoritative for the current CLI. Published ZigCSS 0.7.0-rc.3 remains on npm `next` and owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus, but its Release workflow failed after publication and its exact identity is closed. Failed 0.7.0-rc.1 and 0.7.0-rc.2 tags also must not be reused.
+The current ZigCSS 0.7.0-rc.4 source candidate is candidate-ready after seven verified pre-tag gates but remains unpublished, with no rc.4 tag, GitHub Release, or npm package; its freshly built `zig-out/bin/zigcss --help` is authoritative for the current CLI. Published ZigCSS 0.7.0-rc.3 remains on npm `next` and owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus, but its Release workflow failed after publication and its exact identity is closed. Failed 0.7.0-rc.1 and 0.7.0-rc.2 tags also must not be reused.
 
 CSS enters the stable native compile facade. SCSS, indented Sass, Less, and Stylus enter self-contained native Zig parser/evaluators, then their complete generated CSS passes through the same recovery-disabled core. The root JavaScript launcher only locates and invokes the binary; it hosts no language semantics.
 

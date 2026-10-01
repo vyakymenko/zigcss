@@ -66,7 +66,7 @@ describe('Home', () => {
     const verifiedGates = nextRelease.gates.filter(gate => gate.state === 'verified').length
     const readiness = {
       planned: `${verifiedGates}/8 admission gates verified · candidateReady=false until seven pre-tag gates pass · stable remains 0.6.0`,
-      'candidate-ready': '7/8 admission gates verified · candidateReady=true after seven pre-tag gates passed · stable remains 0.6.0',
+      'candidate-ready': '7/8 admission gates verified · candidateReady=true after seven pre-tag gates passed · publication pending · stable remains 0.6.0',
       closed: '8/8 admission gates verified · candidateReady=false after immutable publication · stable remains 0.6.0',
       'publication-failed': `${verifiedGates}/8 admission gates verified · publication failed · candidateReady=false after failed publication · stable remains 0.6.0`,
     }

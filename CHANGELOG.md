@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Planned prerelease target `0.7.0-rc.4` is selected after the failed `0.7.0-rc.3` workflow terminal. The current source package carries the same bounded feature set under a new, unused identity; it is not a published rc.4 package. The admission contract keeps `candidateReady: false` until all seven pre-tag gates pass. No rc.4 tag, GitHub Release, or npm version is authorized yet. npm `next` still serves the published exact rc.3 package, whose workflow failed; stable `latest` remains `0.6.0`.
+Prerelease target `0.7.0-rc.4` is candidate-ready with `candidateReady: true` after all seven pre-tag gates passed. Published stable identity remains immutable at `0.6.0`.
 
 ## [0.7.0-rc.3] - 2026-10-01
 

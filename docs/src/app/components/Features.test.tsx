@@ -31,6 +31,15 @@ describe('Features', () => {
       )
       expect(document.body.textContent).toContain('Release attempt 0.7.0-rc.3 failed; GitHub immutable-published; npm published-exact')
       expect(document.body.textContent).not.toContain(`That evidence ships in published prerelease ${nextRelease.candidateVersion} on npm next.`)
+    } else if (nextRelease.state === 'candidate-ready') {
+      expect(nextRelease.candidateReady).toBe(true)
+      expect(nextRelease.gates.filter(gate => gate.state === 'verified')).toHaveLength(7)
+      expect(nextRelease.gates.at(-1)?.state).toBe('pending')
+      expect(screen.getByText(/separates published stable 0\.6\.0 delivery/i)).toHaveTextContent(
+        `The active ${nextRelease.candidateVersion} candidate is unpublished and candidate-ready: seven pre-tag admission gates are verified, with the publication terminal pending. No rc.4 tag, GitHub Release, or npm package exists.`,
+      )
+      expect(document.body.textContent).toContain('Release attempt 0.7.0-rc.3 failed; GitHub immutable-published; npm published-exact')
+      expect(document.body.textContent).not.toContain(`That evidence ships in published prerelease ${nextRelease.candidateVersion} on npm next.`)
     }
     expect(screen.getByText(/REL-010 promotes only the stable 0\.6\.0 rows/i)).toBeInTheDocument()
     expect(screen.getByText(/current-source host proofs retain their narrower checkout boundary/i)).toBeInTheDocument()

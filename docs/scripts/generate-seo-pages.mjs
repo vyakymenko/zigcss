@@ -79,9 +79,9 @@ function renderRoute(baseHtml, route, robots = 'index,follow,max-image-preview:l
       /<noscript>[\s\S]*?<\/noscript>/,
       `<noscript>
     <main>
-      <p>ZIGCSS · 0.7.0-RC.4 · PLANNED SOURCE CANDIDATE</p>
+      <p>ZIGCSS · 0.7.0-RC.4 · CANDIDATE-READY · UNPUBLISHED</p>
       <h1>JavaScript is required for this documentation route.</h1>
-      <p>Only rc.4 identity selection is verified: 1/8 gates, seven pending, candidateReady=false. No rc.4 tag, GitHub Release, or npm package exists. Maintained host proofs use a source checkout.</p>
+      <p>Seven rc.4 pre-tag gates are verified: 7/8 admission gates, publication pending, candidateReady=true. No rc.4 tag, GitHub Release, or npm package exists. Maintained host proofs use a source checkout.</p>
       <p>The rc.3 Release workflow failed after an immutable GitHub prerelease and exact npm next package were published. The 0.7.0-rc.3 identity is permanently closed; its anonymous public-delivery check did not run. Failed 0.7.0-rc.1 and 0.7.0-rc.2 identities remain closed.</p>
       <p>Stable 0.6.0 remains on npm latest; npm next serves 0.7.0-rc.3.</p>
       <p><a href="https://github.com/vyakymenko/zigcss">Open the ZigCSS source repository</a></p>

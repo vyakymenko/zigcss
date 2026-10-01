@@ -21,6 +21,20 @@ const activeBaseVersion = '0.7.0'
 const publishedStableVersion = '0.6.0'
 const synchronizedSurfaceCount = 46
 const plannedChangelogLead = `Planned prerelease target \`${activeVersion}\` is selected after the failed \`0.7.0-rc.3\` workflow terminal. The current source package carries the same bounded feature set under a new, unused identity; it is not a published rc.4 package. The admission contract keeps \`candidateReady: false\` until all seven pre-tag gates pass. No rc.4 tag, GitHub Release, or npm version is authorized yet. npm \`next\` still serves the published exact rc.3 package, whose workflow failed; stable \`latest\` remains \`0.6.0\`.`
+const plannedNpmAdmissionLead = `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`planned\` with \`candidateReady: false\`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact \`origin/main\` integration evidence have passed. The release workflow terminal is pending, not a success claim.`
+const readyNpmAdmissionLead = `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`candidate-ready\` with \`candidateReady: true\` after all seven pre-tag gates passed; the protected-tag publication gate remains pending. No rc.4 tag, GitHub Release, or npm package exists. The candidate-ready checkpoint is not publication: the tagged commit must separately pass exact-commit Build and CodeQL validation and match a fresh \`origin/main\` readback before the release workflow can proceed.`
+const plannedStatusLead = `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a planned source checkout, not a GitHub Release or npm package.`
+const readyStatusLead = `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a candidate-ready source checkout, not a GitHub Release or npm package.`
+const plannedStatusInterlock = 'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass; no rc.4 tag or publication is authorized.'
+const readyStatusInterlock = 'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; no rc.4 tag, GitHub Release, or npm package exists.'
+const plannedFeatureLead = `The active ${activeVersion} candidate is unpublished and planned; only identity selection is verified.`
+const readyFeatureLead = `The active ${activeVersion} candidate is unpublished and candidate-ready: seven pre-tag admission gates are verified, with the publication terminal pending. No rc.4 tag, GitHub Release, or npm package exists.`
+const plannedCapabilityLead = 'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.'
+const readyCapabilityLead = 'This active source candidate is unpublished and candidate-ready with seven pre-tag gates verified, candidateReady=true, and the publication terminal pending; no rc.4 tag, GitHub Release, or npm package exists.'
+const plannedFormatLead = `The current ${activeVersion} source checkout is an unpublished planned candidate and compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`
+const readyFormatLead = `The current ${activeVersion} source checkout is candidate-ready after seven verified pre-tag gates, but remains unpublished with no rc.4 tag, GitHub Release, or npm package. It compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`
+const plannedRecoveryLead = `The current ZigCSS ${activeVersion} source candidate is unpublished and planned; its freshly built \`zig-out/bin/zigcss --help\` is authoritative for the current CLI.`
+const readyRecoveryLead = `The current ZigCSS ${activeVersion} source candidate is candidate-ready after seven verified pre-tag gates but remains unpublished, with no rc.4 tag, GitHub Release, or npm package; its freshly built \`zig-out/bin/zigcss --help\` is authoritative for the current CLI.`
 const plannedImmutableIdentity = `\`v${activeVersion}\` must publish its own immutable GitHub Release.`
 const failedImmutableIdentity = `The failed tag \`v${activeVersion}\` is permanently closed; any new publication requires a newly authorized candidate version.`
 const closedPublicReleasePaths = Object.freeze([
@@ -102,11 +116,18 @@ function cloneSources(currentSources = readReleaseSources()) {
       gate.evidence = []
     }
     sources.set('release/next-release.json', `${JSON.stringify(contract, null, 2)}\n`)
+    replace(sources, 'docs/src/content/docs/guide/status.md', readyStatusLead, plannedStatusLead)
+    replace(sources, 'docs/src/app/components/Features.tsx', readyFeatureLead, plannedFeatureLead)
+    for (const filename of ['docs/src/data/capabilities.json', 'docs/src/content/docs/guide/status.md']) {
+      replace(sources, filename, readyCapabilityLead, plannedCapabilityLead)
+    }
+    replace(sources, 'docs/src/content/docs/guide/format-compatibility.md', readyFormatLead, plannedFormatLead)
+    replace(sources, 'docs/src/content/docs/guide/recovery-cli.md', readyRecoveryLead, plannedRecoveryLead)
     replace(
       sources,
       'docs/src/content/docs/guide/status.md',
-      'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed',
-      'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass',
+      readyStatusInterlock,
+      plannedStatusInterlock,
     )
     replace(
       sources,
@@ -119,8 +140,8 @@ function cloneSources(currentSources = readReleaseSources()) {
     replace(
       sources,
       'NPM_PUBLISH.md',
-      'It is currently `candidate-ready` with `candidateReady: true`',
-      'It is currently `planned` with `candidateReady: false`',
+      readyNpmAdmissionLead,
+      plannedNpmAdmissionLead,
     )
     replace(
       sources,
@@ -243,18 +264,18 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
   const verifiedPreTagGates = contract.gates.slice(0, -1).filter(gate => gate.state === 'verified').length
   const surfaceSummary = `GitHub surface: \`${githubState}\`; npm surface: \`absent\`.`
   const failedCapability = `Release attempt ${activeVersion} is publication-failed: GitHub ${githubState}; npm absent; exact identity permanently closed. The npm package surface is absent; source-checkout use remains available. Stable delivery remains 0.6.0.`
-  const plannedCapability = 'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.'
+  const plannedCapability = readyCapabilityLead
 
   for (const [filename, current, replacement] of [
     [
       'docs/src/content/docs/guide/status.md',
       `ZigCSS ${activeVersion} release attempt failed and the exact identity is permanently closed.\n\n${surfaceSummary}`,
-      `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a planned source checkout, not a GitHub Release or npm package.`,
+      readyStatusLead,
     ],
     [
       'docs/src/content/docs/guide/status.md',
       'Its `candidateReady` interlock is `false` after the failed publication attempt',
-      'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; no rc.4 tag or publication is authorized.',
+      readyStatusInterlock,
     ],
     [
       'docs/src/content/docs/guide/status.md',
@@ -289,13 +310,13 @@ function normalizeUnpublishedFailureCopy(sources, contract) {
     [
       'docs/src/app/components/Features.tsx',
       `Release attempt ${activeVersion} failed; GitHub ${githubState}; npm absent; exact identity permanently closed. The source evidence remains checkout-only.`,
-      `The active ${activeVersion} candidate is unpublished and planned; only identity selection is verified.`,
+      readyFeatureLead,
     ],
     ['docs/src/content/docs/guide/status.md', failedCapability, plannedCapability],
     [
       'NPM_PUBLISH.md',
       `Prerelease attempt \`zigcss@${activeVersion}\` failed and its exact identity is permanently closed. ${surfaceSummary} Select a new candidate version; never move, recreate, or reuse \`v${activeVersion}\`.`,
-      `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`candidate-ready\` with \`candidateReady: true\`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact \`origin/main\` integration evidence have passed. The release workflow terminal is pending, not a success claim.`,
+      readyNpmAdmissionLead,
     ],
     [
       'CHANGELOG.md',
@@ -474,11 +495,18 @@ function setCandidateReadyPhase(sources) {
       if (gate.evidence.length === 0) gate.evidence = [`verified evidence for ${gate.id}`]
     }
   })
+  replace(sources, 'docs/src/content/docs/guide/status.md', plannedStatusLead, readyStatusLead)
+  replace(sources, 'docs/src/app/components/Features.tsx', plannedFeatureLead, readyFeatureLead)
+  for (const filename of ['docs/src/data/capabilities.json', 'docs/src/content/docs/guide/status.md']) {
+    replace(sources, filename, plannedCapabilityLead, readyCapabilityLead)
+  }
+  replace(sources, 'docs/src/content/docs/guide/format-compatibility.md', plannedFormatLead, readyFormatLead)
+  replace(sources, 'docs/src/content/docs/guide/recovery-cli.md', plannedRecoveryLead, readyRecoveryLead)
   replace(
     sources,
     'docs/src/content/docs/guide/status.md',
-    'Its `candidateReady` interlock remains `false` until all seven pre-tag gates pass',
-    'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed',
+    plannedStatusInterlock,
+    readyStatusInterlock,
   )
   replace(
     sources,
@@ -496,8 +524,8 @@ function setCandidateReadyPhase(sources) {
   replace(
     sources,
     'NPM_PUBLISH.md',
-    'It is currently `planned` with `candidateReady: false`',
-    'It is currently `candidate-ready` with `candidateReady: true`',
+    plannedNpmAdmissionLead,
+    readyNpmAdmissionLead,
   )
   replace(
     sources,
@@ -524,13 +552,13 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/status.md',
-    `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a planned source checkout, not a GitHub Release or npm package.`,
+    readyStatusLead,
     `ZigCSS ${activeVersion} is the published prerelease on npm \`next\`.`,
   )
   replace(
     sources,
     'docs/src/content/docs/guide/status.md',
-    'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; no rc.4 tag or publication is authorized.',
+    readyStatusInterlock,
     'Its `candidateReady` interlock is `false` after immutable publication',
   )
   replace(
@@ -575,7 +603,7 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/app/components/Features.tsx',
-    `The active ${activeVersion} candidate is unpublished and planned; only identity selection is verified.`,
+    readyFeatureLead,
     `That evidence ships in published prerelease ${activeVersion} on npm next.`,
   )
   replace(
@@ -616,7 +644,7 @@ function setClosedPhase(sources) {
       capability.behavior = capability.behavior.replace(current, replacement)
     }
     replaceBehavior(nodeApi, 'The published `zigcss@0.7.0-rc.3` prerelease package root exposes', `The published \`zigcss@${activeVersion}\` prerelease package root exposes`)
-    replaceBehavior(zigPackage, 'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.', 'This prerelease is published on npm `next`; stable delivery remains 0.6.0.')
+    replaceBehavior(zigPackage, readyCapabilityLead, 'This prerelease is published on npm `next`; stable delivery remains 0.6.0.')
     replaceBehavior(outputPlanning, 'The published 0.7.0-rc.3 prerelease CLI', `The published ${activeVersion} prerelease CLI`)
     replaceBehavior(optimizer, 'In the published 0.7.0-rc.3 prerelease CLI', `In the published ${activeVersion} prerelease CLI`)
     for (const capability of [targetPrefix, sourceMaps, browserTargets]) {
@@ -645,7 +673,7 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'NPM_PUBLISH.md',
-    `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`candidate-ready\` with \`candidateReady: true\`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact \`origin/main\` integration evidence have passed. The release workflow terminal is pending, not a success claim.`,
+    readyNpmAdmissionLead,
     `\`release/next-release.json\` records the closed \`v${activeVersion}\` publication. Prerelease \`zigcss@${activeVersion}\` is published on npm \`next\`.`,
   )
   replace(
@@ -666,7 +694,7 @@ function setClosedPhase(sources) {
     'npm `next` now serves `zigcss@0.7.0-rc.3`; npm `latest` remains `zigcss@0.6.0`.',
     `\n\nnpm \`next\` serves \`zigcss@${activeVersion}\`; npm \`latest\` remains \`zigcss@${publishedStableVersion}\`.`,
   )
-  replace(sources, 'NPM_PUBLISH.md', `## Planned ${activeVersion} recovery candidate`, `## Published ${activeVersion} prerelease`)
+  replace(sources, 'NPM_PUBLISH.md', `## ${activeVersion} candidate admission`, `## Published ${activeVersion} prerelease`)
   replace(
     sources,
     'NPM_PUBLISH.md',
@@ -697,7 +725,7 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/format-compatibility.md',
-    `The current ${activeVersion} source checkout is an unpublished planned candidate and compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
+    readyFormatLead,
     `ZigCSS ${activeVersion} prerelease is published on npm \`next\` and compiles CSS, SCSS, indented Sass, Less, and Stylus through self-contained native Zig paths.`,
   )
   replace(
@@ -709,7 +737,7 @@ function setClosedPhase(sources) {
   replace(
     sources,
     'docs/src/content/docs/guide/recovery-cli.md',
-    `The current ZigCSS ${activeVersion} source candidate is unpublished and planned; its freshly built \`zig-out/bin/zigcss --help\` is authoritative for the current CLI.`,
+    readyRecoveryLead,
     `ZigCSS ${activeVersion} prerelease is published on npm \`next\`; its freshly built \`zig-out/bin/zigcss --help\` remains authoritative for the current checkout CLI.`,
   )
   replace(
@@ -895,13 +923,13 @@ function setPublicationFailedPhase(
     replace(
       sources,
       'docs/src/content/docs/guide/status.md',
-      `Active source candidate ${activeVersion} is selected in \`release/next-release.json\` but is not published. It is a planned source checkout, not a GitHub Release or npm package.`,
+      readyStatusLead,
       `ZigCSS ${activeVersion} release attempt failed and the exact identity is permanently closed.\n\n${surfaceSummary}`,
     )
     replace(
       sources,
       'docs/src/content/docs/guide/status.md',
-      'Its `candidateReady` interlock is `true` after all seven pre-tag gates passed; no rc.4 tag or publication is authorized.',
+      readyStatusInterlock,
       'Its `candidateReady` interlock is `false` after the failed publication attempt',
     )
     replace(
@@ -938,27 +966,27 @@ function setPublicationFailedPhase(
     replace(
       sources,
       'docs/src/app/components/Features.tsx',
-      `The active ${activeVersion} candidate is unpublished and planned; only identity selection is verified.`,
+      readyFeatureLead,
       `Release attempt ${activeVersion} failed; GitHub ${githubState}; npm ${npmState}; exact identity permanently closed. The source evidence remains checkout-only.`,
     )
     mutateJson(sources, 'docs/src/data/capabilities.json', metadata => {
       const zigPackage = metadata.capabilities.find(capability => capability.id === 'zig-package')
       assert.ok(zigPackage)
       zigPackage.behavior = zigPackage.behavior.replace(
-        'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.',
+        readyCapabilityLead,
         `Release attempt ${activeVersion} is publication-failed: GitHub ${githubState}; npm ${npmState}; exact identity permanently closed. The npm package surface is absent; source-checkout use remains available. Stable delivery remains 0.6.0.`,
       )
     })
     replace(
       sources,
       'docs/src/content/docs/guide/status.md',
-      'This active source candidate is unpublished and planned with one selection gate verified and seven gates pending.',
+      readyCapabilityLead,
       `Release attempt ${activeVersion} is publication-failed: GitHub ${githubState}; npm ${npmState}; exact identity permanently closed. The npm package surface is absent; source-checkout use remains available. Stable delivery remains 0.6.0.`,
     )
     replace(
       sources,
       'NPM_PUBLISH.md',
-      `\`release/next-release.json\` selects \`${activeVersion}\` and \`v${activeVersion}\` as the new source candidate and npm \`next\` target. It is currently \`candidate-ready\` with \`candidateReady: true\`: only version selection is verified, while the other seven admission gates remain pending. No rc.4 tag, GitHub Release, or npm package exists. Keep source-checkout tests separate from public installation claims, and do not tag until exact version synchronization, native integrity, local and site validation, hosted Build and CodeQL, and exact \`origin/main\` integration evidence have passed. The release workflow terminal is pending, not a success claim.`,
+      readyNpmAdmissionLead,
       `Prerelease attempt \`zigcss@${activeVersion}\` failed and its exact identity is permanently closed. ${surfaceSummary} Select a new candidate version; never move, recreate, or reuse \`v${activeVersion}\`.`,
     )
     replace(

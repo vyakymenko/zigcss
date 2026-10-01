@@ -253,7 +253,7 @@ function Deploy() {
             <p className="mt-9 terminal-label">interfaces</p>
             <p className="mt-3 font-mono text-xs leading-6 text-[#a6b2a4]">CLI · JS wrapper · Zig API · helpers.addCssCompile · CSS LSP</p>
             <p className="mt-9 terminal-label">0.7.0-rc.4 · unpublished source proofs</p>
-            <p className="mt-3 font-mono text-xs leading-6 text-[#829080]">1/8 admission gates verified · candidateReady=false until seven pre-tag gates pass · stable remains 0.6.0</p>
+            <p className="mt-3 font-mono text-xs leading-6 text-[#829080]">7/8 admission gates verified · candidateReady=true after seven pre-tag gates passed · publication pending · stable remains 0.6.0</p>
             <p className="mt-3 font-mono text-xs leading-6 text-[#829080]">Published rc.3 remains on npm next, but its Release workflow failed and its identity is closed.</p>
             <h4 className="mt-3 text-lg font-semibold">Pinned hosts. Same native binary.</h4>
             <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.12em] text-[#829080]">direct adapters</p>
