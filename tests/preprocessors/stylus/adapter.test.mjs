@@ -209,13 +209,13 @@ test('locks and license-reviews the complete Stylus dependency closure', () => {
   })
   const inventory = `${rows.join('\n')}\n`
 
-  assert.equal(lock.packages['node_modules/brace-expansion'].version, '5.0.9')
+  assert.equal(lock.packages['node_modules/brace-expansion'].version, '5.0.12')
   assert.equal(lock.packages['node_modules/balanced-match'].version, '4.0.4')
   assert.equal(closure.length, 47)
-  assert.equal(Buffer.byteLength(inventory), 6514)
+  assert.equal(Buffer.byteLength(inventory), 6515)
   assert.equal(
     createHash('sha256').update(inventory).digest('hex'),
-    'ef1d2b0d844fef0d588c6df560fa54ee5627fcf18a3e8c5b8da47fedc32867f3',
+    '3467d815ca1573f778779f3a738f9829af09b5c096b0b47d08eff539b27e4e38',
   )
 })
 
